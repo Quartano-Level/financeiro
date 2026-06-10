@@ -1,1 +1,74 @@
-# financeiro
+# Columbia Trading — Financeiro
+
+Automação assistida da **área Financeira da Columbia Trading**. O projeto cobre três frentes onde o
+processo manual hoje gera exposição — **dado que não fecha, pagamento que não sai, documento que não
+destrava** — mantendo o analista no controle das decisões de julgamento e transferindo à solução o
+trabalho mecânico. Todas as frentes integram com o ERP **Conexos** (mesmo tenant do
+`fechamento-processos` — hoje **só o lado leitura**; a escrita no ERP será desenhada via `/feature-new`),
+operam multi-filial e registram trilha de auditoria completa.
+
+> **Fonte canônica do escopo:** [`docs/proposta/`](./docs/proposta/) ·
+> **Domínio:** [`03_ontologia_financeiro.md`](./03_ontologia_financeiro.md) ·
+> **Entrega:** Kavex (*created by Clonex*).
+
+## As três frentes
+
+| Frente | Em uma frase | Integra |
+|---|---|---|
+| **I. Permutas** (Adiantamentos ↔ Invoices) | Reconciliar PROFORMA × INVOICE na baixa; auto 1:1, assistido N:M; backlog → 0 | Conexos `fin010` |
+| **II. SISPAG** (Pagamentos) | Montar lote diário, gerar remessa, enviar ao banco, conciliar retorno; zero pagamento perdido | Conexos `com298` + Nexxera |
+| **III. Popula GED** (NC/ND) | Casar PDF do SharePoint com a NC/ND e subir no GED para destravar a baixa | SharePoint + GED |
+
+**Requisitos transversais:** auth corporativa + RBAC · multi-filial · auditoria completa · integração
+Conexos resiliente (sessão/retry/rate-limit) · observabilidade · padronização (portal único futuro).
+
+## Estado do repositório
+
+Fundação **rodável** (bootstrapped do template [`fechamento-processos`](../fechamento-processos)): backend
+Express/DDD com auth Supabase + cliente Conexos, frontend Next.js com Design System. O **domínio ainda
+não foi modelado** em código/ontologia — nasce via o pipeline (`/feature-new`), guiado por
+`03_ontologia_financeiro.md`.
+
+- **Atual:** Express + Next.js (deploy Render). · **Alvo:** Lambda + API Gateway + Terraform multi-tenant.
+- Dívida entre os dois: [`ontology/_inbox/migration-debt.md`](./ontology/_inbox/migration-debt.md).
+
+## Pipeline de desenvolvimento
+
+```
+/feature-new "<intenção>"
+  → OfficeHoursInterviewer → OntologyCurator → TaskScoper → AutoLoopRunner
+       (gates: typecheck, lint, test, PatternGuardian, ontology diff, DesignSystemReviewer, Regis-Review)
+```
+
+| Comando | Quando |
+|---|---|
+| `/feature-new <intent>` | Entidade ou flow novo |
+| `/feature-tweak <entity> "<intent>"` | Ajuste em regra existente |
+| `/investigate <symptom>` | Bug — root cause antes do código |
+| `/regis-review` | Revisão de arquitetura 8-QA (Bass & Clements) |
+
+## Como rodar localmente
+
+```bash
+# Backend → :3001
+cd src/backend && npm ci && npm run dev      # GET /health, GET /conexos/filiais
+
+# Frontend → :3000 (ou :3002 se ocupado)
+cd src/frontend && npm ci && npm run dev
+```
+
+Dev sem Supabase: `.env` (gitignored) já com `DEV_AUTH_BYPASS=true` / `environment=local` (backend) e
+`NEXT_PUBLIC_DEV_AUTH_BYPASS=true` / `NEXT_PUBLIC_ENV=local` (frontend).
+
+## Estrutura
+
+```
+.
+├── .claude/                    Pipeline (19 agentes + 13 comandos)
+├── 03_ontologia.md             Seed da plataforma (herdado, read-only)
+├── 03_ontologia_financeiro.md  Seed do domínio (3 frentes) ← propósito
+├── CLAUDE.md                   Configuração do pipeline
+├── docs/proposta/              Proposta Kavex × Columbia (fonte canônica, CONFIDENCIAL)
+├── ontology/                   Source of truth do domínio (a modelar via /feature-new)
+└── src/{backend,frontend}/     App (Express + Next.js)
+```

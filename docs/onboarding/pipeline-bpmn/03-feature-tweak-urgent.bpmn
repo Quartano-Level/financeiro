@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  id="Defs_feature_tweak_urgent" targetNamespace="http://columbia/pipeline">
+  <bpmn:collaboration id="Collab_urgent">
+    <bpmn:participant id="Pool" name="Pipeline /feature-tweak --urgent (hotfix)" processRef="Proc_urgent" />
+  </bpmn:collaboration>
+  <bpmn:process id="Proc_urgent" isExecutable="false">
+    <bpmn:laneSet id="laneSet">
+      <bpmn:lane id="Lane_Dev" name="Dev / Yuri (Humano)">
+        <bpmn:flowNodeRef>start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>wt</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>skip</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>regisOut</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>rebase</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>gConflict</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>callYuri</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>bump</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>pr</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>adr</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>endev</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Nav" name="CodebaseNavigator">
+        <bpmn:flowNodeRef>nav</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Auto" name="AutoLoopRunner">
+        <bpmn:flowNodeRef>autoloop</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>gGreen</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+
+    <bpmn:startEvent id="start" name="/feature-tweak --urgent &lt;entity&gt; '&lt;intent&gt;'" />
+    <bpmn:task id="wt" name="Step 0 — git worktree dedicado (obrigatório no hotfix)" />
+    <bpmn:task id="skip" name="PULA OfficeHoursInterviewer (sem entrevista)" />
+    <bpmn:task id="regisOut" name="Regis-Review DISPENSADO (--urgent) — registrar no PR" />
+    <bpmn:task id="rebase" name="Rebase da base + resolver conflitos" />
+    <bpmn:exclusiveGateway id="gConflict" name="conflito não-trivial?" />
+    <bpmn:endEvent id="callYuri" name="PARAR — chamar o Yuri" />
+    <bpmn:task id="bump" name="Bump versão FE+BE (fix→patch) + commit chore(release)" />
+    <bpmn:task id="pr" name="Abrir PR (gh pr create)" />
+    <bpmn:task id="adr" name="ADR RETROATIVO em 24h — ontology/decisions/" />
+    <bpmn:endEvent id="endev" name="PR aberto + ADR pendente em 24h" />
+
+    <bpmn:task id="nav" name="Localiza entidade/regra via _index.json" />
+
+    <bpmn:task id="autoloop" name="AutoLoopRunner vai direto — TDD/impl/typecheck/lint/test/PatternGuardian" />
+    <bpmn:exclusiveGateway id="gGreen" name="verde?" />
+
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="wt" />
+    <bpmn:sequenceFlow id="f2" sourceRef="wt" targetRef="nav" />
+    <bpmn:sequenceFlow id="f3" sourceRef="nav" targetRef="skip" />
+    <bpmn:sequenceFlow id="f4" sourceRef="skip" targetRef="autoloop" />
+    <bpmn:sequenceFlow id="f5" sourceRef="autoloop" targetRef="gGreen" />
+    <bpmn:sequenceFlow id="f6" name="não (reitera)" sourceRef="gGreen" targetRef="autoloop" />
+    <bpmn:sequenceFlow id="f7" name="sim" sourceRef="gGreen" targetRef="regisOut" />
+    <bpmn:sequenceFlow id="f8" sourceRef="regisOut" targetRef="rebase" />
+    <bpmn:sequenceFlow id="f9" sourceRef="rebase" targetRef="gConflict" />
+    <bpmn:sequenceFlow id="f10" name="sim" sourceRef="gConflict" targetRef="callYuri" />
+    <bpmn:sequenceFlow id="f11" name="não" sourceRef="gConflict" targetRef="bump" />
+    <bpmn:sequenceFlow id="f12" sourceRef="bump" targetRef="pr" />
+    <bpmn:sequenceFlow id="f13" sourceRef="pr" targetRef="adr" />
+    <bpmn:sequenceFlow id="f14" sourceRef="adr" targetRef="endev" />
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="di">
+    <bpmndi:BPMNPlane id="plane" bpmnElement="Collab_urgent">
+      <bpmndi:BPMNShape id="Pool_di" bpmnElement="Pool" isHorizontal="true">
+        <dc:Bounds x="160" y="80" width="2400" height="420" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Dev_di" bpmnElement="Lane_Dev" isHorizontal="true">
+        <dc:Bounds x="190" y="80" width="2370" height="140" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Nav_di" bpmnElement="Lane_Nav" isHorizontal="true">
+        <dc:Bounds x="190" y="220" width="2370" height="140" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Auto_di" bpmnElement="Lane_Auto" isHorizontal="true">
+        <dc:Bounds x="190" y="360" width="2370" height="140" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="start_di" bpmnElement="start"><dc:Bounds x="277" y="132" width="36" height="36" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="wt_di" bpmnElement="wt"><dc:Bounds x="410" y="115" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="nav_di" bpmnElement="nav"><dc:Bounds x="590" y="255" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="skip_di" bpmnElement="skip"><dc:Bounds x="770" y="115" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="autoloop_di" bpmnElement="autoloop"><dc:Bounds x="950" y="395" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gGreen_di" bpmnElement="gGreen" isMarkerVisible="true"><dc:Bounds x="1175" y="410" width="40" height="40" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="regisOut_di" bpmnElement="regisOut"><dc:Bounds x="1310" y="115" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="rebase_di" bpmnElement="rebase"><dc:Bounds x="1490" y="115" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gConflict_di" bpmnElement="gConflict" isMarkerVisible="true"><dc:Bounds x="1715" y="130" width="40" height="40" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="callYuri_di" bpmnElement="callYuri"><dc:Bounds x="1717" y="180" width="36" height="36" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="bump_di" bpmnElement="bump"><dc:Bounds x="1850" y="115" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="pr_di" bpmnElement="pr"><dc:Bounds x="2030" y="115" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="adr_di" bpmnElement="adr"><dc:Bounds x="2210" y="115" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="endev_di" bpmnElement="endev"><dc:Bounds x="2437" y="132" width="36" height="36" /></bpmndi:BPMNShape>
+
+      <bpmndi:BPMNEdge id="f1_di" bpmnElement="f1"><di:waypoint x="313" y="150" /><di:waypoint x="410" y="150" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f2_di" bpmnElement="f2"><di:waypoint x="540" y="150" /><di:waypoint x="655" y="150" /><di:waypoint x="655" y="255" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f3_di" bpmnElement="f3"><di:waypoint x="720" y="290" /><di:waypoint x="835" y="290" /><di:waypoint x="835" y="185" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f4_di" bpmnElement="f4"><di:waypoint x="900" y="150" /><di:waypoint x="1015" y="150" /><di:waypoint x="1015" y="395" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f5_di" bpmnElement="f5"><di:waypoint x="1080" y="430" /><di:waypoint x="1175" y="430" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f6_di" bpmnElement="f6"><di:waypoint x="1195" y="450" /><di:waypoint x="1195" y="480" /><di:waypoint x="1015" y="480" /><di:waypoint x="1015" y="465" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f7_di" bpmnElement="f7"><di:waypoint x="1195" y="410" /><di:waypoint x="1195" y="150" /><di:waypoint x="1310" y="150" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f8_di" bpmnElement="f8"><di:waypoint x="1440" y="150" /><di:waypoint x="1490" y="150" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f9_di" bpmnElement="f9"><di:waypoint x="1620" y="150" /><di:waypoint x="1715" y="150" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f10_di" bpmnElement="f10"><di:waypoint x="1735" y="170" /><di:waypoint x="1735" y="180" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f11_di" bpmnElement="f11"><di:waypoint x="1755" y="150" /><di:waypoint x="1850" y="150" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f12_di" bpmnElement="f12"><di:waypoint x="1980" y="150" /><di:waypoint x="2030" y="150" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f13_di" bpmnElement="f13"><di:waypoint x="2160" y="150" /><di:waypoint x="2210" y="150" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f14_di" bpmnElement="f14"><di:waypoint x="2340" y="150" /><di:waypoint x="2437" y="150" /></bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

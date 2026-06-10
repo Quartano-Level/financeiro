@@ -1,0 +1,128 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: oklch(0.98 0 0);
+  --foreground: oklch(0.2 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.50 0.12 250);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.92 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.50 0.12 250);
+  --radius: 0.625rem;
+
+  /* Semantic feedback palette — per src/frontend/docs/design-system/tokens.md */
+  --success: #10b981;
+  --success-subtle: #c7ffd3;
+  --success-foreground: #064e3b;
+  --warning: #f59e0b;
+  --warning-subtle: #fffdc7;
+  --warning-foreground: #78350f;
+  --danger: #ef4444;
+  --danger-subtle: #ffc7c7;
+  --danger-foreground: #7f1d1d;
+  --info: #3b82f6;
+  --info-subtle: #dbeafe;
+  --info-foreground: #1e3a8a;
+  --overlay: rgb(0 0 0 / 0.5);
+
+  /* Origem do documento — domain tokens for the FIFO timeline (Phase 4 of
+     `exposure-from-invoice-baixa`). Same pattern as `--color-status-*`:
+     domain-bound but lives in the DS because it is part of the visual
+     identity of the relatório. Use `*-foreground` for text contrast. */
+  --origem-proforma: #a1a1aa;          /* zinc-400 — débito diagnóstico (Proforma) */
+  --origem-proforma-foreground: #ffffff;
+  --origem-invoice: #2563eb;            /* blue-600 — débito FIFO (INVOICE) */
+  --origem-invoice-foreground: #ffffff;
+  --origem-solnum: #fbbf24;             /* amber-400 — crédito (Solicitação de Numerário) */
+  --origem-solnum-foreground: #1f2937;
+  --origem-nf-saida: #059669;           /* emerald-600 — crédito (NF Saída) */
+  --origem-nf-saida-foreground: #ffffff;
+
+  /* v0.4 — AdiantamentoFinanceiro (implantacao-saldo-financeiro / ADR-0013).
+     Hues escolhidos para serem distintos do quadrante existente (azul/cinza/
+     âmbar/esmeralda) e manterem contraste ≥ 4.5:1 contra o card branco. */
+  --origem-adto-forn-int: #7c3aed;       /* violet-600 — débito (Adto Fornec. Int.) */
+  --origem-adto-forn-int-foreground: #ffffff;
+  --origem-adto-cli-ext: #0891b2;        /* cyan-600 — crédito (Adto Cliente Ext.) */
+  --origem-adto-cli-ext-foreground: #ffffff;
+  --origem-adto-cli-nac: #db2777;        /* pink-600 — crédito (Adto Cliente Nac.) */
+  --origem-adto-cli-nac-foreground: #ffffff;
+}
+
+@theme inline {
+  --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-success-subtle: var(--success-subtle);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-danger: var(--danger);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-danger-foreground: var(--danger-foreground);
+  --color-info: var(--info);
+  --color-info-subtle: var(--info-subtle);
+  --color-info-foreground: var(--info-foreground);
+  --color-overlay: var(--overlay);
+  --color-origem-proforma: var(--origem-proforma);
+  --color-origem-proforma-foreground: var(--origem-proforma-foreground);
+  --color-origem-invoice: var(--origem-invoice);
+  --color-origem-invoice-foreground: var(--origem-invoice-foreground);
+  --color-origem-solnum: var(--origem-solnum);
+  --color-origem-solnum-foreground: var(--origem-solnum-foreground);
+  --color-origem-nf-saida: var(--origem-nf-saida);
+  --color-origem-nf-saida-foreground: var(--origem-nf-saida-foreground);
+  --color-origem-adto-forn-int: var(--origem-adto-forn-int);
+  --color-origem-adto-forn-int-foreground: var(--origem-adto-forn-int-foreground);
+  --color-origem-adto-cli-ext: var(--origem-adto-cli-ext);
+  --color-origem-adto-cli-ext-foreground: var(--origem-adto-cli-ext-foreground);
+  --color-origem-adto-cli-nac: var(--origem-adto-cli-nac);
+  --color-origem-adto-cli-nac-foreground: var(--origem-adto-cli-nac-foreground);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

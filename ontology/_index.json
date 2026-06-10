@@ -1,0 +1,20 @@
+{
+  "_meta": {
+    "generated": "2026-06-10",
+    "version": "0.1.0",
+    "note": "Financeiro ontology — bootstrapped EMPTY from the fechamento-processos template (2026-06-10). The domain (entities/actions/business-rules/integrations/ui-flows/workflows) is modelled incrementally via the /feature-new pipeline; the OntologyCurator populates these collections per accepted feature. Until then they are empty BY DESIGN. The Conexos ERP integration is wired in code (src/backend/domain/client/ConexosClient.ts) but its ontology contract is (re)written on the first feature that touches it.",
+    "upstream": "../../produtizacao/nf-projects",
+    "status_legend": {
+      "implemented": "code in src/ implements the entity/action under the target architecture",
+      "partial": "code exists but does not yet meet the target architecture (DDD, tsyringe, Lambda)",
+      "planned": "no code yet",
+      "planned-migration": "ontology imported from upstream; local code does not implement it (yet) — track in migration-debt"
+    }
+  },
+  "entities": {},
+  "actions": {},
+  "business_rules": {},
+  "integrations": {},
+  "ui_flows": {},
+  "workflows": {}
+}

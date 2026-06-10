@@ -1,0 +1,59 @@
+# Diretório local de estado
+.terraform/
+.terraform/*
+
+# Arquivos de estado (NUNCA versionar!)
+terraform.tfstate
+terraform.tfstate.*
+*.tfstate
+*.tfstate.*
+
+# Override files local-only
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Planos (nunca devem ser commitados)
+*.tfplan
+*.plan
+
+
+# Logs
+*.log
+
+# Arquivos gerados por ferramentas locais
+.crash
+*.backup
+*.bak
+
+# Lockfile do Terraform — opcional, mas recomendado versionar
+# Se optar por NÃO versionar, descomente a linha abaixo:
+# .terraform.lock.hcl
+.terraform.lock.hcl
+
+
+.aws/
+.aws/*
+
+node_modules/
+build
+
+.env
+
+CURRENT_ARCHITECTURE_ANALYSIS.md
+ARCHITECTURE_REPORT.md
+MIGRATION_RECOMMENDATIONS.md
+
+.claude/settings.local.json
+
+# Local debug dumps from saldo-financeiro investigation
+fechamento-*-permutar.xlsx
+fechamento-*-debug.xlsx
+
+# Test coverage reports (Jest / etc.)
+coverage/
+
+# Local scratch / temp files (pipeline gap dumps, etc.)
+tmp-*.md
+*.tmp
