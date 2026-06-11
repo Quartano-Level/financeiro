@@ -1,4 +1,4 @@
-One-time command to (re)generate the ontology/ structure from 03_ontologia.md. Used for the initial bootstrap or to refresh the ontology from the source document.
+One-time command to (re)generate the ontology/ structure from docs-contexto/03_ontologia.md. Used for the initial bootstrap or to refresh the ontology from the source document.
 
 ## Usage
 
@@ -10,7 +10,7 @@ One-time command to (re)generate the ontology/ structure from 03_ontologia.md. U
 
 ## What it does
 
-Reads `03_ontologia.md` v0.1 and generates/updates `ontology/`:
+Reads `docs-contexto/03_ontologia.md` v0.1 and generates/updates `ontology/`:
 
 1. **README.md** — from principles P1-P7 (section 3.1) and I1-I6 (section 3.2)
 2. **CHANGELOG.md** — from roadmap section 9
@@ -53,7 +53,7 @@ Reads `03_ontologia.md` v0.1 and generates/updates `ontology/`:
 
 ## Note
 
-This command was run once on 2026-05-03 to produce the initial bootstrap from `03_ontologia.md` v0.1.
+This command was run once on 2026-05-03 to produce the initial bootstrap from `docs-contexto/03_ontologia.md` v0.1.
 The ADR is at `ontology/decisions/0001-bootstrap-from-03-ontologia.md`.
 
-Running it again will regenerate from the latest version of `03_ontologia.md`.
+Running it again will regenerate from the latest version of `docs-contexto/03_ontologia.md`.

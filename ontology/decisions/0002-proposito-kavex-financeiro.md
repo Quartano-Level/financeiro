@@ -17,7 +17,7 @@ integradas ao ERP Conexos (mesmo tenant), em modelo de capacidade dedicada + exp
 ## Decisão
 
 1. **O domínio do repositório é a Automação Financeira da Columbia Trading**, composta por três
-   frentes (ver `03_ontologia_financeiro.md`):
+   frentes (ver `docs-contexto/03_ontologia_financeiro.md`):
    - **I — Permutas** (Adiantamentos ↔ Invoices) → Conexos `fin010`.
    - **II — SISPAG** (Pagamentos) → Conexos `com298` + Nexxera.
    - **III — Popula GED** (NC/ND) → SharePoint + GED.
@@ -36,7 +36,7 @@ integradas ao ERP Conexos (mesmo tenant), em modelo de capacidade dedicada + exp
 ## Consequências
 
 - O repositório deixa de ser "virgem": tem propósito, vocabulário (`ontology/glossary.md`) e narrativa
-  de domínio (`03_ontologia_financeiro.md`) — base para o `OntologyCurator` modelar.
+  de domínio (`docs-contexto/03_ontologia_financeiro.md`) — base para o `OntologyCurator` modelar.
 - Três integrações **novas** (Nexxera, GED, SharePoint) entram no horizonte; a primeira `/feature-new`
   de cada frente cria seu `ontology/integrations/<nome>.md`. Conexos tem o **lado leitura** integrado em
   código (mesmo tenant); o **lado escrita não existe ainda**.

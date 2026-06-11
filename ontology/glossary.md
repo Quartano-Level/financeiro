@@ -3,7 +3,7 @@
 Vocabulário das três frentes da Automação Financeira. Capturado da proposta
 ([`docs/proposta/`](../docs/proposta/)) e refinado pelas entrevistas do `OfficeHoursInterviewer`.
 Termos transversais da plataforma (tenant, filial/`filCod`, ERP Conexos) vivem em
-[`../03_ontologia.md`](../03_ontologia.md).
+[`../docs-contexto/03_ontologia.md`](../docs-contexto/03_ontologia.md).
 
 ## Frente I — Permutas
 

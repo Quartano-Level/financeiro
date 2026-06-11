@@ -14,6 +14,6 @@
     "ontology/design/component-mapping.md",
     ".claude/agents/*",
     ".claude/commands/*",
-    "03_ontologia.md (inherited platform seed, read-only reference)"
+    "docs-contexto/03_ontologia.md (inherited platform seed, read-only reference)"
   ]
 }

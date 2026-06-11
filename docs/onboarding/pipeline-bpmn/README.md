@@ -305,7 +305,7 @@ Referência rápida — também são comandos em `.claude/commands/`:
 | `/regis-review` | Revisão de arquitetura 8-QA (Bass & Clements). Alias: `/arch-review`. |
 | `/retro-ontology` | Saúde semanal da ontologia (entidades obsoletas, gaps abertos, drift de cobertura). |
 | `/stop-loop <slug>` | Pausa o AutoLoopRunner salvando estado para retomar depois. |
-| `/bootstrap-ontology` | (Re)gera a estrutura de `ontology/` a partir do seed `03_ontologia.md`. |
+| `/bootstrap-ontology` | (Re)gera a estrutura de `ontology/` a partir do seed `docs-contexto/03_ontologia.md`. |
 | `/new-tenant`, `/configure-client` | Onboarding e configuração de cliente/tenant. |
 | `/check-tenant-health`, `/diagnose-tenant` | Operação multi-tenant. |
 | `/explain-workflow` | Explica um workflow. |

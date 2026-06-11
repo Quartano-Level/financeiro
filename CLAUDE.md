@@ -11,7 +11,7 @@
 >
 > **Domínio específico:** Automação Financeira da Columbia Trading — três frentes (**Permutas**,
 > **SISPAG**, **Popula GED**). Propósito definido na proposta (`docs/proposta/`); narrativa em
-> `03_ontologia_financeiro.md`. Ainda **não modelado** em entidades/ações — isso nasce via
+> `docs-contexto/03_ontologia_financeiro.md`. Ainda **não modelado** em entidades/ações — isso nasce via
 > `/feature-new`. Ver ADRs `0001` (bootstrap) e `0002` (propósito).
 
 ## Overview

@@ -1,7 +1,7 @@
 # Revisão de Fitness — Template `financeiro` vs. Propósito (Kavex × Columbia)
 
 **Data:** 2026-06-10 · **Método:** 4 agentes de revisão em paralelo (backend, frontend, NFRs, coerência domínio/docs)
-**Fonte do propósito:** [`docs/proposta/`](../proposta/) · **Domínio:** [`../../03_ontologia_financeiro.md`](../../03_ontologia_financeiro.md)
+**Fonte do propósito:** [`docs/proposta/`](../proposta/) · **Domínio:** [`../../docs-contexto/03_ontologia_financeiro.md`](../../docs-contexto/03_ontologia_financeiro.md)
 **Status pós-revisão:** correções de docs (P1+P2) aplicadas; **mudanças estruturais NÃO aplicadas** (são trabalho de construção via `/feature-new`).
 
 > Esta revisão avalia se o template virgem (bootstrapped de `fechamento-processos`) serve ao propósito

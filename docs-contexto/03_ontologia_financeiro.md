@@ -4,7 +4,7 @@
 **Data:** 2026-06-10
 **Status:** documento vivo — narrativa de domínio (ainda não modelada em entidades/ações)
 **Cliente:** Columbia Trading · **Área:** Financeiro
-**Fonte canônica:** [`docs/proposta/Proposta_Kavex_Columbia_Financeiro.md`](./docs/proposta/Proposta_Kavex_Columbia_Financeiro.md) (e `.pdf`)
+**Fonte canônica:** [`docs/proposta/Proposta_Kavex_Columbia_Financeiro.md`](../docs/proposta/Proposta_Kavex_Columbia_Financeiro.md) (e `.pdf`)
 **Relação:** complemento de [`03_ontologia.md`](./03_ontologia.md) (seed da plataforma, herdado).
 
 > Este documento dá **contexto e propósito** ao repositório. Ele descreve *o que* o domínio

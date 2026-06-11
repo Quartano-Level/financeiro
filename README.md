@@ -8,7 +8,7 @@ trabalho mecânico. Todas as frentes integram com o ERP **Conexos** (mesmo tenan
 operam multi-filial e registram trilha de auditoria completa.
 
 > **Fonte canônica do escopo:** [`docs/proposta/`](./docs/proposta/) ·
-> **Domínio:** [`03_ontologia_financeiro.md`](./03_ontologia_financeiro.md) ·
+> **Domínio:** [`03_ontologia_financeiro.md`](./docs-contexto/03_ontologia_financeiro.md) ·
 > **Entrega:** Kavex (*created by Clonex*).
 
 ## As três frentes
@@ -27,7 +27,7 @@ Conexos resiliente (sessão/retry/rate-limit) · observabilidade · padronizaç�
 Fundação **rodável** (bootstrapped do template [`fechamento-processos`](../fechamento-processos)): backend
 Express/DDD com auth Supabase + cliente Conexos, frontend Next.js com Design System. O **domínio ainda
 não foi modelado** em código/ontologia — nasce via o pipeline (`/feature-new`), guiado por
-`03_ontologia_financeiro.md`.
+`docs-contexto/03_ontologia_financeiro.md`.
 
 - **Atual:** Express + Next.js (deploy Render). · **Alvo:** Lambda + API Gateway + Terraform multi-tenant.
 - Dívida entre os dois: [`ontology/_inbox/migration-debt.md`](./ontology/_inbox/migration-debt.md).
@@ -65,9 +65,10 @@ Dev sem Supabase: `.env` (gitignored) já com `DEV_AUTH_BYPASS=true` / `environm
 ```
 .
 ├── .claude/                    Pipeline (19 agentes + 13 comandos)
-├── 03_ontologia.md             Seed da plataforma (herdado, read-only)
-├── 03_ontologia_financeiro.md  Seed do domínio (3 frentes) ← propósito
 ├── CLAUDE.md                   Configuração do pipeline
+├── docs-contexto/              Seeds de ontologia (herdados, contexto):
+│   ├── 03_ontologia.md             plataforma (read-only)
+│   └── 03_ontologia_financeiro.md  domínio (3 frentes) ← propósito
 ├── docs/proposta/              Proposta Kavex × Columbia (fonte canônica, CONFIDENCIAL)
 ├── ontology/                   Source of truth do domínio (a modelar via /feature-new)
 └── src/{backend,frontend}/     App (Express + Next.js)

@@ -23,7 +23,7 @@ Modifiability is the architecture characteristic with the highest economic lever
 
 - **DDD layers** strictly enforced (PatternGuardian agent already polices this): Lambda → Service → Repository → Client. Zero layer-skipping in CLAUDE.md.
 - **DI**: `tsyringe` `@injectable()` / `@singleton()` everywhere. Strong defer-binding capability already.
-- **Ontology** in `ontology/` is the domain source of truth. The financeiro domain is currently a narrative seed (`03_ontologia_financeiro.md`) — the three fronts (Permutas, SISPAG, Popula GED) and their entities/actions/state-machines/integrations are modelled incrementally via `/feature-new`. `_index.json` maps entity → implementation files. `_coverage.json` tracks coverage drift. Read the current counts from those files rather than assuming a fixed number; Modifiability reviews must use these — they are *the* mapping artifact.
+- **Ontology** in `ontology/` is the domain source of truth. The financeiro domain is currently a narrative seed (`docs-contexto/03_ontologia_financeiro.md`) — the three fronts (Permutas, SISPAG, Popula GED) and their entities/actions/state-machines/integrations are modelled incrementally via `/feature-new`. `_index.json` maps entity → implementation files. `_coverage.json` tracks coverage drift. Read the current counts from those files rather than assuming a fixed number; Modifiability reviews must use these — they are *the* mapping artifact.
 - **Linter**: Biome configured with `noExcessiveCognitiveComplexity` warn at 15 (`biome.json`). Warnings here are direct modifiability signals.
 - **No ORM** — raw SQL in repositories. Schema changes ripple through repository SQL strings.
 
