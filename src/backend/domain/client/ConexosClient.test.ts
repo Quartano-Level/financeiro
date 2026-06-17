@@ -7,7 +7,6 @@ const buildLegacy = (): jest.Mocked<LegacyConexosShape> => ({
     listGeneric: jest.fn(),
     listGenericPaginated: jest.fn().mockResolvedValue({ count: 0, rows: [] }),
     getGeneric: jest.fn().mockResolvedValue({ rows: [] }),
-    getEncargosGeraisByInvoice: jest.fn(),
     getFiliais: jest.fn().mockResolvedValue([]),
     getFilCodDefault: jest.fn().mockResolvedValue(null),
 });
@@ -228,53 +227,6 @@ describe('ConexosClient', () => {
         });
     });
 
-    describe('getEncargosGerais', () => {
-        it('returns despesas from legacy response', async () => {
-            const legacy = buildLegacy();
-            legacy.getEncargosGeraisByInvoice.mockResolvedValue({
-                despesas: [{ ctpDesNome: 'ENCARGOS FINANCEIROS', vlr: 250 }],
-            });
-            const client = new ConexosClient(legacy);
-
-            const out = await client.getEncargosGerais({ docTip: 1, docCod: 100, filCod: 2 });
-            expect(out.despesas).toHaveLength(1);
-            expect(out.despesas[0].ctpDesNome).toBe('ENCARGOS FINANCEIROS');
-        });
-
-        it('returns empty array when legacy returns null', async () => {
-            const legacy = buildLegacy();
-            legacy.getEncargosGeraisByInvoice.mockResolvedValue(null);
-            const client = new ConexosClient(legacy);
-
-            const out = await client.getEncargosGerais({ docTip: 1, docCod: 100, filCod: 2 });
-            expect(out.despesas).toEqual([]);
-        });
-
-        it('normalises Conexos wire field `dppMnyValorMn` to canonical `vlr`', async () => {
-            // The real com017/encargosGerais payload returns the value under
-            // `dppMnyValorMn` (full-base smoke confirmed against docCod=7072).
-            // The pre-existing mapper ignored that field, so 154 processes
-            // returned `delta=null` because `vlr` was undefined → NaN.
-            const legacy = buildLegacy();
-            legacy.getEncargosGeraisByInvoice.mockResolvedValue({
-                despesas: [
-                    { ctpDesNome: 'ENCARGOS FINANCEIROS', dppMnyValorMn: 837.37 },
-                    { ctpDesNome: 'OUTRAS DESPESAS - FOB', dppMnyValorMn: 0 },
-                    // Legacy shape still works for compat with old mocks.
-                    { ctpDesNome: 'AFRMM', vlr: 100 },
-                ],
-            });
-            const client = new ConexosClient(legacy);
-
-            const out = await client.getEncargosGerais({ docTip: 1, docCod: 7072, filCod: 2 });
-            expect(out.despesas).toEqual([
-                { ctpDesNome: 'ENCARGOS FINANCEIROS', vlr: 837.37 },
-                { ctpDesNome: 'OUTRAS DESPESAS - FOB', vlr: 0 },
-                { ctpDesNome: 'AFRMM', vlr: 100 },
-            ]);
-        });
-    });
-
     describe('listProcessos', () => {
         it('with no priCods sends canonical body shape and forwards filCod opt', async () => {
             const legacy = buildLegacy();
@@ -290,7 +242,7 @@ describe('ConexosClient', () => {
             // distinct request payload concern.
             expect(endpoint).toBe('imp021/list');
 
-            // Canonical Conexos body shape — must match legacy `getProcesses`.
+            // Canonical Conexos body shape for the imp021/list query.
             // pageNumber/pageSize injected by the paginate helper, not by callers.
             // v0.5: fieldList is now explicit so pesCod and priEspRefcliente
             // come back from imp021 (default `[]` was omitting them).
@@ -490,7 +442,6 @@ describe('ConexosClient', () => {
                     getSid: jest.fn().mockResolvedValue({ sid: 's', usnCod: '97' }),
                     authenticatedPost,
                     authenticatedGet: jest.fn().mockResolvedValue({ rows: [] }),
-                    getEncargosGeraisByInvoice: jest.fn().mockResolvedValue(null),
                 },
             }));
 
@@ -515,73 +466,6 @@ describe('ConexosClient', () => {
         });
     });
 
-    describe('listNFsSaida', () => {
-        it('sends vldStatus#IN filter and maps docMnyValor to valor', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValueOnce({
-                count: 1,
-                rows: [
-                    {
-                        docCod: 6141,
-                        priCod: 197,
-                        pesCod: 1234,
-                        docDtaEmissao: 1730000000000,
-                        docMnyValor: 473893.5,
-                    },
-                ],
-            });
-            const client = new ConexosClient(legacy);
-
-            const out = await client.listNFsSaida({ priCods: ['197'], filCod: 2 });
-
-            expect(out).toHaveLength(1);
-            expect(out[0]).toMatchObject({
-                docCod: '6141',
-                priCod: '197',
-                pesCod: '1234',
-                valor: 473893.5,
-            });
-
-            // FINALIZADO-only filter: Yuri 2026-05-07 ruled that the
-            // closing report must consume only com297 NFs saída with
-            // `vldStatus = 3` (finalizadas). Earlier wider filter was
-            // a probe artefact and is no longer in scope.
-            const body = legacy.listGenericPaginated.mock.calls[0][1] as Record<string, unknown>;
-            const filterList = body.filterList as Record<string, unknown>;
-            expect(filterList['vldStatus#IN']).toEqual(['3']);
-            expect(filterList['priCod#IN']).toEqual(['197']);
-        });
-
-        // v0.5 (G2): explicit fieldList ensures pesCod is returned. Default
-        // `[]` omitted it, breaking G3 (`nf-saida-mesmo-pescod-do-processo`).
-        it('sends explicit fieldList including pesCod', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValueOnce({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            await client.listNFsSaida({ priCods: ['197'], filCod: 2 });
-
-            const body = legacy.listGenericPaginated.mock.calls[0][1] as Record<string, unknown>;
-            const fieldList = body.fieldList as string[];
-            expect(fieldList).toContain('pesCod');
-            expect(fieldList).toContain('docCod');
-            expect(fieldList).toContain('priCod');
-            expect(fieldList).toContain('docMnyValor');
-        });
-
-        it('defensively defaults pesCod to "" when missing from the row', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValueOnce({
-                count: 1,
-                rows: [{ docCod: 1, priCod: 1, docMnyValor: 0 }], // no pesCod
-            });
-            const client = new ConexosClient(legacy);
-
-            const out = await client.listNFsSaida({ priCods: ['1'], filCod: 2 });
-            expect(out[0].pesCod).toBe('');
-        });
-    });
-
     describe('FINALIZADO filter (vldStatus = 3)', () => {
         it("listFinanceiroAPagar sends vldStatus#IN: ['3'] in body", async () => {
             const legacy = buildLegacy();
@@ -598,208 +482,6 @@ describe('ConexosClient', () => {
             const filterList = body.filterList as Record<string, unknown>;
             expect(filterList['vldStatus#IN']).toEqual(['3']);
         });
-
-        it("listFinanceiroAReceber sends vldStatus#IN: ['3'] in body", async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            await client.listFinanceiroAReceber({ priCods: ['P1'], filCod: 2 });
-
-            const body = legacy.listGenericPaginated.mock.calls[0][1] as Record<string, unknown>;
-            const filterList = body.filterList as Record<string, unknown>;
-            expect(filterList['vldStatus#IN']).toEqual(['3']);
-        });
-    });
-
-    describe('listBaixasSolNum (POST com309/baixas/list)', () => {
-        it('routes through com309, parses borDtaMvto, sends canonical body', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({
-                count: 1,
-                rows: [{ borDtaMvto: '2026-04-20', bxaMnyLiquido: 700 }],
-            });
-            const client = new ConexosClient(legacy);
-
-            const out = await client.listBaixasSolNum({ docCod: 'D9', filCod: 4 });
-
-            expect(out).toHaveLength(1);
-            expect(out[0].borDtaMvto).toBeInstanceOf(Date);
-            expect(out[0].borDtaMvto.toISOString().slice(0, 10)).toBe('2026-04-20');
-            expect(out[0].valor).toBe(700);
-
-            // ⚠ com309 family — NOT com308/financeiroAReceber. The earlier
-            // path was an incorrect guess; com309 is the canonical SolNum
-            // baixa endpoint per Conexos portal payload.
-            const [path, body, opts] = legacy.listGenericPaginated.mock.calls[0];
-            expect(path).toBe('com309/baixas/list/D9/1/0');
-            expect(body).toMatchObject({
-                filterList: { 'borVldFinalizado#IN': [1] },
-                orderList: { orderList: [{ propertyName: 'borCod', order: 'asc' }] },
-            });
-            expect(opts).toEqual({ filCod: 4 });
-        });
-
-        it('returns empty list when no baixas (sem dataBaixa)', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            const out = await client.listBaixasSolNum({ docCod: 'D9', filCod: 2 });
-            expect(out).toEqual([]);
-        });
-    });
-
-    describe('listTitulosNFSaida (POST com311/list/<docCod>, serviceName=com311.finTituloFin)', () => {
-        it('replicates docCod=6428 → 6 títulos all paid', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({
-                count: 6,
-                rows: Array.from({ length: 6 }, (_, i) => ({
-                    filCod: 2,
-                    docCod: 6428,
-                    titCod: i + 1,
-                    titEspNumero: String(i + 1),
-                    titDtaVencimento: '2026-03-15',
-                    titMnyValor: 84500,
-                    titMnyTotPago: 84500,
-                    pago: 1,
-                })),
-            });
-            const client = new ConexosClient(legacy);
-
-            const out = await client.listTitulosNFSaida({ docCod: '6428', filCod: 2 });
-
-            expect(out).toHaveLength(6);
-            for (let i = 0; i < 6; i++) {
-                expect(out[i].titCod).toBe(String(i + 1));
-                expect(out[i].parcela).toBe(i + 1);
-                expect(out[i].pago).toBe(true);
-                expect(out[i].valor).toBe(84500);
-            }
-
-            // ⚠ POST with docCod IN PATH and serviceName MUST be the
-            // qualified `com311.finTituloFin`; without the suffix Conexos
-            // returns 405. filCod travels via opts.
-            const [path, body, opts] = legacy.listGenericPaginated.mock.calls[0];
-            expect(path).toBe('com311/list/6428');
-            expect(body).toMatchObject({
-                serviceName: 'com311.finTituloFin',
-                filterList: { 'titVldStatus#EQ': '1' },
-            });
-            expect(opts).toEqual({ filCod: 2 });
-        });
-
-        it('returns empty list when Conexos returns no rows', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            const out = await client.listTitulosNFSaida({ docCod: '999', filCod: 7 });
-            expect(out).toEqual([]);
-        });
-
-        it('falls back to titCod when titEspNumero missing', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({
-                count: 1,
-                rows: [{ filCod: 2, docCod: 1, titCod: 3, titMnyValor: 10, pago: 0 }],
-            });
-            const client = new ConexosClient(legacy);
-
-            const out = await client.listTitulosNFSaida({ docCod: '1', filCod: 2 });
-            expect(out[0].parcela).toBe(3);
-            expect(out[0].pago).toBe(false);
-        });
-    });
-
-    describe('listBaixasTituloNFSaida (POST com311/baixas/list)', () => {
-        it('parses borDtaMvto (canonical) — confirmed against Conexos portal payload', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({
-                count: 1,
-                rows: [{ borDtaMvto: 1768521600000, bxaMnyLiquido: 84500 }],
-            });
-            const client = new ConexosClient(legacy);
-
-            const out = await client.listBaixasTituloNFSaida({
-                docCod: '6428',
-                titCod: '1',
-                filCod: 2,
-            });
-
-            expect(out).toHaveLength(1);
-            expect(out[0].borDtaMovimento).toBeInstanceOf(Date);
-            expect(out[0].borDtaMovimento.toISOString().slice(0, 10)).toBe('2026-01-16');
-            expect(out[0].valor).toBe(84500);
-        });
-
-        it('falls back to legacy borDtaMovimento name when borDtaMvto missing', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({
-                count: 1,
-                rows: [{ borDtaMovimento: '2026-04-15', bxaMnyLiquido: 100 }],
-            });
-            const client = new ConexosClient(legacy);
-
-            const out = await client.listBaixasTituloNFSaida({
-                docCod: '6428',
-                titCod: '1',
-                filCod: 2,
-            });
-            expect(out[0].borDtaMovimento.toISOString().slice(0, 10)).toBe('2026-04-15');
-        });
-
-        it('builds the canonical 3-segment path /<docCod>/<titCod>/<vldCheck=0> with borVldFinalizado filter', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            await client.listBaixasTituloNFSaida({
-                docCod: '6428',
-                titCod: '4',
-                filCod: 2,
-            });
-
-            const [path, body, opts] = legacy.listGenericPaginated.mock.calls[0];
-            expect(path).toBe('com311/baixas/list/6428/4/0');
-            expect(body).toMatchObject({
-                filterList: { 'borVldFinalizado#IN': [1] },
-                orderList: { orderList: [{ propertyName: 'borCod', order: 'asc' }] },
-            });
-            expect(opts).toEqual({ filCod: 2 });
-        });
-
-        it('returns empty list when nothing baixado yet', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            const out = await client.listBaixasTituloNFSaida({
-                docCod: '6428',
-                titCod: '6',
-                filCod: 2,
-            });
-            expect(out).toEqual([]);
-        });
-
-        it('wraps Conexos failure in ConexosError with the 3-segment endpoint', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockRejectedValue(new Error('502'));
-            const client = new ConexosClient(legacy);
-
-            try {
-                await client.listBaixasTituloNFSaida({
-                    docCod: '6428',
-                    titCod: '1',
-                    filCod: 2,
-                });
-                fail('expected ConexosError');
-            } catch (err) {
-                expect(err).toBeInstanceOf(ConexosError);
-                expect((err as ConexosError).endpoint).toBe('com311/baixas/list/6428/1/0');
-            }
-        });
     });
 
     describe('error handling', () => {
@@ -810,7 +492,7 @@ describe('ConexosClient', () => {
                 .mockResolvedValueOnce({ count: 0, rows: [] });
             const client = new ConexosClient(legacy);
 
-            await expect(client.listNFsSaida({ priCods: ['P1'], filCod: 2 })).resolves.toEqual([]);
+            await expect(client.listProcessos({ priCods: ['P1'], filCod: 2 })).resolves.toEqual([]);
             expect(legacy.listGenericPaginated).toHaveBeenCalledTimes(2);
         });
 
@@ -820,12 +502,12 @@ describe('ConexosClient', () => {
             const client = new ConexosClient(legacy);
 
             try {
-                await client.listNFsSaida({ priCods: ['P1'], filCod: 2 });
+                await client.listProcessos({ priCods: ['P1'], filCod: 2 });
                 fail('expected ConexosError');
             } catch (err) {
                 expect(err).toBeInstanceOf(ConexosError);
                 const ce = err as ConexosError;
-                expect(ce.endpoint).toBe('com297/list');
+                expect(ce.endpoint).toBe('imp021/list');
                 expect(ce.priCod).toBe('P1');
             }
         });
@@ -848,13 +530,13 @@ describe('ConexosClient', () => {
             });
             const client = new ConexosClient(legacy);
 
-            const out = await client.listBaixasTituloNFSaida({
+            const out = await client.listBaixasTitulo({
                 docCod: 'D1',
                 titCod: 'T1',
                 filCod: 2,
             });
 
-            const d = out[0].borDtaMovimento;
+            const d = out[0].borDtaMvto;
             // BR wall-clock day must be 19 (matches Conexos portal display).
             expect(d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })).toBe(
                 '19/01/2026',
@@ -871,13 +553,13 @@ describe('ConexosClient', () => {
             });
             const client = new ConexosClient(legacy);
 
-            const out = await client.listBaixasTituloNFSaida({
+            const out = await client.listBaixasTitulo({
                 docCod: 'D1',
                 titCod: 'T1',
                 filCod: 2,
             });
 
-            const d = out[0].borDtaMovimento;
+            const d = out[0].borDtaMvto;
             expect(d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })).toBe(
                 '16/01/2026',
             );
@@ -1312,558 +994,6 @@ describe('ConexosClient', () => {
 
             expect(docs[0].dpeNomPessoa).toBeUndefined();
             expect(docs[0].exportador).toBeUndefined();
-        });
-    });
-
-    describe('listLancamentosVC — Conta Contábil via com022 (Step B, lotEspSigla=VC)', () => {
-        it('returns 2 rows (débito + crédito) for priCod=2566 interview sample', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({
-                count: 2,
-                rows: [
-                    {
-                        ctbCod: 100,
-                        priCod: 2566,
-                        pesCod: 999,
-                        plaNum: 1,
-                        plaEspConta: '2.1.2.2.0001',
-                        plaDesNome: 'FORNECEDORES - INTERNACIONAIS',
-                        ctbMnyDebito: 675.85,
-                        ctbMnyCredito: 0,
-                        lotDtaData: 1779840000000,
-                    },
-                    {
-                        ctbCod: 101,
-                        priCod: 2566,
-                        pesCod: 999,
-                        plaNum: 2,
-                        plaEspConta: '1.1.3.1.0004',
-                        plaDesNome: 'ESTOQUE EM TRÂNSITO',
-                        ctbMnyDebito: 0,
-                        ctbMnyCredito: 675.85,
-                        lotDtaData: 1779840000000,
-                    },
-                ],
-            });
-            const client = new ConexosClient(legacy);
-
-            const lancs = await client.listLancamentosVC({
-                priCod: '2566',
-                filCod: 2,
-                lotCod: 4,
-                lotDtaData: 1779840000000,
-            });
-
-            expect(lancs).toHaveLength(2);
-            expect(lancs[0].plaEspConta).toBe('2.1.2.2.0001');
-            expect(lancs[0].plaDesNome).toBe('FORNECEDORES - INTERNACIONAIS');
-            expect(lancs[0].ctbMnyDebito).toBe(675.85);
-            expect(lancs[0].ctbMnyCredito).toBe(0);
-            expect(lancs[0].priCod).toBe('2566');
-            expect(lancs[1].plaEspConta).toBe('1.1.3.1.0004');
-            expect(lancs[1].ctbMnyCredito).toBe(675.85);
-            expect(lancs[1].ctbMnyDebito).toBe(0);
-        });
-
-        it('Addendum #6 — when lotEspSigla param omitted, filterList does NOT include lotEspSigla (agnostic lookup)', async () => {
-            // Pré-Addendum #6: o método hardcodava lotEspSigla=VC, mesmo que o
-            // caller não pedisse — fechava o lookup para lotes não-VC que
-            // também carregam plaDesNome=FORNECEDORES INTERNACIONAIS.
-            // Pós-Addendum #6: parâmetro opcional; quando ausente, NÃO é enviado.
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            await client.listLancamentosVC({
-                priCod: '2566',
-                filCod: 2,
-                lotCod: 4,
-                lotDtaData: 1779840000000,
-            });
-
-            const body = legacy.listGenericPaginated.mock.calls[0][1] as Record<string, unknown>;
-            const filterList = body.filterList as Record<string, unknown>;
-            expect(filterList.lotEspSigla).toBeUndefined();
-            expect(filterList.priCod).toBe(2566);
-            expect(filterList.lotCod).toBe(4);
-            expect(filterList.lotDtaData).toBe(1779840000000);
-            expect(body.serviceName).toBe('com022.ctbLancamentoCab');
-        });
-
-        it('Addendum #6 — when lotEspSigla=VC param passed explicitly, filterList includes it', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            await client.listLancamentosVC({
-                priCod: '2566',
-                filCod: 2,
-                lotCod: 4,
-                lotDtaData: 1779840000000,
-                lotEspSigla: 'VC',
-            });
-
-            const body = legacy.listGenericPaginated.mock.calls[0][1] as Record<string, unknown>;
-            const filterList = body.filterList as Record<string, unknown>;
-            expect(filterList.lotEspSigla).toBe('VC');
-        });
-
-        it('Addendum #6 — when lotEspSigla=NE param passed, filterList includes it', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            await client.listLancamentosVC({
-                priCod: '2566',
-                filCod: 2,
-                lotCod: 5,
-                lotDtaData: 1779840000000,
-                lotEspSigla: 'NE',
-            });
-
-            const body = legacy.listGenericPaginated.mock.calls[0][1] as Record<string, unknown>;
-            const filterList = body.filterList as Record<string, unknown>;
-            expect(filterList.lotEspSigla).toBe('NE');
-        });
-
-        it('returns empty array when Conexos returns no rows', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            const lancs = await client.listLancamentosVC({
-                priCod: '9999',
-                filCod: 2,
-                lotCod: 4,
-                lotDtaData: 1779840000000,
-            });
-            expect(lancs).toEqual([]);
-        });
-
-        it('rejects non-numeric priCod with ConexosError', async () => {
-            const legacy = buildLegacy();
-            const client = new ConexosClient(legacy);
-
-            await expect(
-                client.listLancamentosVC({
-                    priCod: 'NOT_NUMERIC',
-                    filCod: 2,
-                    lotCod: 4,
-                    lotDtaData: 1779840000000,
-                }),
-            ).rejects.toBeInstanceOf(ConexosError);
-        });
-
-        it('propagates ConexosError on transport failure', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockRejectedValue(new Error('504 upstream'));
-            const client = new ConexosClient(legacy);
-
-            await expect(
-                client.listLancamentosVC({
-                    priCod: '2566',
-                    filCod: 2,
-                    lotCod: 4,
-                    lotDtaData: 1779840000000,
-                }),
-            ).rejects.toBeInstanceOf(ConexosError);
-        });
-    });
-
-    describe('listLancamentosContabeisLotes — Step A of Conta Contábil 2-step lookup', () => {
-        it('hits POST com022/lancamentosContabeis/{filCod}/{docCod} with empty filter envelope', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            await client.listLancamentosContabeisLotes({ filCod: 2, docCod: '24107' });
-
-            // listGenericPaginated is called with (endpointPath, body, opts).
-            const call = legacy.listGenericPaginated.mock.calls[0];
-            expect(call[0]).toBe('com022/lancamentosContabeis/2/24107');
-            const body = call[1] as Record<string, unknown>;
-            expect(body.fieldList).toEqual([]);
-            expect(body.filterList).toEqual({});
-            expect(body.serviceName).toBe('com022.ctbLancamentoCab');
-            expect(body.orderList).toEqual({
-                orderList: [{ propertyName: 'lotCod', order: 'asc' }],
-            });
-            const opts = call[2] as { filCod?: number } | undefined;
-            expect(opts?.filCod).toBe(2);
-        });
-
-        it('returns mapped lotes (lotCod/lotDtaData/lotEspSigla) for docCod=24107 interview sample', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({
-                count: 1,
-                rows: [
-                    {
-                        lotCod: 4,
-                        lotDtaData: 1779840000000,
-                        lotEspSigla: 'VC',
-                        filCod: 2,
-                    },
-                ],
-            });
-            const client = new ConexosClient(legacy);
-
-            const lotes = await client.listLancamentosContabeisLotes({
-                filCod: 2,
-                docCod: '24107',
-            });
-
-            expect(lotes).toEqual([
-                { lotCod: 4, lotDtaData: 1779840000000, lotEspSigla: 'VC', filCod: 2 },
-            ]);
-        });
-
-        it('returns empty array when no lotes exist for docCod', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            const lotes = await client.listLancamentosContabeisLotes({
-                filCod: 2,
-                docCod: '9999',
-            });
-            expect(lotes).toEqual([]);
-        });
-
-        it('propagates ConexosError on transport failure', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockRejectedValue(new Error('504 upstream'));
-            const client = new ConexosClient(legacy);
-
-            await expect(
-                client.listLancamentosContabeisLotes({ filCod: 2, docCod: '24107' }),
-            ).rejects.toBeInstanceOf(ConexosError);
-        });
-    });
-
-    // -----------------------------------------------------------------
-    // cmn156 — currency index master + quotes (vc-moedas-cmn156,
-    // ADR-0020 Addendum #12, 2026-06-07).
-    // -----------------------------------------------------------------
-    describe('listIndicesByIdent — cmn156 master (Rota 1)', () => {
-        it('sends serviceName cmn156.CmnIndices + filter indEspIdent#IN and maps rows', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({
-                count: 2,
-                rows: [
-                    {
-                        indCod: 32,
-                        indEspIdent: '220',
-                        indEspSigla: 'USD',
-                        indDesNome: 'DOLAR DOS EUA',
-                    },
-                    {
-                        indCod: 163,
-                        indEspIdent: '978',
-                        indEspSigla: 'EUR',
-                        indDesNome: 'EURO',
-                    },
-                ],
-            });
-            const client = new ConexosClient(legacy);
-
-            const indices = await client.listIndicesByIdent({
-                moeCodMnegs: ['220', '978'],
-                filCod: 2,
-            });
-
-            const [endpoint, body] = legacy.listGenericPaginated.mock.calls[0] as [
-                string,
-                Record<string, unknown>,
-            ];
-            expect(endpoint).toBe('cmn156/list');
-            expect(body.serviceName).toBe('cmn156.CmnIndices');
-            const filterList = body.filterList as Record<string, unknown>;
-            expect(filterList['indEspIdent#IN']).toEqual(['220', '978']);
-
-            expect(indices).toHaveLength(2);
-            expect(indices[0]).toEqual({
-                indCod: '32',
-                indEspIdent: '220',
-                indEspSigla: 'USD',
-                indDesNome: 'DOLAR DOS EUA',
-            });
-            expect(indices[1].indCod).toBe('163');
-        });
-
-        it('returns [] for an empty moeCodMnegs list without calling Conexos', async () => {
-            const legacy = buildLegacy();
-            const client = new ConexosClient(legacy);
-
-            const indices = await client.listIndicesByIdent({ moeCodMnegs: [], filCod: 2 });
-
-            expect(indices).toEqual([]);
-            expect(legacy.listGenericPaginated).not.toHaveBeenCalled();
-        });
-
-        it('propagates ConexosError on transport failure', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockRejectedValue(new Error('504 upstream'));
-            const client = new ConexosClient(legacy);
-
-            await expect(
-                client.listIndicesByIdent({ moeCodMnegs: ['220'], filCod: 2 }),
-            ).rejects.toBeInstanceOf(ConexosError);
-        });
-    });
-
-    describe('listCotacoes — cmn156 quotes (Rota 2)', () => {
-        it('sends serviceName cmn156.CmnIndicesCot + intVldStatus#IN + indCod#EQ + orderList desc', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            await client.listCotacoes({ indCod: '32', filCod: 2 });
-
-            const [endpoint, body] = legacy.listGenericPaginated.mock.calls[0] as [
-                string,
-                Record<string, unknown>,
-            ];
-            expect(endpoint).toBe('cmn156/CmnIndicesCot/list');
-            expect(body.serviceName).toBe('cmn156.CmnIndicesCot');
-            const filterList = body.filterList as Record<string, unknown>;
-            expect(filterList['intVldStatus#IN']).toEqual(['1']);
-            expect(filterList['indCod#EQ']).toBe('32');
-            const orderList = body.orderList as { orderList: Array<Record<string, unknown>> };
-            expect(orderList.orderList[0]).toEqual({
-                propertyName: 'intDtaData',
-                order: 'desc',
-            });
-        });
-
-        it('maps intFltVenda (number) and intDtaData (Date via epoch-ms); carries intFltCompra', async () => {
-            const legacy = buildLegacy();
-            // 2026-04-15 00:00 UTC epoch ms.
-            const epoch = Date.UTC(2026, 3, 15);
-            legacy.listGenericPaginated.mockResolvedValue({
-                count: 1,
-                rows: [
-                    {
-                        indCod: 32,
-                        indEspIdent: '220',
-                        intDtaData: epoch,
-                        intFltVenda: 5.1234,
-                        intFltCompra: 5.0,
-                        intVldStatus: '1',
-                    },
-                ],
-            });
-            const client = new ConexosClient(legacy);
-
-            const cots = await client.listCotacoes({ indCod: '32', filCod: 2 });
-
-            expect(cots).toHaveLength(1);
-            expect(cots[0].indCod).toBe('32');
-            expect(cots[0].intFltVenda).toBe(5.1234);
-            expect(cots[0].intFltCompra).toBe(5.0);
-            expect(cots[0].intVldStatus).toBe('1');
-            expect(cots[0].intDtaData).toBeInstanceOf(Date);
-            // BR-noon shift preserves the calendar day across UTC±12h.
-            expect(cots[0].intDtaData.getUTCFullYear()).toBe(2026);
-            expect(cots[0].intDtaData.getUTCMonth()).toBe(3);
-            expect(cots[0].intDtaData.getUTCDate()).toBe(15);
-        });
-
-        it('rejects a malformed row (missing/NaN intFltVenda) with ConexosError', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({
-                count: 1,
-                rows: [
-                    {
-                        indCod: 32,
-                        indEspIdent: '220',
-                        intDtaData: Date.UTC(2026, 3, 15),
-                        // intFltVenda missing → must reject (never silently 0).
-                        intVldStatus: '1',
-                    },
-                ],
-            });
-            const client = new ConexosClient(legacy);
-
-            await expect(client.listCotacoes({ indCod: '32', filCod: 2 })).rejects.toBeInstanceOf(
-                ConexosError,
-            );
-        });
-
-        it('propagates ConexosError on transport failure', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockRejectedValue(new Error('504 upstream'));
-            const client = new ConexosClient(legacy);
-
-            await expect(client.listCotacoes({ indCod: '32', filCod: 2 })).rejects.toBeInstanceOf(
-                ConexosError,
-            );
-        });
-    });
-
-    // ─── Taxa DI/DUIMP (feature `taxa-di-duimp`, ADR-0022) ────────────────
-    // Two read-only two-hop lookups by `priCod`, precedence DUIMP → DI:
-    //   DUIMP: POST imp223/list → GET imp223/{dimCod}/{dioCod} (dioFltTaxaFrete)
-    //   DI:    POST imp019/list → POST imp019/impDiPlanilha/list (rows[0].plcFltTaxaFat)
-    describe('listDuimpByProcess (POST imp223/list)', () => {
-        it('sends canonical filter body and maps rows to {dimCod, dioCod}', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({
-                count: 1,
-                rows: [{ dimCod: 4321, dioCod: 7, extra: 'ignored' }],
-            });
-            const client = new ConexosClient(legacy);
-
-            const out = await client.listDuimpByProcess({ priCod: '2566', filCod: 2 });
-
-            expect(out).toEqual([{ dimCod: 4321, dioCod: 7 }]);
-            const [path, body, opts] = legacy.listGenericPaginated.mock.calls[0];
-            expect(path).toBe('imp223/list');
-            const b = body as Record<string, unknown>;
-            expect(b.serviceName).toBe('imp223');
-            expect(b.filterList).toMatchObject({
-                'priCod#EQ': '2566',
-                'dioVldStatus#IN': ['0', '1'],
-                'vldValidaProc#EQ': '1',
-            });
-            expect(opts).toEqual({ filCod: 2 });
-        });
-
-        it('returns [] on empty rows', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            await expect(client.listDuimpByProcess({ priCod: '999', filCod: 2 })).resolves.toEqual(
-                [],
-            );
-        });
-
-        it('wraps transport failure in ConexosError carrying the endpoint', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockRejectedValue(new Error('500 boom'));
-            const client = new ConexosClient(legacy);
-
-            await expect(
-                client.listDuimpByProcess({ priCod: '2566', filCod: 2 }),
-            ).rejects.toBeInstanceOf(ConexosError);
-        });
-    });
-
-    describe('getDuimpTaxa (GET imp223/{dimCod}/{dioCod})', () => {
-        it('calls the detail GET path with filCod and returns dioFltTaxaFrete', async () => {
-            const legacy = buildLegacy();
-            legacy.getGeneric.mockResolvedValue({ dioFltTaxaFrete: 5.1234 });
-            const client = new ConexosClient(legacy);
-
-            const taxa = await client.getDuimpTaxa({ dimCod: 4321, dioCod: 7, filCod: 2 });
-
-            expect(taxa).toBe(5.1234);
-            const [path, opts] = legacy.getGeneric.mock.calls[0];
-            expect(path).toBe('imp223/4321/7');
-            expect(opts).toEqual({ filCod: 2 });
-        });
-
-        it('wraps transport failure in ConexosError', async () => {
-            const legacy = buildLegacy();
-            legacy.getGeneric.mockRejectedValue(new Error('503'));
-            const client = new ConexosClient(legacy);
-
-            await expect(
-                client.getDuimpTaxa({ dimCod: 1, dioCod: 1, filCod: 2 }),
-            ).rejects.toBeInstanceOf(ConexosError);
-        });
-
-        it('rejects a malformed detail payload (missing dioFltTaxaFrete) as ConexosError', async () => {
-            const legacy = buildLegacy();
-            legacy.getGeneric.mockResolvedValue({ somethingElse: 1 });
-            const client = new ConexosClient(legacy);
-
-            await expect(
-                client.getDuimpTaxa({ dimCod: 1, dioCod: 1, filCod: 2 }),
-            ).rejects.toBeInstanceOf(ConexosError);
-        });
-    });
-
-    describe('listDiByProcess (POST imp019/list)', () => {
-        it('sends canonical filter body and maps rows to {cdiCod, cdiCodSeq}', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({
-                count: 1,
-                rows: [{ cdiCod: 88, cdiCodSeq: 1, extra: 'x' }],
-            });
-            const client = new ConexosClient(legacy);
-
-            const out = await client.listDiByProcess({ priCod: '2566', filCod: 2 });
-
-            expect(out).toEqual([{ cdiCod: 88, cdiCodSeq: 1 }]);
-            const [path, body, opts] = legacy.listGenericPaginated.mock.calls[0];
-            expect(path).toBe('imp019/list');
-            const b = body as Record<string, unknown>;
-            expect(b.serviceName).toBe('imp019');
-            expect(b.filterList).toMatchObject({
-                'priCod#EQ': '2566',
-                'cdiVldValidproc#EQ': '1',
-            });
-            expect(opts).toEqual({ filCod: 2 });
-        });
-
-        it('returns [] on empty rows', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            await expect(client.listDiByProcess({ priCod: '999', filCod: 2 })).resolves.toEqual([]);
-        });
-
-        it('wraps transport failure in ConexosError', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockRejectedValue(new Error('500'));
-            const client = new ConexosClient(legacy);
-
-            await expect(
-                client.listDiByProcess({ priCod: '2566', filCod: 2 }),
-            ).rejects.toBeInstanceOf(ConexosError);
-        });
-    });
-
-    describe('getDiPlanilhaTaxa (POST imp019/impDiPlanilha/list)', () => {
-        it('sends cdiCod + cdiCodSeq filter and returns rows[0].plcFltTaxaFat', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({
-                count: 2,
-                rows: [{ plcFltTaxaFat: 5.0987 }, { plcFltTaxaFat: 5.0987 }],
-            });
-            const client = new ConexosClient(legacy);
-
-            const taxa = await client.getDiPlanilhaTaxa({ cdiCod: 88, cdiCodSeq: 1, filCod: 2 });
-
-            expect(taxa).toBe(5.0987);
-            const [path, body, opts] = legacy.listGenericPaginated.mock.calls[0];
-            expect(path).toBe('imp019/impDiPlanilha/list');
-            const b = body as Record<string, unknown>;
-            expect(b.serviceName).toBe('imp019');
-            expect(b.filterList).toMatchObject({ cdiCod: 88, cdiCodSeq: 1 });
-            expect(opts).toEqual({ filCod: 2 });
-        });
-
-        it('returns null on empty rows', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
-
-            await expect(
-                client.getDiPlanilhaTaxa({ cdiCod: 88, cdiCodSeq: 1, filCod: 2 }),
-            ).resolves.toBeNull();
-        });
-
-        it('wraps transport failure in ConexosError', async () => {
-            const legacy = buildLegacy();
-            legacy.listGenericPaginated.mockRejectedValue(new Error('500'));
-            const client = new ConexosClient(legacy);
-
-            await expect(
-                client.getDiPlanilhaTaxa({ cdiCod: 88, cdiCodSeq: 1, filCod: 2 }),
-            ).rejects.toBeInstanceOf(ConexosError);
         });
     });
 });

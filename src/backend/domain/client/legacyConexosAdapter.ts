@@ -31,17 +31,6 @@ export const buildLegacyConexosAdapter = async (_config: {
                 opts?: { filCod?: number },
             ) => Promise<T>;
             authenticatedGet: <T = unknown>(path: string, opts?: { filCod?: number }) => Promise<T>;
-            getEncargosGeraisByInvoice: (
-                docTip: number,
-                docCod: number,
-                filCod?: number,
-            ) => Promise<{
-                despesas?: Array<{
-                    ctpDesNome: string;
-                    dppMnyValorMn?: number;
-                    vlr?: number;
-                }>;
-            } | null>;
         };
     };
 
@@ -98,8 +87,6 @@ export const buildLegacyConexosAdapter = async (_config: {
         listGeneric,
         listGenericPaginated,
         getGeneric,
-        getEncargosGeraisByInvoice: (docTip, docCod, filCod) =>
-            conexosService.getEncargosGeraisByInvoice(docTip, docCod, filCod),
         getFiliais: () => conexosService.getFiliais(),
         getFilCodDefault: () => conexosService.getFilCodDefault(),
     };

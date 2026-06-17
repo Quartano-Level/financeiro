@@ -34,13 +34,14 @@ describe('ConexosService — ADR-0009 missing filCod guard', () => {
         (conexosService as any).ensureSid = async () => undefined;
         (conexosService as any).sid = 'test-sid';
         // PR #19: usnCod is captured from /login at runtime; bypass that
-        // here by setting it directly so the guard in defaultHeaders /
-        // getEncargosGeraisByInvoice does not short-circuit before the
-        // MissingFilCodError path is exercised.
+        // here by setting it directly so the guard in defaultHeaders does
+        // not short-circuit before the MissingFilCodError path is exercised.
         (conexosService as any).usnCod = '97';
 
+        // authenticatedPost runs defaultHeaders(opts.filCod) before any HTTP
+        // call, so omitting filCod (and the env override) must throw.
         await expect(
-            conexosService.getEncargosGeraisByInvoice(1, 100 /* no filCod */),
+            conexosService.authenticatedPost('/com017/list', {} /* no filCod */),
         ).rejects.toBeInstanceOf(MissingFilCodErrorReloaded);
     });
 
@@ -52,18 +53,18 @@ describe('ConexosService — ADR-0009 missing filCod guard', () => {
         (conexosService as any).ensureSid = async () => undefined;
         (conexosService as any).sid = 'test-sid';
         // PR #19: usnCod is captured from /login at runtime; bypass that
-        // here by setting it directly so the guard in defaultHeaders /
-        // getEncargosGeraisByInvoice does not short-circuit before the
-        // MissingFilCodError path is exercised.
+        // here by setting it directly so the guard in defaultHeaders does
+        // not short-circuit before the MissingFilCodError path is exercised.
         (conexosService as any).usnCod = '97';
-        // Stub axios get so we don't make a real call but still execute
-        // defaultHeaders() and the URL build path.
+        // Stub axios post so we don't make a real call but still execute
+        // defaultHeaders() (resolving filCod from the env override) and the
+        // URL build path.
         (conexosService as any).client = {
-            get: async () => ({ data: { despesas: [] } }),
+            post: async () => ({ data: { rows: [] } }),
         };
 
-        const out = await conexosService.getEncargosGeraisByInvoice(1, 100 /* no filCod */);
-        expect(out).toEqual({ despesas: [] });
+        const out = await conexosService.authenticatedPost('/com017/list', {} /* no filCod */);
+        expect(out).toEqual({ rows: [] });
     });
 });
 
