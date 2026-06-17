@@ -1,5 +1,9 @@
 # Diagnose Tenant
 
+> **(alvo)** Verifica a saúde de tenants provisionados em **AWS Lambda + Terraform** — o estado-alvo.
+> **Atual:** não há tenants nem `infra/` (deploy é Render/Vercel/Supabase; ver CLAUDE.md §"Estado Atual vs.
+> Alvo"). Este comando só se aplica depois que a infra Terraform existir.
+
 Verifies the health of a deployed tenant environment. Answers the question "does the deployment work?" by checking infrastructure, secrets, and connectivity — without needing to open the AWS Console.
 
 The user MUST provide:

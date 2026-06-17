@@ -1,5 +1,10 @@
 # New Tenant Onboarding
 
+> **(alvo)** Este comando provisiona um tenant em **AWS Lambda + Terraform** — o estado-alvo. **Atual:**
+> não há `infra/`/Terraform nem nenhum tenant provisionado; a infra roda em **Render/Vercel/Supabase**
+> (ver CLAUDE.md §"Estado Atual vs. Alvo"). Só execute depois que o scaffold de infra existir
+> (`/feature-new infra "terraform tenant scaffold para financeiro"`).
+
 Create the infrastructure configuration for a new tenant in the Financeiro platform.
 
 The user MUST provide the following arguments. If they didn't, ask for them:

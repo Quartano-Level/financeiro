@@ -14,6 +14,26 @@
 > `docs-contexto/03_ontologia_financeiro.md`. Ainda **não modelado** em entidades/ações — isso nasce via
 > `/feature-new`. Ver ADRs `0001` (bootstrap) e `0002` (propósito).
 
+## Estado Atual vs. Alvo (leitura obrigatória)
+
+A meta deste doc descreve majoritariamente o **alvo** (AWS Lambda + Terraform). A infra que **roda hoje**
+é outra. Tudo abaixo marcado **(alvo)** ainda **não existe** — não trate `infra/`, Terraform, SSM ou
+handlers Lambda como presentes ao revisar mudanças.
+
+| Camada | **Atual (hoje)** | **Alvo (roadmap)** |
+|--------|------------------|--------------------|
+| Backend | Express puro (`src/backend/`, `routes/` + `http/`) | AWS Lambda + API Gateway (`src/lambda/`) |
+| Frontend | Next.js (deploy Vercel) | Next.js (igual) |
+| Infra/Deploy | Render (deploy hook via GitHub Actions); **sem `infra/` / Terraform** | Terraform multi-tenant, uma conta AWS por cliente |
+| Auth / DB | Supabase (JWT + Postgres) | SSO corporativo + RBAC; Postgres via SSM |
+| Scheduler/Jobs | nenhum (Express request/response) | EventBridge + Lambda `job/` |
+
+**Política de features:** código novo (via `/feature-new`) nasce **DDD/Lambda-ready** (tsyringe, Zod nos
+boundaries, SQL parametrizado), mesmo executando em Express/Render hoje. A dívida do template é migrada
+**proporcionalmente** em cada `/feature-tweak` que tocar o código relevante (ver
+`ontology/_inbox/migration-debt.md`). As **Inviolable Rules** marcadas **(alvo)** aplicam-se a código novo,
+não bloqueiam o legado Express até a migração.
+
 ## Overview
 Automação assistida da área **Financeira da Columbia Trading**, entregue pela Kavex (created by
 Clonex). Três frentes, todas integradas ao ERP **Conexos** (mesmo tenant do `fechamento-processos`),
@@ -25,27 +45,31 @@ multi-filial, com analista no controle (*human-in-the-loop*):
 | **II — SISPAG** (Pagamentos) | montar lote, gerar remessa, enviar ao banco, conciliar retorno | Conexos `com298` + Nexxera |
 | **III — Popula GED** (NC/ND) | casar PDF do SharePoint com a NC/ND e subir no GED | SharePoint + GED |
 
-**SaaSo** — cada cliente terá uma conta AWS isolada. **Monorepo (alvo)**: `backend/` (TypeScript
-Lambda), `infra/` (Terraform), `frontend/` (Next.js).
+**SaaSo (alvo)** — cada cliente terá uma conta AWS isolada. **Monorepo (alvo)**: `backend/` (TypeScript
+Lambda), `infra/` (Terraform), `frontend/` (Next.js). **Atual:** backend Express + frontend Next.js
+(deploy Render/Vercel), auth/DB no Supabase; sem `infra/`.
 
 ## Architecture
 
-### Data Flow
+### Data Flow **(alvo)**
 ```
 Conexos ERP → Lambda handlers (read/compute) → Frontend
         ↑ (write-back, quando aplicável)
 PostgreSQL (quando houver persistência própria)
 ```
 > Domínio ainda não modelado — o fluxo concreto é definido pelas primeiras features (`/feature-new`).
+> **Atual:** Express handlers em `src/backend/routes/` + `http/`; Postgres (Supabase) cablado mas sem uso.
 
-### DDD Layers
+### DDD Layers **(alvo)**
 ```
 Lambda handler → Service (@injectable) → Repository (@injectable) → Client (@singleton @injectable)
 ```
+> **Atual:** Express route handler → Service → … (mesma cadeia DDD a partir de Service; só o gatilho difere).
 
 ### Client Layer (`backend/src/domain/client/`)
-All clients: `@singleton() @injectable()`. Region: `process.env.aws_region ?? AWS_REGION ?? 'us-east-1'`.
-NEVER instantiate AWS SDK clients directly — always `container.resolve()`.
+All clients: `@singleton() @injectable()`. NEVER instantiate AWS SDK clients directly — always
+`container.resolve()`. **(alvo)** Region: `process.env.aws_region ?? AWS_REGION ?? 'us-east-1'` — o atual
+roda em Render/Supabase e não usa região AWS.
 
 | Client | Purpose | Estado |
 |--------|---------|--------|
@@ -64,10 +88,10 @@ backend/src/domain/
   libs/        # EnvironmentProvider, Logger, Executors, Handlers
   repository/  # Raw parameterized SQL
   service/     # Business logic
-backend/src/lambda/
+backend/src/lambda/        # (alvo) — ainda não existe; hoje as rotas vivem em backend/src/routes/
   api/         # API Gateway handlers
   job/         # Scheduled batch processing
-infra/tenants/
+infra/tenants/             # (alvo) — ainda não existe; deploy atual é Render hook (sem Terraform)
   modules/                      # Reusable Terraform modules
   tenants-vars/{env}/{client}/  # Per-client tfvars
 ```
@@ -109,12 +133,17 @@ Shared: _(a definir)_
 
 ## Commands
 ```bash
-cd backend && npm test / npm run build / npm run lint / npm run lint:fix / npm run typecheck
+# Atual
+cd src/backend  && npm run dev / npm test / npm run build / npm run lint / npm run lint:fix / npm run typecheck
+cd src/frontend && npm run dev / npm test / npm run build / npm run lint / npm run typecheck
+# (alvo) quando a infra Terraform existir:
 cd infra/tenants && terraform plan -var-file="tenants-vars/{env}/{client}/account-vars.tfvars"
 ```
 
-## Handlers (`backend/src/domain/libs/handler/`)
+## Handlers (`backend/src/domain/libs/handler/`) **(alvo)**
 Wrap every Lambda export with a Handler (auto: log metadata, error handling, SQS batch failures).
+> **Atual:** o runtime é Express (`src/backend/http/` + `routes/`); estes Handlers existem como código
+> pronto para o alvo Lambda, mas ainda não são o caminho de execução em produção.
 
 | Handler | Trigger | Parameters | Extra metadata |
 |---------|---------|------------|----------------|
@@ -235,15 +264,17 @@ Every feature or rule change goes through the pipeline. No exceptions.
 | `InfoGapBroker` | P0/P1 questions, pause + resume |
 | `PatternGuardian` | DDD/tsyringe/SQL/tenant isolation gate |
 | `CodebaseNavigator` | File lookup via `_index.json` |
-| `AwsInfraArchitect` | Called when `infra/` is touched |
+| `AwsInfraArchitect` | **(alvo)** Called when `infra/` is touched — hoje não há `infra/`/Terraform, então não é acionado |
 | `ObservabilityAdvisor` | Called when new Lambda handler/job added |
 | `Regis-Review` (8× `qa-*` + `qa-consolidator`) | Mandatory post-impl architecture review; only P0 findings re-enter the loop |
 
 ## Inviolable Rules
-1. Never commit `.env`, `terraform.tfstate`, or AWS credentials
+1. Never commit `.env`, AWS credentials, or `terraform.tfstate` **(alvo — quando a infra Terraform existir)**
 2. Never hardcode tenant values — use `EnvironmentProvider`
-3. Never `terraform apply` without `-var-file`
-4. Never add Express/Fastify/HTTP frameworks — Lambda only
+3. **(alvo)** Never `terraform apply` without `-var-file` (não há Terraform hoje)
+4. **(alvo)** Lambda only — **não adicionar** Express/Fastify/HTTP frameworks a **código novo**. O backend
+   atual *é* Express (legado do template, migrado proporcionalmente); a regra veta crescer o legado, não o
+   exige reescrever de imediato. Código novo nasce DDD/Lambda-ready.
 5. Always parameterized SQL (`$1`, `$2`) — never string interpolation
 6. Always start Lambda handlers with `import 'reflect-metadata'`
 7. Always `@injectable()` / `@singleton()` decorators on DI classes

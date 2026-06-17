@@ -1,5 +1,9 @@
 Entry point for building a new feature. Runs the full pipeline: interview → ontology diff (if needed) → tasks → autonomous loop until green → PR.
 
+> **Atual vs. Alvo:** todo código novo é **desenhado para o alvo** (Lambda + DDD + tsyringe + SQL
+> parametrizado), mesmo executando hoje em **Express/Render** (a infra atual é Render/Vercel/Supabase; ver
+> CLAUDE.md §"Estado Atual vs. Alvo"). Não presuma `infra/`/Terraform/Lambda já provisionados.
+
 ## Usage
 
 ```
