@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: src/backend/package-lock.json
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test -- --coverage
+      - run: npm run build
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: src/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test -- --coverage
+
+  tag-release:
+    name: Tag Release
+    needs: [backend, frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Tag + GitHub Release from package.json version (idempotent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # App version is FE+BE lockstep; read from frontend package.json.
+          VERSION=$(node -p "require('./src/frontend/package.json').version")
+          TAG="v${VERSION}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists — nothing to release (no version bump in this push)."
+            exit 0
+          fi
+          git tag "$TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" --title "$TAG" --notes "See CHANGELOG.md for details." || \
+            echo "::warning::Release creation failed (tag pushed); continuing."
+
+  deploy-backend:
+    name: Deploy Backend (Render)
+    needs: backend
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy hook
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK_URL secret is not set"
+            exit 1
+          fi
+          response=$(curl -sS -o /tmp/render.out -w "%{http_code}" -X POST "$RENDER_DEPLOY_HOOK_URL")
+          echo "HTTP $response"
+          cat /tmp/render.out
+          if [ "$response" -lt 200 ] || [ "$response" -ge 300 ]; then
+            exit 1
+          fi
+
+      - name: Smoke test deployed backend (/health)
+        env:
+          # NOTE: the RENDER_BACKEND_URL repo secret must be created for this
+          # step to run. Until then the step is skipped (not failed) so the
+          # deploy job stays green while the secret is provisioned.
+          RENDER_BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+        run: |
+          if [ -z "$RENDER_BACKEND_URL" ]; then
+            echo "::warning::RENDER_BACKEND_URL secret is not set — skipping smoke test"
+            exit 0
+          fi
+          # Render redeploys asynchronously; retry while the new revision boots.
+          # 12 retries x 10s = up to ~2 min before a broken deploy fails CI.
+          curl --retry 12 --retry-delay 10 --retry-all-errors -f \
+            "${RENDER_BACKEND_URL%/}/health"

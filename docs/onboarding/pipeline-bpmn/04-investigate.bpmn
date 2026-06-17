@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  id="Defs_investigate" targetNamespace="http://columbia/pipeline">
+  <bpmn:collaboration id="Collab_investigate">
+    <bpmn:participant id="Pool" name="Protocolo /investigate (causa-raiz)" processRef="Proc_investigate" />
+  </bpmn:collaboration>
+  <bpmn:process id="Proc_investigate" isExecutable="false">
+    <bpmn:laneSet id="laneSet">
+      <bpmn:lane id="Lane_Dev" name="Dev / Investigador (Humano)">
+        <bpmn:flowNodeRef>start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>repro</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>gRepro</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>incompl</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>rootcause</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>doc</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>gScope</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>codeOnly</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>ontoDiff</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>dataFix</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>handoff</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>endev</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Nav" name="CodebaseNavigator">
+        <bpmn:flowNodeRef>trace</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+
+    <bpmn:startEvent id="start" name="/investigate &lt;symptom&gt;" />
+    <bpmn:task id="repro" name="Passo 1 — Reproduzir (NF id, tenant, timestamp, log exato)" />
+    <bpmn:exclusiveGateway id="gRepro" name="reproduziu?" />
+    <bpmn:task id="incompl" name="Investigação INCOMPLETA — não corrigir o que não reproduz" />
+    <bpmn:task id="rootcause" name="Passo 3 — Causa-raiz: data | query | business-logic | config | ontology" />
+    <bpmn:task id="doc" name="Passo 4 — Documentar findings (reproducer, fix, risk, teste)" />
+    <bpmn:exclusiveGateway id="gScope" name="Passo 5 — Confirmar escopo" />
+    <bpmn:task id="codeOnly" name="Regra certa, impl errada → corrigir código + teste regressão" />
+    <bpmn:task id="ontoDiff" name="Regra errada/incompleta → diff de ontologia + código" />
+    <bpmn:task id="dataFix" name="Dado pontual → corrigir dado + guard" />
+    <bpmn:userTask id="handoff" name="Passo 6 — Handoff p/ /feature-tweak (root cause, categoria, fix, teste)" />
+    <bpmn:endEvent id="endev" name="Entra no caminho 2 — /feature-tweak 'fix: ...'" />
+
+    <bpmn:task id="trace" name="Passo 2 — Traçar para trás (handler → service → repository → input)" />
+
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="repro" />
+    <bpmn:sequenceFlow id="f2" sourceRef="repro" targetRef="gRepro" />
+    <bpmn:sequenceFlow id="f3" name="não" sourceRef="gRepro" targetRef="incompl" />
+    <bpmn:sequenceFlow id="f4" name="investigação incompleta" sourceRef="incompl" targetRef="repro" />
+    <bpmn:sequenceFlow id="f5" name="sim" sourceRef="gRepro" targetRef="trace" />
+    <bpmn:sequenceFlow id="f6" sourceRef="trace" targetRef="rootcause" />
+    <bpmn:sequenceFlow id="f7" sourceRef="rootcause" targetRef="doc" />
+    <bpmn:sequenceFlow id="f8" sourceRef="doc" targetRef="gScope" />
+    <bpmn:sequenceFlow id="f9" name="bug de implementação" sourceRef="gScope" targetRef="codeOnly" />
+    <bpmn:sequenceFlow id="f10" name="regra errada/incompleta" sourceRef="gScope" targetRef="ontoDiff" />
+    <bpmn:sequenceFlow id="f11" name="dado pontual" sourceRef="gScope" targetRef="dataFix" />
+    <bpmn:sequenceFlow id="f12" sourceRef="codeOnly" targetRef="handoff" />
+    <bpmn:sequenceFlow id="f13" sourceRef="ontoDiff" targetRef="handoff" />
+    <bpmn:sequenceFlow id="f14" sourceRef="dataFix" targetRef="handoff" />
+    <bpmn:sequenceFlow id="f15" sourceRef="handoff" targetRef="endev" />
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="di">
+    <bpmndi:BPMNPlane id="plane" bpmnElement="Collab_investigate">
+      <bpmndi:BPMNShape id="Pool_di" bpmnElement="Pool" isHorizontal="true">
+        <dc:Bounds x="160" y="80" width="2000" height="400" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Dev_di" bpmnElement="Lane_Dev" isHorizontal="true">
+        <dc:Bounds x="190" y="80" width="1970" height="260" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Nav_di" bpmnElement="Lane_Nav" isHorizontal="true">
+        <dc:Bounds x="190" y="340" width="1970" height="140" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="start_di" bpmnElement="start"><dc:Bounds x="277" y="122" width="36" height="36" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="repro_di" bpmnElement="repro"><dc:Bounds x="410" y="105" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gRepro_di" bpmnElement="gRepro" isMarkerVisible="true"><dc:Bounds x="635" y="120" width="40" height="40" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="incompl_di" bpmnElement="incompl"><dc:Bounds x="770" y="180" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="rootcause_di" bpmnElement="rootcause"><dc:Bounds x="1130" y="105" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="doc_di" bpmnElement="doc"><dc:Bounds x="1310" y="105" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gScope_di" bpmnElement="gScope" isMarkerVisible="true"><dc:Bounds x="1535" y="120" width="40" height="40" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="codeOnly_di" bpmnElement="codeOnly"><dc:Bounds x="1670" y="105" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ontoDiff_di" bpmnElement="ontoDiff"><dc:Bounds x="1670" y="180" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="dataFix_di" bpmnElement="dataFix"><dc:Bounds x="1670" y="255" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="handoff_di" bpmnElement="handoff"><dc:Bounds x="1850" y="105" width="130" height="70" /></bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="endev_di" bpmnElement="endev"><dc:Bounds x="2077" y="122" width="36" height="36" /></bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="trace_di" bpmnElement="trace"><dc:Bounds x="950" y="375" width="130" height="70" /></bpmndi:BPMNShape>
+
+      <bpmndi:BPMNEdge id="f1_di" bpmnElement="f1"><di:waypoint x="313" y="140" /><di:waypoint x="410" y="140" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f2_di" bpmnElement="f2"><di:waypoint x="540" y="140" /><di:waypoint x="635" y="140" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f3_di" bpmnElement="f3"><di:waypoint x="655" y="160" /><di:waypoint x="655" y="215" /><di:waypoint x="770" y="215" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f4_di" bpmnElement="f4"><di:waypoint x="770" y="215" /><di:waypoint x="475" y="215" /><di:waypoint x="475" y="175" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f5_di" bpmnElement="f5"><di:waypoint x="675" y="140" /><di:waypoint x="1015" y="140" /><di:waypoint x="1015" y="375" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f6_di" bpmnElement="f6"><di:waypoint x="1080" y="410" /><di:waypoint x="1195" y="410" /><di:waypoint x="1195" y="175" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f7_di" bpmnElement="f7"><di:waypoint x="1260" y="140" /><di:waypoint x="1310" y="140" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f8_di" bpmnElement="f8"><di:waypoint x="1440" y="140" /><di:waypoint x="1535" y="140" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f9_di" bpmnElement="f9"><di:waypoint x="1575" y="140" /><di:waypoint x="1670" y="140" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f10_di" bpmnElement="f10"><di:waypoint x="1555" y="160" /><di:waypoint x="1555" y="215" /><di:waypoint x="1670" y="215" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f11_di" bpmnElement="f11"><di:waypoint x="1555" y="160" /><di:waypoint x="1555" y="290" /><di:waypoint x="1670" y="290" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f12_di" bpmnElement="f12"><di:waypoint x="1800" y="140" /><di:waypoint x="1850" y="140" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f13_di" bpmnElement="f13"><di:waypoint x="1800" y="215" /><di:waypoint x="1915" y="215" /><di:waypoint x="1915" y="175" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f14_di" bpmnElement="f14"><di:waypoint x="1800" y="290" /><di:waypoint x="1915" y="290" /><di:waypoint x="1915" y="175" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f15_di" bpmnElement="f15"><di:waypoint x="1980" y="140" /><di:waypoint x="2077" y="140" /></bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

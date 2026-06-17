@@ -1,0 +1,40 @@
+{
+  "_meta": {
+    "generated": "2026-06-10",
+    "version": "0.1.0",
+    "note": "Coverage of ontology entities/actions by implemented code. Bootstrapped empty from the fechamento-processos template — no domain modelled yet. Updated by the OntologyCurator after each accepted feature.",
+    "upstream": "../../produtizacao/nf-projects",
+    "last_feature": "bootstrap (2026-06-10): template scaffold from fechamento-processos v0.10.2. No domain entities/actions/rules yet."
+  },
+  "summary": {
+    "entities_total": 0,
+    "entities_imported": 0,
+    "entities_custom": 0,
+    "entities_core": 0,
+    "entities_implemented": 0,
+    "entities_partial": 0,
+    "entities_planned": 0,
+    "entities_planned_migration": 0,
+    "entities_coverage_pct": 0,
+    "actions_total": 0,
+    "actions_implemented": 0,
+    "actions_coverage_pct": 0,
+    "business_rules_total": 0,
+    "business_rules_with_tests": 0,
+    "integrations_total": 0,
+    "ui_flows_total": 0,
+    "workflows_total": 0
+  },
+  "by_entity": {},
+  "by_business_rule": {},
+  "health_flags": {
+    "p0_inbox_open": 0,
+    "p0_inbox_topics": [],
+    "business_rules_without_tests": [],
+    "design_system_replicated": true,
+    "tooling_bootstrapped": true,
+    "watchlist": [
+      "First /feature-new should (re)document the Conexos integration contract (ontology/integrations/conexos.md) — code is wired but ontology is empty."
+    ]
+  }
+}

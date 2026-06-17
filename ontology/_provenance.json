@@ -1,0 +1,19 @@
+{
+  "_meta": {
+    "generated": "2026-06-10",
+    "version": "0.1.0",
+    "note": "Tracks the origin of each ontology artifact. The Financeiro ontology was bootstrapped EMPTY from the fechamento-processos template — only the methodology layer (charter/principles, folder structure, design profile, agents/commands) was carried over. No domain artifacts have been imported or created yet.",
+    "template_source": "../fechamento-processos (commit 837363d, v0.10.2)",
+    "upstream": "../../produtizacao/nf-projects"
+  },
+  "imported": {},
+  "custom": {},
+  "carried_from_template": [
+    "ontology/README.md (charter P1-P7 / I1-I6)",
+    "ontology/design/taste-profile.md",
+    "ontology/design/component-mapping.md",
+    ".claude/agents/*",
+    ".claude/commands/*",
+    "docs-contexto/03_ontologia.md (inherited platform seed, read-only reference)"
+  ]
+}
