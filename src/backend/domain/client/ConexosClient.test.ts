@@ -1182,37 +1182,73 @@ describe('ConexosClient', () => {
         });
     });
 
-    describe('getMnyTitPermutar (P0-3 — retry + ConexosError)', () => {
-        it('returns the literal mnyTitPermutar on success', async () => {
+    describe('getDetalheTitulos (P0-3 — retry + ConexosError; valorPermutar + pago)', () => {
+        it('returns valorPermutar and pago=false when mnyTitAberto > 0 (doc 26471, NÃO pago)', async () => {
+            const legacy = buildLegacy();
+            // Wire real 2026-06-18, filCod=2, doc 26471 (NÃO pago).
+            legacy.getGeneric.mockResolvedValue({
+                mnyTitValor: 384119.95,
+                mnyTitPago: 0,
+                mnyTitAberto: 384119.95,
+                mnyTitPermutar: 0,
+            });
+            const client = new ConexosClient(legacy);
+
+            const detail = await client.getDetalheTitulos({ docCod: '26471', filCod: 2 });
+
+            expect(detail.valorPermutar).toBe(0);
+            expect(detail.pago).toBe(false);
+        });
+
+        it('returns pago=true when mnyTitAberto === 0 (doc 24166, TOTALMENTE pago)', async () => {
+            const legacy = buildLegacy();
+            // Wire real 2026-06-18, filCod=2, doc 24166 (TOTALMENTE pago).
+            legacy.getGeneric.mockResolvedValue({
+                mnyTitValor: 266350.43,
+                mnyTitPago: 266350.43,
+                mnyTitAberto: 0,
+                mnyTitPermutar: 266350.43,
+            });
+            const client = new ConexosClient(legacy);
+
+            const detail = await client.getDetalheTitulos({ docCod: '24166', filCod: 2 });
+
+            expect(detail.valorPermutar).toBe(266350.43);
+            expect(detail.pago).toBe(true);
+        });
+
+        it('returns pago=undefined when mnyTitAberto is absent (conservative — Gate 3 reprova)', async () => {
             const legacy = buildLegacy();
             legacy.getGeneric.mockResolvedValue({ mnyTitPermutar: 44917.24 });
             const client = new ConexosClient(legacy);
 
-            const value = await client.getMnyTitPermutar({ docCod: '21841', filCod: 2 });
+            const detail = await client.getDetalheTitulos({ docCod: '21841', filCod: 2 });
 
-            expect(value).toBe(44917.24);
+            expect(detail.valorPermutar).toBe(44917.24);
+            expect(detail.pago).toBeUndefined();
         });
 
         it('retries a transient detail failure, then succeeds', async () => {
             const legacy = buildLegacy();
             legacy.getGeneric
                 .mockRejectedValueOnce(new Error('socket hang up'))
-                .mockResolvedValueOnce({ mnyTitPermutar: 100 });
+                .mockResolvedValueOnce({ mnyTitPermutar: 100, mnyTitAberto: 0 });
             const client = new ConexosClient(legacy);
 
-            const value = await client.getMnyTitPermutar({ docCod: 'D1', filCod: 2 });
+            const detail = await client.getDetalheTitulos({ docCod: 'D1', filCod: 2 });
 
-            expect(value).toBe(100);
+            expect(detail.valorPermutar).toBe(100);
+            expect(detail.pago).toBe(true);
             expect(legacy.getGeneric).toHaveBeenCalledTimes(2);
         });
 
-        it('throws ConexosError (NOT undefined) after retries are exhausted', async () => {
+        it('throws ConexosError (NOT a default object) after retries are exhausted', async () => {
             const legacy = buildLegacy();
             legacy.getGeneric.mockRejectedValue(new Error('upstream 503'));
             const client = new ConexosClient(legacy);
 
             await expect(
-                client.getMnyTitPermutar({ docCod: 'D9', filCod: 2 }),
+                client.getDetalheTitulos({ docCod: 'D9', filCod: 2 }),
             ).rejects.toBeInstanceOf(ConexosError);
             // RetryExecutor retries=2 → 2 attempts before giving up.
             expect(legacy.getGeneric).toHaveBeenCalledTimes(2);
@@ -1221,13 +1257,17 @@ describe('ConexosClient', () => {
         it('treats the 400-VALIDATION-with-responseData quirk as a valid response (no throw)', async () => {
             const legacy = buildLegacy();
             legacy.getGeneric.mockRejectedValue({
-                response: { status: 400, data: { responseData: { mnyTitPermutar: 7 } } },
+                response: {
+                    status: 400,
+                    data: { responseData: { mnyTitPermutar: 7, mnyTitAberto: 0 } },
+                },
             });
             const client = new ConexosClient(legacy);
 
-            const value = await client.getMnyTitPermutar({ docCod: '10649', filCod: 2 });
+            const detail = await client.getDetalheTitulos({ docCod: '10649', filCod: 2 });
 
-            expect(value).toBe(7);
+            expect(detail.valorPermutar).toBe(7);
+            expect(detail.pago).toBe(true);
             // Quirk path succeeds on the first attempt — no retry.
             expect(legacy.getGeneric).toHaveBeenCalledTimes(1);
         });

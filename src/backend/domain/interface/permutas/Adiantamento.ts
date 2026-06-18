@@ -5,8 +5,10 @@
  * do tipo PROFORMA (`com298` `tpdCod=99`), vinculado a um processo de importação
  * (`priCod`). Esta fatia (Fatia 1, READ-ONLY) apenas lê e avalia adiantamentos.
  *
- * `valorPermutar` é hidratado no detail (`getMnyTitPermutar`) — `null` no list,
- * por isso opcional. `pago` é derivado (`isPago` no `ConexosClient`).
+ * `valorPermutar` é hidratado no detail (`getDetalheTitulos`) — `null` no list,
+ * por isso opcional. `pago` também é hidratado no detail (`mnyTitAberto === 0`):
+ * o list devolve `mnyTitAberto`/`mnyTitPago` NULL em produção, então o valor da
+ * row do list é sempre `false` e é sobrescrito pelo detalhe na eleição.
  */
 export default interface Adiantamento {
     docCod: string;
@@ -21,7 +23,7 @@ export default interface Adiantamento {
     valor: number;
     moeda: string;
     pago: boolean;
-    /** Saldo a permutar (detail `getMnyTitPermutar`). Gate 2 (`> 0`). */
+    /** Saldo a permutar (detail `getDetalheTitulos`). Gate 2 (`> 0`). */
     valorPermutar?: number;
     exportador?: string;
 }

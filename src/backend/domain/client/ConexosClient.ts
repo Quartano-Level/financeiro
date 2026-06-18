@@ -127,7 +127,7 @@ export interface ProcessoListItem {
  *
  * `mnyTitPermutar` NÃO vem do `com298/list` — validado empiricamente
  * 2026-06-01 que a coluna não é selecionável (`ORA-00904` no Oracle).
- * O caller hidrata via `getMnyTitPermutar(docCod)` (detail endpoint
+ * O caller hidrata via `getDetalheTitulos(docCod)` (detail endpoint
  * `GET /com298/{docCod}`) per documento que precisar do valor (consumido
  * pelo `VariacaoCambialService` para `gerNum=198`). O campo aqui é
  * sempre `undefined` por enquanto, mantido na interface para
@@ -168,7 +168,7 @@ export interface DocFinanceiroAPagar {
     /**
      * `mnyTitPermutar` literal do `com298/list` quando o Conexos popular o
      * campo. `undefined` quando o list retorna `null` (caso atual em
-     * produção 2026-06-01) — caller deve hidratar via `getMnyTitPermutar`
+     * produção 2026-06-01) — caller deve hidratar via `getDetalheTitulos`
      * apenas para os docs `gerNum=198`.
      */
     mnyTitPermutar?: number;
@@ -551,7 +551,7 @@ export default class ConexosClient {
         // Nota: o `mnyTitPermutar` LITERAL do Conexos (saldo a permutar
         // disponível, mirror da UI) NÃO é retornado pelo `com298/list`
         // (campo `null` no list, validado empiricamente 2026-06-01). Para
-        // obter o valor real, use `getMnyTitPermutar(docCod, filCod)` que
+        // obter o valor real, use `getDetalheTitulos(docCod, filCod)` que
         // bate em `GET /com298/{docCod}` per documento. Esse fan-out é
         // consumido apenas por `VariacaoCambialService` (PROFORMA, Addendum
         // #8 ADR-0020). `FechamentoMensalService` / `JurosEsperadoService`
@@ -572,7 +572,7 @@ export default class ConexosClient {
      * o placeholder — o teste assere a PRESENÇA da chave, não o valor de produção.
      *
      * `valorPermutar` NÃO vem do list (`mnyTitPermutar` é null no list) — o caller
-     * hidrata via `getMnyTitPermutar(docCod)` por candidato (Gate 2).
+     * hidrata via `getDetalheTitulos(docCod)` por candidato (Gate 2).
      */
     public listAdiantamentosProforma = async (params: {
         filCod: number;
@@ -721,7 +721,7 @@ export default class ConexosClient {
      *
      * **`mnyTitPermutar` é fetch'd no detail.** Validado empiricamente
      * 2026-06-01 que `mnyTitPermutar` NÃO é coluna selecionável no list
-     * (Oracle dispara `ORA-00904`). Caller hidrata via `getMnyTitPermutar`
+     * (Oracle dispara `ORA-00904`). Caller hidrata via `getDetalheTitulos`
      * (1 chamada por candidato) — feito pelo `VariacaoCambialService`
      * apenas para docs `gerNum=198` (PROFORMA path).
      */
@@ -752,7 +752,7 @@ export default class ConexosClient {
                             // `gerNum`, `gerDes`, `dpeNomPessoa`, `mnyTitAberto`,
                             // `pago` etc. Validado empiricamente 2026-06-01.
                             // `mnyTitPermutar` fica exclusivamente no detail
-                            // endpoint — caller hidrata via `getMnyTitPermutar`
+                            // endpoint — caller hidrata via `getDetalheTitulos`
                             // (consumido pelo VC para `gerNum=198`).
                             fieldList: [],
                             filterList: {
@@ -813,29 +813,38 @@ export default class ConexosClient {
     };
 
     /**
-     * Fetches the LITERAL `mnyTitPermutar` value for a single document via
-     * `GET /com298/{docCod}` (detail endpoint). This is the "saldo a permutar
-     * disponível" displayed in the Conexos UI — NOT the residual FIFO
-     * computed by `LancamentoFinanceiroBaixaService.computeValorPermutar`
-     * (that one belongs to FM/JVE; see regra `valor-permutar-ponto-no-tempo`).
+     * Fetches the per-document aggregate for a single PROFORMA via
+     * `GET /com298/{docCod}` (detail endpoint). Returns BOTH the literal
+     * `mnyTitPermutar` ("saldo a permutar disponível" mirrored from the
+     * Conexos UI — NOT the residual FIFO of FM/JVE; see regra
+     * `valor-permutar-ponto-no-tempo`) AND the derived paid status.
      *
      * **Why fan-out (Addendum #8 ADR-0020, 2026-06-01):** the list endpoint
      * `com298/list` returns `mnyTitPermutar: null` in production (validated
      * via curl real 2026-06-01 vs `GET /com298/21841` which returns 44917.24).
-     * Conexos populates this aggregated value only at the detail-fetch path.
+     * The SAME gap applies to the paid-status fields: `mnyTitAberto`/
+     * `mnyTitPago` come back NULL on `com298/list` but are populated on the
+     * detail (probe real 2026-06-18, filCod=2: doc 26471 `mnyTitAberto`=
+     * 384119.95 ⇒ não pago; doc 24166 `mnyTitAberto`=0 ⇒ totalmente pago).
+     * So Gate 3 (TOTALMENTE PAGO) must read `pago` from HERE, not the list row.
      *
-     * **Consumer:** exclusively `VariacaoCambialService` for PROFORMA
-     * predicate (`valorPermutar > 0`). One call per PROFORMA candidate.
-     * Caller is expected to cache by `docCod` per execution to avoid
-     * redundant calls when the same document is hit multiple times.
+     * **Paid rule (unchanged ontology):** TOTALMENTE PAGO ⟺ `mnyTitAberto === 0`
+     * — same predicate `isPago` already checks first. When `mnyTitAberto` is a
+     * finite number → `pago = (mnyTitAberto === 0)`; when the field is absent/
+     * null/non-numeric → `pago = undefined` (conservative: caller's Gate 3
+     * reprova; NEVER inferred as paid).
      *
-     * @returns `undefined` when the detail endpoint omits the field or
-     *          returns null; finite number otherwise (including `0`).
+     * **Consumers:** `EleicaoPermutasService` (Gate 2 `valorPermutar > 0` +
+     * Gate 3 `pago`). One call per PROFORMA candidate. Caller is expected to
+     * cache by `docCod` per execution to avoid redundant calls.
+     *
+     * @returns `{ valorPermutar?, pago? }` — both fields independently optional
+     *          (a finite number / boolean when derivable; `undefined` otherwise).
      */
-    public getMnyTitPermutar = async (params: {
+    public getDetalheTitulos = async (params: {
         docCod: string;
         filCod: number;
-    }): Promise<number | undefined> => {
+    }): Promise<{ valorPermutar?: number; pago?: boolean }> => {
         const { docCod, filCod } = params;
         try {
             // P0-3 — wrapped in the same RetryExecutor as every other Conexos
@@ -853,9 +862,9 @@ export default class ConexosClient {
                     // detail endpoint can answer HTTP 400 `type=VALIDATION`
                     // while still returning the document inside
                     // `error.response.data.responseData`. That is a LEGITIMATE
-                    // response (not a blip) — extract `mnyTitPermutar` and
-                    // succeed WITHOUT retrying. Any other error propagates to
-                    // the RetryExecutor (retry → ConexosError if exhausted).
+                    // response (not a blip) — extract the aggregate and succeed
+                    // WITHOUT retrying. Any other error propagates to the
+                    // RetryExecutor (retry → ConexosError if exhausted).
                     const ax = err as {
                         response?: {
                             status?: number;
@@ -868,20 +877,38 @@ export default class ConexosClient {
                         responseData &&
                         typeof responseData === 'object'
                     ) {
-                        return this.parseOptionalNumber(responseData.mnyTitPermutar);
+                        return this.mapDetalheTitulos(responseData);
                     }
                     throw err;
                 }
-                if (!detail || typeof detail !== 'object') return undefined;
-                return this.parseOptionalNumber(detail.mnyTitPermutar);
+                if (!detail || typeof detail !== 'object') return {};
+                return this.mapDetalheTitulos(detail);
             });
         } catch (cause) {
             // Retries exhausted on a transient failure — surface a TYPED error
-            // (NÃO `return undefined` silencioso). The caller (EleicaoPermutas)
-            // maps this to `MOTIVO_BLOQUEIO.DETAIL_INDISPONIVEL`, distinto de
-            // uma reprovação de gate legítima (`falha-gate`).
+            // (NÃO `return {}` silencioso). The caller (EleicaoPermutas) maps
+            // this to `MOTIVO_BLOQUEIO.DETAIL_INDISPONIVEL`, distinto de uma
+            // reprovação de gate legítima (`falha-gate`).
             throw new ConexosError({ endpoint: `com298/${docCod}`, priCod: docCod, cause });
         }
+    };
+
+    /**
+     * Maps a com298 detail payload (or the 400-quirk `responseData`) into the
+     * aggregate `{ valorPermutar?, pago? }`. `pago` is derived from
+     * `mnyTitAberto` per the paid rule (=== 0 ⇒ true; > 0 ⇒ false; absent/
+     * non-numeric ⇒ undefined — conservative, never inferred as paid).
+     */
+    private mapDetalheTitulos = (
+        detail: Record<string, unknown>,
+    ): { valorPermutar?: number; pago?: boolean } => {
+        const valorPermutar = this.parseOptionalNumber(detail.mnyTitPermutar);
+        const mnyTitAberto = this.parseOptionalNumber(detail.mnyTitAberto);
+        const pago = mnyTitAberto === undefined ? undefined : mnyTitAberto === 0;
+        return {
+            ...(valorPermutar !== undefined ? { valorPermutar } : {}),
+            ...(pago !== undefined ? { pago } : {}),
+        };
     };
 
     /**
@@ -1231,7 +1258,7 @@ export default class ConexosClient {
          * (sempre `undefined` em produção) para compatibilidade futura
          * caso o Conexos passe a popular no list. O caminho real para
          * obter o `mnyTitPermutar` literal é via
-         * `ConexosClient.getMnyTitPermutar(docCod, filCod)` — fan-out
+         * `ConexosClient.getDetalheTitulos(docCod, filCod)` — fan-out
          * GET por documento, consumido por `VariacaoCambialService`.
          *
          * FM/JVE NÃO consomem este campo do list — chamam

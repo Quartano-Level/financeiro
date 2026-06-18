@@ -311,7 +311,7 @@ export default class EleicaoPermutasService {
         ]);
 
         // Adiantamentos em paralelo com limite (P0-4). Só o detail por-documento
-        // (`getMnyTitPermutar` / `listTitulosAPagar`) permanece per-candidata —
+        // (`getDetalheTitulos` / `listTitulosAPagar`) permanece per-candidata —
         // são detail endpoints sem variante batched no Conexos.
         return this.boundedConcurrency.map(
             adiantamentos,
@@ -373,7 +373,7 @@ export default class EleicaoPermutasService {
 
     /**
      * Candidata BLOQUEADA por `DETAIL_INDISPONIVEL` (P0-3) — a leitura do detalhe
-     * (`getMnyTitPermutar`) falhou após retries. Marca o Gate 2 como não avaliado
+     * (`getDetalheTitulos`) falhou após retries. Marca o Gate 2 como não avaliado
      * (detalhe ausente) sem inventar `valorPermutar`. Não é `falha-gate`.
      */
     private buildDetailIndisponivelCandidata = (adiantamento: Adiantamento): PermutaCandidata => ({
@@ -385,7 +385,7 @@ export default class EleicaoPermutasService {
             {
                 gate: GATE.VALOR_PERMUTAR,
                 passed: false,
-                detail: 'detalhe da PROFORMA indisponivel (getMnyTitPermutar falhou apos retries)',
+                detail: 'detalhe da PROFORMA indisponivel (getDetalheTitulos falhou apos retries)',
             },
         ],
     });
@@ -403,14 +403,19 @@ export default class EleicaoPermutasService {
             throw new ConexosError({ endpoint: 'aborted', priCod: adiantamento.docCod });
         }
 
-        // Gate 2 — hidrata valorPermutar via detail (mnyTitPermutar é null no list).
+        // Gate 2 + Gate 3 — hidrata valorPermutar E pago via detail. Ambos os
+        // campos voltam null no `com298/list` em produção (mnyTitPermutar e
+        // mnyTitAberto/mnyTitPago), só são populados em GET /com298/{docCod}.
+        // Por isso o `pago` da row do list é sempre false (gate-3-pago-via-detail):
+        // sobrescrevemos com o status real derivado de `mnyTitAberto` ANTES de
+        // avaliar os gates.
         // P0-3: se a leitura do detalhe falhar após retries (blip transiente do
-        // Conexos), o `getMnyTitPermutar` lança `ConexosError` — NÃO travamos a
+        // Conexos), o `getDetalheTitulos` lança `ConexosError` — NÃO travamos a
         // run inteira nem reprovamos a candidata por mérito (`falha-gate`).
         // Bloqueamos com `DETAIL_INDISPONIVEL` (re-avaliável na próxima run).
-        let valorPermutar: number | undefined;
+        let detalhe: { valorPermutar?: number; pago?: boolean };
         try {
-            valorPermutar = await this.conexosClient.getMnyTitPermutar({
+            detalhe = await this.conexosClient.getDetalheTitulos({
                 docCod: adiantamento.docCod,
                 filCod,
             });
@@ -433,7 +438,15 @@ export default class EleicaoPermutasService {
         }
         const hydrated: Adiantamento = {
             ...adiantamento,
-            ...(valorPermutar !== undefined ? { valorPermutar } : {}),
+            ...(detalhe.valorPermutar !== undefined
+                ? { valorPermutar: detalhe.valorPermutar }
+                : {}),
+            // Gate 3 — `pago` SEMPRE vem do detalhe (mnyTitAberto === 0): o list
+            // devolve mnyTitAberto/mnyTitPago NULL em produção, então o `pago` da
+            // row do list é inservível. Quando o detalhe não traz `mnyTitAberto`
+            // (campo ausente/null), `detalhe.pago` é undefined → forçamos `false`
+            // (conservador: Gate 3 reprova; NUNCA inferimos pago=true sem prova).
+            pago: detalhe.pago ?? false,
         };
 
         const result = this.elegibilidadeService.avaliarElegibilidade({

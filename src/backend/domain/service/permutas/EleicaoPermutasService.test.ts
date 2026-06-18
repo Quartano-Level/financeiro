@@ -14,6 +14,7 @@ import {
     ESTADO_ELEGIBILIDADE,
     MOTIVO_BLOQUEIO,
 } from '../../interface/permutas/EstadoElegibilidade.js';
+import { GATE } from '../../interface/permutas/PermutaCandidata.js';
 import ConexosError from '../../errors/ConexosError.js';
 
 type LogCall = { type: string; data?: Record<string, unknown> };
@@ -38,7 +39,7 @@ const buildConexos = (over: Partial<jest.Mocked<ConexosClient>> = {}) =>
         listAdiantamentosProforma: jest
             .fn()
             .mockResolvedValue({ adiantamentos: [], capHit: false }),
-        getMnyTitPermutar: jest.fn().mockResolvedValue(1000),
+        getDetalheTitulos: jest.fn().mockResolvedValue({ valorPermutar: 1000, pago: true }),
         listDeclaracaoByProcesso: jest.fn().mockResolvedValue([{ variante: 'DI', priCod: '2048' }]),
         listFinanceiroAPagar: jest.fn().mockResolvedValue({ proformas: [], invoices: [] }),
         listTitulosAPagar: jest.fn().mockResolvedValue([]),
@@ -201,12 +202,12 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
         expect(warn?.data).toMatchObject({ capHit: true, filCod: 2 });
     });
 
-    it('blocks candidata with DETAIL_INDISPONIVEL when getMnyTitPermutar fails after retries (P0-3)', async () => {
+    it('blocks candidata with DETAIL_INDISPONIVEL when getDetalheTitulos fails after retries (P0-3)', async () => {
         const conexos = buildConexos({
             listAdiantamentosProforma: jest
                 .fn()
                 .mockResolvedValue({ adiantamentos: [adiantamento], capHit: false }),
-            getMnyTitPermutar: jest
+            getDetalheTitulos: jest
                 .fn()
                 .mockRejectedValue(new ConexosError({ endpoint: 'com298/A1', priCod: 'A1' })),
         } as Partial<jest.Mocked<ConexosClient>>);
@@ -235,6 +236,123 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
         expect(calls.some((c) => c.type === LOG_TYPE.FLOW_ERROR)).toBe(false);
         const warn = calls.find((c) => c.data?.motivo === MOTIVO_BLOQUEIO.DETAIL_INDISPONIVEL);
         expect(warn).toBeDefined();
+    });
+
+    describe('Gate 3 (TOTALMENTE PAGO) hydrated from the DETAIL, not the list row', () => {
+        // Regression (gate-3-pago-via-detail): in prod com298/list returns
+        // mnyTitAberto/mnyTitPago = NULL, so the list-derived `pago` is always
+        // false. The real status lives in GET /com298/{docCod} (mnyTitAberto).
+        // `buildCandidata` MUST override `pago` from the detail before evaluating
+        // gates. Fixtures use the real wire numbers probed 2026-06-18, filCod=2.
+        const gate3Of = (candidata: { gatesAvaliados: { gate: string; passed: boolean }[] }) =>
+            candidata.gatesAvaliados.find((g) => g.gate === GATE.TOTALMENTE_PAGO);
+
+        it('NÃO pago (doc 26471, mnyTitAberto>0) → Gate 3 passed:false even if list said pago=true', async () => {
+            // List row optimistically had pago=true; the detail is the source of truth.
+            const adiantamentoListPagoTrue = { ...adiantamento, docCod: '26471', pago: true };
+            const conexos = buildConexos({
+                listAdiantamentosProforma: jest.fn().mockResolvedValue({
+                    adiantamentos: [adiantamentoListPagoTrue],
+                    capHit: false,
+                }),
+                listFinanceiroAPagar: jest
+                    .fn()
+                    .mockResolvedValue({ proformas: [], invoices: [invoice] }),
+                // doc 26471 — mnyTitAberto = 384119.95 > 0 ⇒ pago=false.
+                getDetalheTitulos: jest
+                    .fn()
+                    .mockResolvedValue({ valorPermutar: 1000, pago: false }),
+            } as Partial<jest.Mocked<ConexosClient>>);
+            const repo = buildRepo();
+            const { logService } = buildLogService();
+            const { elegibilidade, variacao, aging, concurrency, db } = realServices();
+            const service = new EleicaoPermutasService(
+                conexos,
+                elegibilidade,
+                variacao,
+                aging,
+                repo as unknown as PermutaSnapshotRepository,
+                logService,
+                concurrency,
+                db,
+            );
+
+            const result = await service.executar({ triggeredBy: 'u' });
+
+            expect(gate3Of(result.candidatas[0])?.passed).toBe(false);
+            expect(result.candidatas[0].estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+        });
+
+        it('TOTALMENTE pago (doc 24166, mnyTitAberto===0) → Gate 3 passed:true even if list said pago=false', async () => {
+            // List row had pago=false (prod NULL→false); the detail says paid.
+            const adiantamentoListPagoFalse = { ...adiantamento, docCod: '24166', pago: false };
+            const conexos = buildConexos({
+                listAdiantamentosProforma: jest.fn().mockResolvedValue({
+                    adiantamentos: [adiantamentoListPagoFalse],
+                    capHit: false,
+                }),
+                listFinanceiroAPagar: jest
+                    .fn()
+                    .mockResolvedValue({ proformas: [], invoices: [invoice] }),
+                // doc 24166 — mnyTitAberto = 0 ⇒ pago=true.
+                getDetalheTitulos: jest
+                    .fn()
+                    .mockResolvedValue({ valorPermutar: 266350.43, pago: true }),
+            } as Partial<jest.Mocked<ConexosClient>>);
+            const repo = buildRepo();
+            const { logService } = buildLogService();
+            const { elegibilidade, variacao, aging, concurrency, db } = realServices();
+            const service = new EleicaoPermutasService(
+                conexos,
+                elegibilidade,
+                variacao,
+                aging,
+                repo as unknown as PermutaSnapshotRepository,
+                logService,
+                concurrency,
+                db,
+            );
+
+            const result = await service.executar({ triggeredBy: 'u' });
+
+            expect(gate3Of(result.candidatas[0])?.passed).toBe(true);
+            expect(result.candidatas[0].estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.ELEGIVEL);
+        });
+
+        it('detail omits mnyTitAberto → pago undefined → Gate 3 reprova (conservative)', async () => {
+            const adiantamentoListPagoTrue = { ...adiantamento, docCod: '99999', pago: true };
+            const conexos = buildConexos({
+                listAdiantamentosProforma: jest.fn().mockResolvedValue({
+                    adiantamentos: [adiantamentoListPagoTrue],
+                    capHit: false,
+                }),
+                listFinanceiroAPagar: jest
+                    .fn()
+                    .mockResolvedValue({ proformas: [], invoices: [invoice] }),
+                // mnyTitAberto absent in detail ⇒ pago=undefined.
+                getDetalheTitulos: jest
+                    .fn()
+                    .mockResolvedValue({ valorPermutar: 1000, pago: undefined }),
+            } as Partial<jest.Mocked<ConexosClient>>);
+            const repo = buildRepo();
+            const { logService } = buildLogService();
+            const { elegibilidade, variacao, aging, concurrency, db } = realServices();
+            const service = new EleicaoPermutasService(
+                conexos,
+                elegibilidade,
+                variacao,
+                aging,
+                repo as unknown as PermutaSnapshotRepository,
+                logService,
+                concurrency,
+                db,
+            );
+
+            const result = await service.executar({ triggeredBy: 'u' });
+
+            expect(gate3Of(result.candidatas[0])?.passed).toBe(false);
+            expect(result.candidatas[0].estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+        });
     });
 
     it('aborts on Conexos failure → FLOW_ERROR, status=error run, 0 snapshot rows', async () => {

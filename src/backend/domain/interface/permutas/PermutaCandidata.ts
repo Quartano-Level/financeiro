@@ -11,9 +11,9 @@ import type VariacaoCambial from './VariacaoCambial.js';
 export const GATE = {
     /** Gate 1 — tipo = PROFORMA (`tpdCod=99` + `adiantamento=SIM`). */
     PROFORMA: 'gate1-proforma',
-    /** Gate 2 — `valorPermutar > 0` (`getMnyTitPermutar`). */
+    /** Gate 2 — `valorPermutar > 0` (`getDetalheTitulos`). */
     VALOR_PERMUTAR: 'gate2-valor-permutar',
-    /** Gate 3 — TOTALMENTE PAGO (`isPago`). */
+    /** Gate 3 — TOTALMENTE PAGO (`mnyTitAberto === 0`, via `getDetalheTitulos`). */
     TOTALMENTE_PAGO: 'gate3-totalmente-pago',
     /** Gate 4 — D.I XOR DUIMP atrelada. */
     DI_XOR_DUIMP: 'gate4-di-xor-duimp',

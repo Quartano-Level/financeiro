@@ -29,7 +29,7 @@ export const MOTIVO_BLOQUEIO = {
     /** Gate 4 sem D.I nem DUIMP — sem âncora de data-base. */
     DATA_BASE_INDISPONIVEL: 'data-base-indisponivel',
     /**
-     * Leitura do DETALHE da PROFORMA (`getMnyTitPermutar`) indisponível após
+     * Leitura do DETALHE da PROFORMA (`getDetalheTitulos`) indisponível após
      * retries — blip transiente do Conexos, NÃO uma reprovação legítima de gate
      * (P0-3). Distingue "não consegui ler o valor a permutar" de `falha-gate`
      * ("li e o gate reprovou"), para não enterrar uma candidata possivelmente
