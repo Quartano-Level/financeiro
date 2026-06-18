@@ -18,7 +18,7 @@ properties:
   - contaContabil
 relationships:
   - "VariacaoCambial 1—1 PermutaCandidata (derivada do par Adiantamento×Invoice)"
-last_review: 2026-06-17
+last_review: 2026-06-18
 universality_evidence:
   - "docs-contexto/03_ontologia_financeiro.md §2 Frente I (divergência cambial — analista decide)"
   - "Interview permutas-painel-elegiveis Axis 1 — moeda/valor/taxa → juros|desconto"
@@ -65,7 +65,7 @@ Detalhe completo (incl. nota histórica da heurística de valor superada) em
 | `principalMoeda` | number | `com308.titMnyValorMneg` | Principal em moeda estrangeira (mesmo p/ as duas taxas). |
 | `taxaAdiantamento` | number | `TituloAPagar.taxa` (`com308.titFltTaxaMneg`) | Câmbio fechado/contratado no adiantamento (build-probe: confirmar doc-fonte). |
 | `taxaInvoice` | number | `TituloAPagar.taxa` (`com308.titFltTaxaMneg`) | Câmbio do invoice / nova taxa (build-probe: confirmar doc-fonte). |
-| `dataBase` | Date | `DeclaracaoImportacao.dataBase` (leitura `blocked-by: P0-4`) | Data de referência da variação; campo wire pendente de probe. |
+| `dataBase` | Date | `DeclaracaoImportacao.dataBase` (`cdiDtaCi`/`dioDtaDesembaraco`; P0-4 RESOLVIDO, probe 2026-06-18) | Data de referência da variação; campo wire confirmado. |
 | `delta` | number | derivado | `principalMoeda × (taxaInvoice − taxaAdiantamento)`. |
 | `resultado` | number | derivado | `JUROS → delta`; `DESCONTO → |delta|`. |
 | `classificacao` | `'JUROS' \| 'DESCONTO'` | derivado | `taxaInvoice > taxaAdiantamento → JUROS`; `<` → `DESCONTO`. |

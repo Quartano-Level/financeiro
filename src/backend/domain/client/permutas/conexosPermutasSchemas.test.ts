@@ -14,11 +14,10 @@ describe('conexosPermutasConstants', () => {
         expect(VLD_STATUS_FINALIZADO).toEqual(['3']);
     });
 
-    it('isolates the adiantamento filter build-probe in a single constant', () => {
-        // 🔬 PROBE — provisional literal; assert it is defined & non-empty.
-        expect(typeof ADIANTAMENTO_FILTER_KEY).toBe('string');
-        expect(ADIANTAMENTO_FILTER_KEY.length).toBeGreaterThan(0);
-        expect(ADIANTAMENTO_FILTER_VALUE.length).toBeGreaterThan(0);
+    it('isolates the adiantamento filter in a single constant (P0-3 confirmado)', () => {
+        // Probe 2026-06-18 (dev tenant Columbia): campo wire = docVldTipoAdto, valor numérico 1.
+        expect(ADIANTAMENTO_FILTER_KEY).toBe('docVldTipoAdto#EQ');
+        expect(ADIANTAMENTO_FILTER_VALUE).toBe(1);
     });
 });
 

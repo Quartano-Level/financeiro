@@ -8,10 +8,10 @@ status: draft
 owners: [yuri]
 invariant: I2
 related_files: []
-last_review: 2026-06-17
+last_review: 2026-06-18
 has_canonical_test: false
-blocked-by:
-  - "P0-4 — campo wire da data-base (não bloqueia a regra XOR em si)"
+resolved-by:
+  - "P0-4 — campo wire da data-base RESOLVIDO (cdiDtaCi imp019 / dioDtaDesembaraco imp223); XOR confirmado em dados reais; probe de rede 2026-06-18, filCod=2, 410 adiantamentos reais"
 ---
 
 # Regra: di-xor-duimp
@@ -41,13 +41,15 @@ inconsistência de dado a investigar.
 - Ambas ou nenhuma → `PermutaCandidata` → `BLOQUEADA` (Gate 4 falha). Reportada para
   supervisão, não contada como falha do job.
 
-## Relação com P0-4 (único gap aberto)
+## Relação com P0-4 (RESOLVIDO — probe de rede 2026-06-18)
 
-- A **regra XOR está plenamente aplicável hoje** — a verificação de existência/XOR é
-  independente de P0-4. A **leitura da data-base** (`DeclaracaoImportacao.dataBase`) é que
-  depende do campo wire **`blocked-by: P0-4`** (probe). Ou seja: o Gate 4 valida XOR e bloqueia
-  candidatas sem declaração (motivo `data-base-indisponivel`), mas a coluna data-base/aging do
-  painel só popula após o probe P0-4.
+- A **regra XOR está plenamente aplicável** — a verificação de existência/XOR é independente do
+  campo de data. O **XOR foi confirmado em dados reais** (410 adiantamentos reais, `filCod=2`):
+  cada processo tem uma D.I OU uma DUIMP, nunca ambas.
+- A **leitura da data-base** (`DeclaracaoImportacao.dataBase`) também foi **resolvida**: campos
+  wire `cdiDtaCi` (`imp019`) e `dioDtaDesembaraco` (`imp223`), epoch-ms. O Gate 4 valida XOR e
+  bloqueia candidatas sem declaração (motivo `data-base-indisponivel`); a coluna data-base/aging
+  do painel **popula** (não mais gated).
 
 ## Teste canônico (a escrever)
 

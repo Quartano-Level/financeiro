@@ -16,21 +16,18 @@ export const TPD_INVOICE = 128 as const;
 export const VLD_STATUS_FINALIZADO = ['3'] as const;
 
 /**
- * 🔬 BUILD-PROBE (P0-3): chave wire EXATA do filtro booleano "Adiantamento=SIM"
- * na tela `com298`. O caminho está resolvido (PROFORMA + filtro `adiantamento`);
- * só falta capturar o LITERAL da chave num probe de rede no dev tenant.
- *
- * Valor provisório isolado — NÃO inventar. Quando o probe capturar o nome real
- * (ex.: `adiantamento#EQ`), trocar AQUI (ponto único). A presença da chave no
- * body é testada; o literal de produção fica pendente do probe.
- *
- * TODO 🔬 PROBE: confirmar `ADIANTAMENTO_FILTER_KEY` e `ADIANTAMENTO_FILTER_VALUE`
- * contra o dev tenant Conexos (screenshot mostra o campo, falta o wire).
+ * Filtro wire "Adiantamento=SIM" na tela `com298`. CONFIRMADO empiricamente no
+ * dev tenant Columbia (probe 2026-06-18): o campo é `docVldTipoAdto` (modelo
+ * `FinDocCab`), valor numérico `1` (adiantamento). O placeholder anterior
+ * (`adiantamento#EQ`/`'S'`) retornava HTTP 500 `adiantamento (FinDocCab)` —
+ * campo inexistente. Evidência: PROFORMA finalizadas com `docVldTipoAdto=1`
+ * carregam `gerNum=198` (ADTO FORNECEDOR INTERNACIONAIS) e
+ * `gcdDesNome="ADIANTAMENTO PROFORMA"`.
  */
-export const ADIANTAMENTO_FILTER_KEY = 'adiantamento#EQ' as const;
+export const ADIANTAMENTO_FILTER_KEY = 'docVldTipoAdto#EQ' as const;
 
-/** 🔬 BUILD-PROBE (P0-3): valor do filtro `adiantamento` (provisório). */
-export const ADIANTAMENTO_FILTER_VALUE = 'S' as const;
+/** Valor do filtro `docVldTipoAdto` para adiantamento (numérico — coluna numérica). */
+export const ADIANTAMENTO_FILTER_VALUE = 1 as const;
 
 /** Endpoint wire da D.I (data CI). */
 export const ENDPOINT_DI_LIST = 'imp019/list' as const;

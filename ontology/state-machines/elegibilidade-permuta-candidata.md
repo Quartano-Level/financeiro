@@ -7,7 +7,7 @@ implementation_status: planned
 status: draft
 owners: [yuri]
 related_files: []
-last_review: 2026-06-17
+last_review: 2026-06-18
 states: [DESCOBERTA, ELEGIVEL, BLOQUEADA]
 out_of_scope_states: [EXECUTADA]
 ---
@@ -52,7 +52,7 @@ Toda candidata `bloqueada` carrega um **motivo** (`PermutaCandidata.motivoBloque
 
 | # | De → Para | Ação (nomeada) | Regra | Vigência |
 |---|-----------|----------------|-------|----------|
-| T1 | `DESCOBERTA → ELEGIVEL` | `avaliarElegibilidade` + `casarInvoice` | 4 gates satisfeitos **E** INVOICE casada (I3). Gate 4 valida XOR; data-base `blocked-by: P0-4`. | 2026-06-17 |
+| T1 | `DESCOBERTA → ELEGIVEL` | `avaliarElegibilidade` + `casarInvoice` | 4 gates satisfeitos **E** INVOICE casada (I3). Gate 4 valida XOR + data-base (`cdiDtaCi`/`dioDtaDesembaraco`; P0-4 RESOLVIDO, probe 2026-06-18). | 2026-06-18 |
 | T2 | `DESCOBERTA → BLOQUEADA` | `avaliarElegibilidade` / `casarInvoice` | Qualquer gate falho (`falha-gate`), 0 invoice (`sem-invoice`), >1 invoice / N:M (`composto-nm` / `multiplas-invoices`), sem D.I nem DUIMP (`data-base-indisponivel`), ou detalhe da PROFORMA indisponível após retries (`detail-indisponivel`, P0-3 — blip transiente, não reprovação). Anota `motivoBloqueio`. | 2026-06-18 |
 
 ```

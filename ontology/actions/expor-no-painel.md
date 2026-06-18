@@ -7,7 +7,7 @@ implementation_status: planned
 status: draft
 owners: [yuri]
 related_files: []
-last_review: 2026-06-17
+last_review: 2026-06-18
 preconditions:
   - "Candidatas avaliadas (gates + casamento + variação quando disponível)."
 postconditions:
@@ -17,8 +17,7 @@ side_effects:
   - "Persistência de snapshot/auditoria do backlog (Postgres — migration-debt O5, I5)."
 resolved-by:
   - "P0-8 — aging conta da DATA-BASE (CI da D.I / desembaraço da DUIMP) (Yuri, 2026-06-17)"
-gated-by:
-  - "P0-4 — leitura do campo wire da data-base (coluna aging gated no probe)"
+  - "P0-4 — leitura do campo wire da data-base RESOLVIDA (cdiDtaCi / dioDtaDesembaraco); probe de rede 2026-06-18; a coluna aging agora popula"
 ---
 
 # exporNoPainel
@@ -34,14 +33,14 @@ gated-by:
   `falha-gate`, `data-base-indisponivel` — ver state-machine).
 - READ-ONLY: nenhuma ação de execução é oferecida aqui (a execução é a Fatia 2, I1/I4).
 
-## Aging (P0-8 — RESOLVIDO; leitura gated em P0-4)
+## Aging (P0-8 + P0-4 — RESOLVIDOS; coluna aging popula)
 
-- A idade da pendência conta a partir da **DATA-BASE** = data CI da D.I (`imp019`) **OU** data
-  de desembaraço da DUIMP (`imp223`). `aging = hoje − dataBase`. Define a coluna "aging" e o
-  ordenamento do backlog (mais antigo primeiro). Ver `business-rules/aging-anchor.md`.
-- **Gated em P0-4:** a **regra** do aging está definida; a **leitura** do campo wire da
-  data-base segue pendente do probe P0-4. Enquanto não capturado, o painel lista candidatas mas
-  a coluna aging fica pendente da leitura da data-base.
+- A idade da pendência conta a partir da **DATA-BASE** = data CI da D.I (`imp019.cdiDtaCi`) **OU**
+  data de desembaraço da DUIMP (`imp223.dioDtaDesembaraco`). `aging = hoje − dataBase`. Define a
+  coluna "aging" e o ordenamento do backlog (mais antigo primeiro). Ver
+  `business-rules/aging-anchor.md`.
+- **P0-4 RESOLVIDO (probe 2026-06-18):** os campos wire da data-base foram capturados — a **coluna
+  aging agora popula**. Não mais gated.
 
 ## Auditoria (I5)
 

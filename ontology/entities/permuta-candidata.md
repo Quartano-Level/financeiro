@@ -22,7 +22,7 @@ relationships:
   - "PermutaCandidata 1—1 DeclaracaoImportacao (data-base)"
   - "PermutaCandidata 1—1 VariacaoCambial (derivada)"
 state_machine: elegibilidade-permuta-candidata
-last_review: 2026-06-17
+last_review: 2026-06-18
 universality_evidence:
   - "docs-contexto/03_ontologia_financeiro.md §2 Frente I (backlog elegível com aging)"
   - "ontology/glossary.md — 'Backlog elegível' / 'Pendência bloqueada'"
@@ -62,9 +62,9 @@ contada como falha — ver glossary "Pendência bloqueada").
 | `filCod` | number | `Adiantamento.filCod` | **Invariante multi-filial I6** — filial da candidata. Persistido em `permuta_candidata_snapshot.fil_cod` (P0-2 RESOLVIDO; antes sempre `NULL`). |
 | `adiantamento` | `Adiantamento` | composição | Lado-débito (carrega o `filCod` canônico). |
 | `invoiceCasada` | `Invoice?` | `casarInvoice` | Lado-crédito = exatamente 1 invoice FINALIZADA (P0-6 RESOLVIDO; 0 → `sem-invoice`, >1 → `composto-nm`). |
-| `declaracaoImportacao` | `DeclaracaoImportacao?` | Gate 4 | D.I XOR DUIMP (existência/XOR ok; leitura da data-base `blocked-by: P0-4`). |
+| `declaracaoImportacao` | `DeclaracaoImportacao?` | Gate 4 | D.I XOR DUIMP (existência/XOR + data-base via `cdiDtaCi`/`dioDtaDesembaraco`; P0-4 RESOLVIDO, probe 2026-06-18). |
 | `variacaoCambial` | `VariacaoCambial?` | `calcularVariacaoCambial` | Classificação por TAXA de câmbio (P0-1 RESOLVIDO). |
-| `aging` | number (dias) | derivado | Âncora = data-base (P0-8 RESOLVIDO); `aging = hoje − dataBase`. Leitura da data-base gated em P0-4. |
+| `aging` | number (dias) | derivado | Âncora = data-base (P0-8 RESOLVIDO); `aging = hoje − dataBase`. Leitura da data-base RESOLVIDA (P0-4, probe 2026-06-18) — coluna aging popula. |
 | `estadoElegibilidade` | enum | máquina de estado | `descoberta \| elegivel \| bloqueada` (ver state-machine). |
 | `motivoBloqueio` | enum? | `casarInvoice` / `avaliarElegibilidade` | Quando `bloqueada`: `composto-nm \| sem-invoice \| multiplas-invoices \| falha-gate \| data-base-indisponivel` (ver state-machine). |
 | `gatesAvaliados` | registro | `avaliarElegibilidade` | Resultado de cada um dos 4 gates (auditoria I5). |

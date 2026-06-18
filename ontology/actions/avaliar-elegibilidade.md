@@ -7,7 +7,7 @@ implementation_status: planned
 status: draft
 owners: [yuri]
 related_files: []
-last_review: 2026-06-17
+last_review: 2026-06-18
 preconditions:
   - "Adiantamento eleito por elegerAdiantamentos."
   - "Sessão Conexos ativa."
@@ -17,9 +17,11 @@ postconditions:
   - "Nenhuma escrita no ERP (I4)."
 side_effects:
   - "Leitura detail com298 (getMnyTitPermutar) por candidato — fan-out."
-  - "Leitura imp019/imp223 para o Gate 4 (existência/XOR ok; extração da data-base blocked-by P0-4)."
+  - "Leitura imp019/imp223 para o Gate 4 (existência/XOR + extração da data-base via cdiDtaCi/dioDtaDesembaraco — P0-4 RESOLVIDO)."
+resolved-by:
+  - "P0-4 — campo wire da data-base RESOLVIDO (cdiDtaCi imp019 / dioDtaDesembaraco imp223); probe de rede 2026-06-18, filCod=2, 410 adiantamentos reais"
 blocked-by:
-  - "P0-4 — campo wire da data-base (D.I/DUIMP): Gate 4 valida XOR; EXTRAÇÃO da data fica pendente do probe"
+  - "gate-3-pago-via-detail (NOVO, P1) — fonte wire do status TOTALMENTE PAGO no list vem null (mnyTitAberto/mnyTitPago=null nos 410 reais); provável endpoint de detalhe. Bloqueante p/ a eleição produzir ALGUMA candidata elegível."
 ---
 
 # avaliarElegibilidade (4 gates)
@@ -32,28 +34,39 @@ blocked-by:
 
 | Gate | Regra | Origem (wire) | Notas |
 |------|-------|---------------|-------|
-| Gate 1 | tipo = PROFORMA | `tpdCod=99` + filtro `adiantamento=SIM` | P0-3 RESOLVIDO (ação `elegerAdiantamentos`; literal da chave = build-probe). |
+| Gate 1 | tipo = PROFORMA | `tpdCod=99` + filtro `docVldTipoAdto=1` (FinDocCab) | P0-3 RESOLVIDO (ação `elegerAdiantamentos`; chave wire confirmada por probe 2026-06-18). |
 | Gate 2 | `valorPermutar > 0` | `getMnyTitPermutar(docCod)` | Saldo a permutar disponível (detail endpoint). |
-| Gate 3 | TOTALMENTE PAGO | `mnyTitAberto===0` / `pago===1` (`isPago`) | Adiantamento liquidado. |
-| Gate 4 | D.I **XOR** DUIMP atrelada | `imp019` / `imp223` pelo `priCod` | Existência/XOR validável hoje; **extração** da data-base segue `blocked-by: P0-4` (probe). |
+| Gate 3 | TOTALMENTE PAGO | `mnyTitAberto===0` / `pago===1` (`isPago`) | **NOVO GAP `gate-3-pago-via-detail`:** no `com298/list`, `mnyTitAberto`/`mnyTitPago`=`null` (410 reais) → `isPago=false` p/ todos. Fonte real provável = endpoint de **detalhe** (modal financeiro, igual a `mnyTitPermutar`). |
+| Gate 4 | D.I **XOR** DUIMP atrelada | `imp019.cdiDtaCi` / `imp223.dioDtaDesembaraco` pelo `priCod` | **P0-4 RESOLVIDO** (probe 2026-06-18): existência/XOR **e** extração da data-base disponíveis. |
 
 ## Reuso do ConexosClient
 
 - Gate 2: `ConexosClient.getMnyTitPermutar({ docCod, filCod })`.
-- Gate 3: derivado do payload do `com298` já lido (`isPago`).
-- Gate 4: `imp019/list` (D.I) e `imp223/list` (DUIMP) — re-introduzidos (ADR-0004);
-  **campo da data-base `blocked-by: P0-4`**.
+- Gate 3: derivado do payload do `com298` já lido (`isPago`) — **porém o list não traz o status
+  pago populável** (ver gap `gate-3-pago-via-detail` abaixo).
+- Gate 4: `imp019/list` (D.I, `cdiDtaCi`) e `imp223/list` (DUIMP, `dioDtaDesembaraco`) —
+  re-introduzidos (ADR-0004); **campo da data-base RESOLVIDO (P0-4, probe 2026-06-18)**.
 
-## Gate 4 — XOR resolvido, data-base ainda gated (P0-4)
+## Gate 4 — XOR e data-base RESOLVIDOS (P0-4, probe 2026-06-18)
 
 - O **Gate 4 valida a existência/XOR** da declaração (D.I `imp019` **XOR** DUIMP `imp223` pelo
-  `priCod`) **hoje** — isso não depende de P0-4. Sem D.I **nem** DUIMP → `bloqueada` com motivo
-  `data-base-indisponivel`; ambas → anomalia XOR → `bloqueada` (`falha-gate` / ver `di-xor-duimp`).
-- **`blocked-by: P0-4` (extração da data):** o nome **wire** dos campos de data-base ("data CI"
-  da D.I `imp019`; "data de desembaraço" da DUIMP `imp223`) ainda **não** está confirmado — os
-  reads foram podados (ADR-0003) e precisam ser re-introduzidos com o nome correto via **probe**.
-  **Não chutar.** A âncora do aging já está definida como a data-base (P0-8), mas a **leitura**
-  do valor fica pendente do probe — ver `business-rules/aging-anchor.md`.
+  `priCod`) **e** extrai a **data-base**: `cdiDtaCi` (D.I, epoch-ms) ou `dioDtaDesembaraco` (DUIMP,
+  epoch-ms). XOR confirmado em dados reais (cada processo tem uma OU outra). Já plugado em
+  `ConexosClient.mapDeclaracaoDataBase`. **A coluna aging agora popula.**
+- Sem D.I **nem** DUIMP → `bloqueada` com motivo `data-base-indisponivel`; ambas → anomalia XOR →
+  `bloqueada` (`falha-gate` / ver `di-xor-duimp`).
+- A âncora do aging (P0-8) está definida como a data-base e a **leitura está disponível** — ver
+  `business-rules/aging-anchor.md`. **P0-4 deixa de ser `blocked-by`.**
+
+## NOVO GAP — Gate 3 (TOTALMENTE PAGO) via detalhe (P1, descoberto no probe 2026-06-18)
+
+- No `com298/list`, `mnyTitAberto`/`mnyTitPago` vêm **`null`** nos **410 adiantamentos reais**, então
+  `isPago` retorna **`false` para TODOS** — o Gate 3 **bloquearia tudo**. O status "TOTALMENTE PAGO"
+  provavelmente mora no **endpoint de detalhe** (modal financeiro do adiantamento), igual ao
+  `mnyTitPermutar` (já hidratado via `getMnyTitPermutar` detail).
+- Gap **`gate-3-pago-via-detail`**: confirmar a fonte wire do status pago (detail vs list) **antes**
+  de a eleição produzir candidatas elegíveis. **Bloqueante** para a feature produzir ALGUMA
+  candidata elegível, mas **não** foi escopo do probe de 2026-06-18.
 
 ## Motivos de bloqueio (taxonomia)
 

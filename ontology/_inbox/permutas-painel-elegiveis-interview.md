@@ -113,6 +113,14 @@ Regras que **não podem** ser violadas:
 
 > **STATUS (2026-06-17, Yuri respondeu):** P0-1, P0-3, P0-6, P0-7, P0-8, P0-5, P1-2 = **RESOLVIDO**.
 > **P0-4 = OPEN (vira probe de diagnóstico)** — único gap aberto.
+>
+> **ATUALIZAÇÃO (2026-06-18, probe de rede dev tenant Columbia, filCod=2, 410 adiantamentos reais):**
+> **P0-3 e P0-4 = RESOLVIDO** com evidência empírica real. P0-3: chave wire do filtro adiantamento =
+> `docVldTipoAdto=1` (FinDocCab) — o placeholder `adiantamento#EQ:'S'` era um **BUG** (HTTP 500
+> `adiantamento (FinDocCab)`, campo inexistente). P0-4: data-base = `cdiDtaCi` (imp019, D.I) /
+> `dioDtaDesembaraco` (imp223, DUIMP), ambos epoch-ms; XOR confirmado em dados reais; coluna aging
+> agora popula. **Não há mais gap P0 aberto.** **NOVO GAP descoberto pelo probe** (sugestão P1):
+> `gate-3-pago-via-detail` — ver seção de gaps abaixo.
 
 ### P0 — BLOQUEIAM o avanço (TaskScoper não fecha critérios sem isto)
 
@@ -128,20 +136,25 @@ Regras que **não podem** ser violadas:
   (build-probe: confirmar doc-fonte). → `classificacao-juros-desconto`, `variacao-cambial`,
   `calcular-variacao-cambial` desbloqueados.
 
-- **P0-3 — Filtro "Adiantamento = SIM". — ✅ RESOLVIDO (nível funcional, 2026-06-17).**
+- **P0-3 — Filtro "Adiantamento = SIM". — ✅ RESOLVIDO (chave wire confirmada, probe de rede 2026-06-18).**
   A tela `com298` (FILTROS) tem campo dedicado **"Adiantamento = SIM"**, usado com
-  **Tipo=PROFORMA** e **Situação=FINALIZADO** (Plano Financeiro VAZIO) — confirmado por
-  screenshot. Caminho = `listFinanceiroAPagar({docTip:'PROFORMA'})` (`tpdCod=99`,
-  `vldStatus=FINALIZADO`) **+ filtro booleano `adiantamento=SIM`**. **NÃO** é
-  `listAdiantamentoFinanceiroAPagar`/`tpdCod=143`/`gerNum=198`. **build-probe:** capturar o
-  literal da chave wire (ex.: `adiantamento#EQ:'S'`) — não é mais P0 bloqueante.
+  **Tipo=PROFORMA** e **Situação=FINALIZADO** (Plano Financeiro VAZIO). Caminho =
+  `listFinanceiroAPagar({docTip:'PROFORMA'})` (`tpdCod=99`, `vldStatus=FINALIZADO`) **+ filtro
+  `docVldTipoAdto=1`** (modelo `FinDocCab`). **Chave wire confirmada por probe de rede** (dev tenant
+  Columbia, 2026-06-18, `filCod=2`, validado contra **410 adiantamentos reais**): `docVldTipoAdto`
+  numérico = `1`. O placeholder anterior (`adiantamento#EQ`/`'S'`) era um **BUG** (HTTP 500
+  `adiantamento (FinDocCab)`, campo inexistente). Evidência: PROFORMA com `docVldTipoAdto=1`
+  carregam `gerNum=198` (ADTO FORNECEDOR INTERNACIONAIS) e `gcdDesNome="ADIANTAMENTO PROFORMA"`.
+  Já plugado em `conexosPermutasConstants.ts`. **NÃO** é `listAdiantamentoFinanceiroAPagar`/`tpdCod=143`/`gerNum=198`
+  (path). **Deixa de ser build-probe.**
 
-- **P0-4 — Data-base (D.I e DUIMP) no payload wire. — 🔴 OPEN (vira probe de diagnóstico).**
-  Yuri **não sabe** os nomes dos campos wire da "data CI" da D.I (`imp019`) e da "data de
-  desembaraço" da DUIMP (`imp223`). Vira **probe de rede no build**. `DeclaracaoImportacao.dataBase`
-  fica **declarada** porém com leitura `blocked-by: P0-4`. **Gate 4 valida existência/XOR**
-  independentemente; só a **extração da data** fica pendente. A âncora do aging já está definida
-  (P0-8) mas a coluna aging fica **gated** neste probe. **ÚNICO GAP P0 AINDA ABERTO.**
+- **P0-4 — Data-base (D.I e DUIMP) no payload wire. — ✅ RESOLVIDO (probe de rede 2026-06-18).**
+  Campos wire confirmados empiricamente (dev tenant Columbia, 2026-06-18, `filCod=2`, validado
+  contra **410 adiantamentos reais**): D.I (`imp019`) = **`cdiDtaCi`** (data "CI", epoch-ms;
+  acompanha `cdiEspNumci` = nº da CI; confere com o PDF "DI = CI"); DUIMP (`imp223`) =
+  **`dioDtaDesembaraco`** (data de desembaraço, epoch-ms). **XOR DI/DUIMP confirmado em dados reais**
+  (processo tem uma OU outra). Já plugado em `ConexosClient.mapDeclaracaoDataBase`. A **coluna aging
+  agora popula**. Deixa de ser `blocked-by: P0-4`. **Não há mais gap P0 aberto nesta fatia.**
 
 - **P0-6 — Definição de "INVOICE casada". — ✅ RESOLVIDO (2026-06-17).**
   "Casada" = **exatamente 1 invoice FINALIZADA** no processo. **0** → `bloqueada` (`sem-invoice`,
@@ -164,6 +177,15 @@ Regras que **não podem** ser violadas:
 - **P1-2 — Contas 130/131 (mapeamento). — ✅ RESOLVIDO (junto de P0-1, 2026-06-17).**
   **131 VAR.CAMBIAL PASSIVA = JUROS** (taxa subiu) / **130 VAR.CAMBIAL ATIVA = DESCONTO** (taxa
   caiu). PDF rotulava ambas "juros" (typo); a regra de TAXA resolve o mapeamento.
+
+- **gate-3-pago-via-detail — 🔴 NOVO GAP ABERTO (sugestão P1, descoberto no probe de rede 2026-06-18).**
+  Nos **410 adiantamentos reais**, o `com298/list` traz `mnyTitAberto=null` / `mnyTitPago=null`, então
+  `isPago` retorna **`false` para TODOS** — o **Gate 3 (TOTALMENTE PAGO) bloquearia tudo**. O status
+  "TOTALMENTE PAGO" provavelmente mora no **endpoint de detalhe** (modal financeiro do adiantamento),
+  igual ao `mnyTitPermutar` (que já é hidratado via `getMnyTitPermutar` detail). **Ação:** confirmar a
+  fonte wire do status pago (detail vs list) **antes** de a eleição produzir candidatas elegíveis.
+  **Bloqueante** para a feature produzir ALGUMA candidata elegível, mas **NÃO** foi escopo do probe de
+  2026-06-18. Também registrado em `permutas-painel-elegiveis-regis-followups.md`.
 
 - **P0/P1-5 — 1:1 vs N:M (composto). — ✅ RESOLVIDO (2026-06-17).**
   Fatia 1 executa **SOMENTE 1:1** (1 PROFORMA ↔ 1 invoice finalizada no processo). Casos **N:M
@@ -220,15 +242,19 @@ da data-base** (coluna aging populada + Gate 4 com data) fica gated no **probe P
 
 **P0 que GATEIAM o avanço (TaskScoper não fecha critérios destas ações sem resposta):**
 - **P0-1** (juros/desconto) → ✅ RESOLVIDO (comparação de TAXA). `classificacao-juros-desconto` saiu de STUB; `VariacaoCambial`/`calcularVariacaoCambial` desbloqueados.
-- **P0-3** (filtro "Adiantamento=SIM") → ✅ RESOLVIDO (PROFORMA + `adiantamento=SIM`). `elegerAdiantamentos`/`conexos` desbloqueados; literal da chave = build-probe.
-- **P0-4** (campo wire data-base imp019/imp223) → 🔴 OPEN (probe). `DeclaracaoImportacao.dataBase` leitura gated; Gate 4 valida XOR. **ÚNICO ABERTO.**
+- **P0-3** (filtro "Adiantamento=SIM") → ✅ RESOLVIDO (probe 2026-06-18). Chave wire = `docVldTipoAdto=1` (FinDocCab). `elegerAdiantamentos`/`conexos` desbloqueados; **deixa de ser build-probe**.
+- **P0-4** (campo wire data-base imp019/imp223) → ✅ RESOLVIDO (probe 2026-06-18). `cdiDtaCi` (imp019) / `dioDtaDesembaraco` (imp223), epoch-ms; XOR confirmado em dados reais; coluna aging popula. **Não há mais gap P0 aberto.**
 - **P0-6** (definição "INVOICE casada") → ✅ RESOLVIDO (=1 finalizada). `casarInvoice`/`elegibilidade-permuta` desbloqueados.
 - **P0-7** (cadência/rate-limit) → ✅ RESOLVIDO (lista todas via 3 filtros; sem janela; multi-filial). query-base de `elegerAdiantamentos` definida.
-- **P0-8** (âncora do aging) → ✅ RESOLVIDO (=data-base). `aging-anchor` saiu de STUB; `exporNoPainel` desbloqueado; coluna aging gated em P0-4.
+- **P0-8** (âncora do aging) → ✅ RESOLVIDO (=data-base). `aging-anchor` saiu de STUB; `exporNoPainel` desbloqueado; coluna aging populável (P0-4 resolvido).
 
-**Resolução pós-respostas (2026-06-17, addendum ADR-0004):** P0-1/P0-3/P0-5/P0-6/P0-7/P0-8/P1-2
-RESOLVIDOS; P0-4 vira **probe de diagnóstico** (único gap). N:M → backlog (`composto-nm`),
-`PermutaCandidata` mantém shape 1:1.
+**NOVO GAP (probe 2026-06-18, sugestão P1):** `gate-3-pago-via-detail` — status TOTALMENTE PAGO vem
+`null` no `com298/list` (mnyTitAberto/mnyTitPago=null nos 410 reais); fonte provável = endpoint de
+detalhe. Bloqueante p/ a eleição produzir ALGUMA candidata elegível (fora de escopo do probe).
+
+**Resolução pós-respostas (2026-06-17, addendum ADR-0004; + probe 2026-06-18):** P0-1/P0-3/P0-4/P0-5/P0-6/P0-7/P0-8/P1-2
+RESOLVIDOS (P0-3 e P0-4 com evidência empírica de rede). N:M → backlog (`composto-nm`),
+`PermutaCandidata` mantém shape 1:1. **Único gap aberto remanescente: `gate-3-pago-via-detail` (P1).**
 
 **Watchlist** (não bloqueia Fatia 1): P0/P1-5 → **decidido**: N:M é backlog nesta fatia (pode
 mudar shape de `PermutaCandidata` numa fatia futura); P1-A (caminho de leitura do adiantamento)

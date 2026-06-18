@@ -681,22 +681,23 @@ export default class ConexosClient {
     };
 
     /**
-     * ⏸ GATED-P0-4 — mapper PLUGÁVEL e ISOLADO da extração da data-base wire.
+     * Mapper ISOLADO da extração da data-base wire (P0-4 RESOLVIDO).
      *
-     * Yuri NÃO sabe os nomes dos campos wire da "data CI" da D.I (`imp019`) e da
-     * "data de desembaraço" da DUIMP (`imp223`). Até o probe de rede capturar o
-     * campo, este mapper devolve `undefined` (NÃO chutar o nome). Quando o probe
-     * resolver, plugar a leitura AQUI (ponto único) — ex.:
-     *   DI:    `this.parseDate(row.<campoDataCI>)`
-     *   DUIMP: `this.parseDate(row.<campoDataDesembaraco>)`
-     * e a coluna aging passa a popular sem tocar no resto da cadeia.
+     * Campos confirmados empiricamente no dev tenant Columbia (probe 2026-06-18):
+     *   - D.I (`imp019`)   → `cdiDtaCi` (data "CI"; cf. PDF "DI = CI"). Acompanha
+     *     `cdiEspNumci` (nº da CI). Sample: `1768521600000`.
+     *   - DUIMP (`imp223`) → `dioDtaDesembaraco` (data de desembaraço).
+     *     Sample: `1769040000000`.
+     * Ambos epoch-ms; `parseDate` aplica o shift BR-noon. Ausência → `undefined`
+     * (a coluna aging fica nula para aquela declaração, sem quebrar a cadeia).
      */
     private mapDeclaracaoDataBase = (
-        _row: Record<string, unknown>,
-        _variante: VarianteDeclaracao,
+        row: Record<string, unknown>,
+        variante: VarianteDeclaracao,
     ): Date | undefined => {
-        // TODO 🔬 PROBE (P0-4): plugar o campo wire da data-base aqui.
-        return undefined;
+        const raw = variante === 'DI' ? row.cdiDtaCi : row.dioDtaDesembaraco;
+        const ms = this.parseOptionalNumber(raw);
+        return ms !== undefined ? this.parseDate(ms) : undefined;
     };
 
     /**

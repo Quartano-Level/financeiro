@@ -7,7 +7,7 @@ implementation_status: planned
 status: draft
 owners: [yuri]
 related_files: []
-last_review: 2026-06-17
+last_review: 2026-06-18
 preconditions:
   - "Sessão Conexos ativa (ensureSid)."
   - "Escopo de filiais definido (multi-filial, I6)."
@@ -18,10 +18,8 @@ side_effects:
   - "Leitura paginada do com298 (rate-limit — nota de implementação, paginate cap existente)."
   - "Registro de auditoria da execução (I5)."
 resolved-by:
-  - "P0-3 — caminho = listFinanceiroAPagar(PROFORMA) + filtro booleano adiantamento=SIM (Yuri, 2026-06-17)"
+  - "P0-3 — caminho = listFinanceiroAPagar(PROFORMA) + filtro docVldTipoAdto=1 (FinDocCab); chave wire confirmada por probe de rede (dev tenant Columbia, 2026-06-18, filCod=2, 410 adiantamentos reais)"
   - "P0-7 — query lista TODAS via 3 filtros, depois elege; sem janela incremental; multi-filial (Yuri, 2026-06-17)"
-build-probe:
-  - "Capturar o nome EXATO da chave wire do filtro 'adiantamento' (ex.: adiantamento#EQ:'S') num probe de rede."
 ---
 
 # elegerAdiantamentos (job diário)
@@ -36,24 +34,30 @@ A eleição lista **TODAS** as candidatas via os **3 filtros** confirmados por s
 
 | Filtro | Valor | Wire |
 |--------|-------|------|
-| **Adiantamento** | `SIM` | filtro booleano dedicado (chave wire exata → build-probe) |
+| **Adiantamento** | `SIM` | `docVldTipoAdto=1` (modelo `FinDocCab`) — chave wire confirmada por probe |
 | **Tipo de Documento** | `PROFORMA` | `tpdCod=99` |
 | **Situação** | `FINALIZADO` | `vldStatus=['3']` |
 | **Plano Financeiro** | _(VAZIO)_ | — |
 
 - Caminho correto: **`ConexosClient.listFinanceiroAPagar({ docTip: 'PROFORMA' })`**
-  (`tpdCod=99`, `vldStatus=FINALIZADO`) **+ um filtro booleano `adiantamento` (=SIM)**.
-- **NÃO** é o caminho `listAdiantamentoFinanceiroAPagar` / `tpdCod=143` / `gerNum=198` — esse
+  (`tpdCod=99`, `vldStatus=FINALIZADO`) **+ o filtro `docVldTipoAdto=1`** (FinDocCab).
+- **NÃO** é o caminho `listAdiantamentoFinanceiroAPagar` / `tpdCod=143` / `gerNum=198` (path) — esse
   caminho alternativo foi **descartado** (P0-3 resolvido).
 - **Sem janela incremental** especificada: a query lista todas via os 3 filtros e elege as
   candidatas. **Multi-filial** (I6). Performance/rate-limit (paginate cap existente,
   `PAGE_SIZE=500`, `MAX_PAGES=50`) é **nota de implementação não-bloqueante**.
 
-## Build-probe (NÃO bloqueia)
+## Chave wire RESOLVIDA (probe de rede 2026-06-18)
 
-- O **nome EXATO da chave wire** do filtro `adiantamento` (ex.: `adiantamento#EQ:'S'`) ainda
-  precisa ser capturado num **probe de rede** no build. O **caminho está resolvido**; só falta
-  o literal da chave. Não é mais um P0 bloqueante.
+- A chave wire do filtro de adiantamento é **`docVldTipoAdto` = `1`** (numérico, modelo
+  `FinDocCab`), confirmada por **probe de rede empírico** no dev tenant Columbia (2026-06-18,
+  `filCod=2`, validado contra **410 adiantamentos reais**). Já plugado em
+  `conexosPermutasConstants.ts`.
+- O **placeholder anterior** (`adiantamento#EQ` / `'S'`) era um **BUG**: retornava
+  **HTTP 500 `adiantamento (FinDocCab)`** (campo inexistente) — não apenas incerteza.
+- **Evidência:** as PROFORMA finalizadas com `docVldTipoAdto=1` carregam `gerNum=198`
+  (ADTO FORNECEDOR INTERNACIONAIS) e `gcdDesNome="ADIANTAMENTO PROFORMA"`.
+- **Deixa de ser build-probe** — chave wire resolvida empiricamente.
 
 ## Idempotência
 

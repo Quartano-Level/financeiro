@@ -8,13 +8,14 @@ status: draft
 owners: [yuri]
 invariant: I3
 related_files: []
-last_review: 2026-06-17
+last_review: 2026-06-18
 has_canonical_test: false
 resolved-by:
   - "P0-6 — 'INVOICE casada' = exatamente 1 invoice FINALIZADA no processo (Yuri, 2026-06-17)"
   - "P0-5 — Fatia 1 só 1:1; N:M → backlog bloqueado (composto-nm) (Yuri, 2026-06-17)"
-gated-by:
-  - "P0-4 — Gate 4 valida XOR; extração da data-base segue pendente de probe"
+  - "P0-4 — Gate 4 data-base RESOLVIDA (cdiDtaCi imp019 / dioDtaDesembaraco imp223); probe de rede 2026-06-18, filCod=2, 410 adiantamentos reais"
+open-gap:
+  - "gate-3-pago-via-detail (P1) — Gate 3 (TOTALMENTE PAGO) vem null no com298/list; fonte provável = endpoint de detalhe (probe 2026-06-18). Bloqueante p/ a eleição produzir ALGUMA candidata elegível."
 ---
 
 # Regra: elegibilidade-permuta (4 gates + INVOICE casada)
@@ -39,10 +40,10 @@ Falha em qualquer conjunto → `BLOQUEADA` (reportada, NÃO contada como falha d
 
 | Gate | Fonte | Detalhe |
 |------|-------|---------|
-| 1 — PROFORMA | `com298` `tpdCod=99` + filtro `adiantamento=SIM` | P0-3 RESOLVIDO (literal da chave = build-probe). |
+| 1 — PROFORMA | `com298` `tpdCod=99` + filtro `docVldTipoAdto=1` (FinDocCab) | P0-3 RESOLVIDO (chave wire confirmada por probe 2026-06-18). |
 | 2 — `valorPermutar > 0` | `getMnyTitPermutar(docCod)` | Saldo a permutar disponível. |
-| 3 — TOTALMENTE PAGO | `isPago` (`mnyTitAberto===0`/`pago===1`) | Adiantamento liquidado. |
-| 4 — D.I XOR DUIMP | `imp019`/`imp223` por `priCod` | Ver `di-xor-duimp`; data-base `blocked-by: P0-4`. |
+| 3 — TOTALMENTE PAGO | `isPago` (`mnyTitAberto===0`/`pago===1`) | **NOVO GAP `gate-3-pago-via-detail`:** `mnyTitAberto`/`mnyTitPago`=`null` no `com298/list` (410 reais); fonte provável = endpoint de detalhe. |
+| 4 — D.I XOR DUIMP | `imp019.cdiDtaCi`/`imp223.dioDtaDesembaraco` por `priCod` | Ver `di-xor-duimp`; data-base RESOLVIDA (P0-4, probe 2026-06-18). |
 
 ## Definição de "INVOICE casada" (P0-6 + P0-5 — RESOLVIDO)
 

@@ -1,10 +1,10 @@
 {
   "_meta": {
-    "generated": "2026-06-17",
-    "version": "0.2.1",
-    "note": "Coverage of ontology entities/actions by implemented code. First domain modelling (Frente I Permutas, Fatia 1) — ALL artifacts are 'planned' (ontology-only proposal; no src/ implementation in this feature). Coverage percentages are 0 by design until TaskScoper/AutoLoopRunner implement. v0.2.1: Yuri answered P0 gaps — P0-1/P0-3/P0-5/P0-6/P0-7/P0-8/P1-2 RESOLVED, both stubs promoted to draft; P0-4 alone stays OPEN (Conexos wire-field probe). Updated by the OntologyCurator after each accepted feature.",
+    "generated": "2026-06-18",
+    "version": "0.2.2",
+    "note": "Coverage of ontology entities/actions by implemented code. First domain modelling (Frente I Permutas, Fatia 1) — ALL artifacts are 'planned' (ontology-only proposal; no src/ implementation in this feature). Coverage percentages are 0 by design until TaskScoper/AutoLoopRunner implement. v0.2.2: network probe (dev tenant Columbia, 2026-06-18, filCod=2, 410 real adiantamentos) RESOLVED P0-3 (filter wire key = docVldTipoAdto=1 / FinDocCab; old placeholder adiantamento#EQ:'S' was a BUG → HTTP 500) and P0-4 (data-base wire fields = cdiDtaCi imp019 / dioDtaDesembaraco imp223; XOR confirmed in real data; aging column now populates). NO P0 gaps remain. NEW gap gate-3-pago-via-detail (P1): TOTALMENTE PAGO status comes null in com298/list — likely in detail endpoint. v0.2.1: Yuri answered P0 gaps — P0-1/P0-5/P0-6/P0-7/P0-8/P1-2 RESOLVED, both stubs promoted to draft. Updated by the OntologyCurator after each accepted feature.",
     "upstream": "../../produtizacao/nf-projects",
-    "last_feature": "permutas-painel-elegiveis (2026-06-17): first Frente I modelling — 5 entities, 5 actions, 1 state-machine, 4 business-rules, 1 integration (conexos read-only). ADR-0004 + addendum (P0 gaps resolved; only P0-4 open as probe)."
+    "last_feature": "permutas-painel-elegiveis (2026-06-18 probe): P0-3 + P0-4 RESOLVED with empirical network evidence (410 real adiantamentos, filCod=2). New gap gate-3-pago-via-detail (P1). ADR-0004 + addendum + 2026-06-18 probe addendum."
   },
   "summary": {
     "entities_total": 5,
@@ -27,34 +27,35 @@
     "workflows_total": 0
   },
   "by_entity": {
-    "Adiantamento": { "status": "planned", "actions": ["elegerAdiantamentos"], "impl_pct": 0 },
+    "Adiantamento": { "status": "planned", "actions": ["elegerAdiantamentos"], "impl_pct": 0, "resolved_by": ["P0-3 (filter wire key docVldTipoAdto=1 / FinDocCab; probe 2026-06-18)"], "open_gap": ["gate-3-pago-via-detail (P1): TOTALMENTE PAGO null in com298/list"] },
     "Invoice": { "status": "planned", "actions": ["casarInvoice"], "impl_pct": 0 },
-    "DeclaracaoImportacao": { "status": "planned", "actions": ["avaliarElegibilidade"], "impl_pct": 0, "blocked_by": ["P0-4"], "note": "XOR/existence resolved; only dataBase wire-field read is gated on the P0-4 probe." },
+    "DeclaracaoImportacao": { "status": "planned", "actions": ["avaliarElegibilidade"], "impl_pct": 0, "resolved_by": ["P0-4 (dataBase wire fields cdiDtaCi imp019 / dioDtaDesembaraco imp223; probe 2026-06-18; XOR confirmed in real data; aging populates)"] },
     "VariacaoCambial": { "status": "planned", "actions": ["calcularVariacaoCambial"], "impl_pct": 0, "resolved_by": ["P0-1"], "build_probe": ["confirm com308 doc-source for taxaAdiantamento/taxaInvoice/principalMoeda"] },
-    "PermutaCandidata": { "status": "planned", "actions": ["avaliarElegibilidade", "exporNoPainel"], "impl_pct": 0, "resolved_by": ["P0-6", "P0-8"], "gated_by": ["P0-4 (aging column read)"] }
+    "PermutaCandidata": { "status": "planned", "actions": ["avaliarElegibilidade", "exporNoPainel"], "impl_pct": 0, "resolved_by": ["P0-6", "P0-8", "P0-4 (aging column read)"], "open_gap": ["gate-3-pago-via-detail (P1)"] }
   },
   "by_business_rule": {
-    "elegibilidade-permuta": { "invariant": "I3", "has_test": false, "resolved_by": ["P0-6", "P0-5"], "gated_by": ["P0-4"] },
-    "di-xor-duimp": { "invariant": "I2", "has_test": false, "gated_by": ["P0-4 (dataBase read; XOR rule itself applicable now)"] },
+    "elegibilidade-permuta": { "invariant": "I3", "has_test": false, "resolved_by": ["P0-6", "P0-5"], "open_gap": ["gate-3-pago-via-detail (P1): Gate 3 source"] },
+    "di-xor-duimp": { "invariant": "I2", "has_test": false, "resolved_by": ["P0-4 (dataBase read + XOR confirmed in real data; probe 2026-06-18)"] },
     "classificacao-juros-desconto": { "status": "draft", "has_test": false, "resolved_by": ["P0-1", "P1-2"], "build_probe": ["doc-source of rate/principal"] },
-    "aging-anchor": { "status": "draft", "has_test": false, "resolved_by": ["P0-8"], "gated_by": ["P0-4 (dataBase wire-field read)"] }
+    "aging-anchor": { "status": "draft", "has_test": false, "resolved_by": ["P0-8", "P0-4 (dataBase wire-field read; probe 2026-06-18)"] }
   },
   "health_flags": {
-    "p0_inbox_open": 1,
-    "p0_inbox_topics": [
-      "P0-4 — campo wire da data-base (imp019/imp223) — ÚNICO ABERTO (probe de diagnóstico)"
+    "p0_inbox_open": 0,
+    "p0_inbox_topics": [],
+    "open_gaps_p1": [
+      "gate-3-pago-via-detail — confirmar a fonte wire do status TOTALMENTE PAGO (Gate 3): com298/list traz mnyTitAberto/mnyTitPago=null nos 410 reais → isPago=false p/ todos; fonte provável = endpoint de detalhe. Bloqueante p/ a eleição produzir ALGUMA candidata elegível (probe 2026-06-18)"
     ],
     "p0_inbox_resolved": [
       "P0-1 — regra/fórmula juros vs desconto = comparação de TAXA de câmbio (131=juros/130=desconto)",
-      "P0-3 — eleição = listFinanceiroAPagar(PROFORMA) + filtro booleano adiantamento=SIM (literal da chave = build-probe)",
+      "P0-3 — eleição = listFinanceiroAPagar(PROFORMA) + filtro docVldTipoAdto=1 (FinDocCab); chave wire confirmada por probe de rede 2026-06-18 (filCod=2, 410 reais); placeholder adiantamento#EQ:'S' era BUG (HTTP 500)",
+      "P0-4 — data-base = cdiDtaCi (imp019) / dioDtaDesembaraco (imp223), epoch-ms; XOR confirmado em dados reais; coluna aging popula (probe de rede 2026-06-18, filCod=2, 410 reais)",
       "P0-5 — Fatia 1 só 1:1; N:M → backlog (bloqueada/composto-nm)",
       "P0-6 — 'INVOICE casada' = exatamente 1 invoice FINALIZADA no processo",
       "P0-7 — query lista TODAS via 3 filtros; sem janela incremental; multi-filial; rate-limit = nota de impl",
-      "P0-8 — aging conta da DATA-BASE (CI da D.I / desembaraço da DUIMP); coluna gated em P0-4",
+      "P0-8 — aging conta da DATA-BASE (CI da D.I / desembaraço da DUIMP); coluna popula (P0-4 resolvido)",
       "P1-2 — contas 131=PASSIVA=juros / 130=ATIVA=desconto (resolvido junto de P0-1)"
     ],
     "build_probes": [
-      "P0-3 — literal da chave wire do filtro 'adiantamento' (ex.: adiantamento#EQ:'S')",
       "P0-1 — confirmar doc-fonte de taxaAdiantamento/taxaInvoice/principalMoeda no com308"
     ],
     "business_rules_without_tests": [

@@ -1009,8 +1009,8 @@ describe('ConexosClient', () => {
             const filterList = body.filterList as Record<string, unknown>;
             expect(filterList['tpdCod#EQ']).toBe(99);
             expect(filterList['vldStatus#IN']).toEqual(['3']);
-            // 🔬 PROBE: assert the adiantamento filter KEY is present (not its prod value).
-            expect(filterList['adiantamento#EQ']).toBeDefined();
+            // P0-3 confirmado (probe 2026-06-18): filtro docVldTipoAdto=1.
+            expect(filterList['docVldTipoAdto#EQ']).toBe(1);
             // P0-7: no priCod filter — the eleição lists all.
             expect(filterList['priCod#IN']).toBeUndefined();
         });
@@ -1139,7 +1139,37 @@ describe('ConexosClient', () => {
             expect(result).toEqual([]);
         });
 
-        it('leaves dataBase undefined while P0-4 probe is open', async () => {
+        it('extracts dataBase from cdiDtaCi for D.I (P0-4 resolvido)', async () => {
+            const legacy = buildLegacy();
+            legacy.listGenericPaginated.mockImplementation(async (endpoint: string) =>
+                endpoint.startsWith('imp019')
+                    ? { count: 1, rows: [{ priCod: '2048', cdiDtaCi: 1768521600000 }] }
+                    : { count: 0, rows: [] },
+            );
+            const client = new ConexosClient(legacy);
+
+            const result = await client.listDeclaracaoByProcesso({ priCods: ['2048'], filCod: 2 });
+
+            expect(result[0].dataBase).toBeInstanceOf(Date);
+            expect(result[0].dataBase?.toISOString().slice(0, 10)).toBe('2026-01-16');
+        });
+
+        it('extracts dataBase from dioDtaDesembaraco for DUIMP (P0-4 resolvido)', async () => {
+            const legacy = buildLegacy();
+            legacy.listGenericPaginated.mockImplementation(async (endpoint: string) =>
+                endpoint.startsWith('imp223')
+                    ? { count: 1, rows: [{ priCod: '3000', dioDtaDesembaraco: 1769040000000 }] }
+                    : { count: 0, rows: [] },
+            );
+            const client = new ConexosClient(legacy);
+
+            const result = await client.listDeclaracaoByProcesso({ priCods: ['3000'], filCod: 2 });
+
+            expect(result[0].variante).toBe('DUIMP');
+            expect(result[0].dataBase?.toISOString().slice(0, 10)).toBe('2026-01-22');
+        });
+
+        it('leaves dataBase undefined when the wire date field is absent', async () => {
             const legacy = buildLegacy();
             legacy.listGenericPaginated.mockImplementation(async (endpoint: string) =>
                 onlyDi(endpoint),

@@ -3,6 +3,31 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.2.2 (2026-06-18) — P0-3 e P0-4 RESOLVIDOS por probe de rede empírico
+
+Feature: `permutas-painel-elegiveis`. Probe de rede no **dev tenant Columbia** (2026-06-18,
+`filCod=2`, validado contra **410 adiantamentos reais**). Addendum 2026-06-18 ao ADR-0004.
+
+- **P0-3 (filtro "Adiantamento=SIM") — RESOLVIDO.** A chave wire do filtro de adiantamento é
+  **`docVldTipoAdto` = `1`** (modelo `FinDocCab`). O placeholder anterior (`adiantamento#EQ`/`'S'`)
+  era um **BUG**: retornava **HTTP 500 `adiantamento (FinDocCab)`** (campo inexistente). Evidência:
+  PROFORMA com `docVldTipoAdto=1` carregam `gerNum=198` (ADTO FORNECEDOR INTERNACIONAIS) e
+  `gcdDesNome="ADIANTAMENTO PROFORMA"`. Já plugado em `conexosPermutasConstants.ts`. **Deixa de ser
+  build-probe.**
+- **P0-4 (campo wire data-base D.I/DUIMP) — RESOLVIDO.** D.I (`imp019`): **`cdiDtaCi`** (data "CI",
+  epoch-ms; acompanha `cdiEspNumci` = nº da CI; confere com o PDF "DI = CI"). DUIMP (`imp223`):
+  **`dioDtaDesembaraco`** (data de desembaraço, epoch-ms). **XOR DI/DUIMP confirmado em dados reais.**
+  Já plugado em `ConexosClient.mapDeclaracaoDataBase`. **A coluna aging agora popula.** Deixa de ser
+  `blocked-by: P0-4`. **Não há mais gap P0 aberto nesta fatia.**
+- **NOVO GAP — `gate-3-pago-via-detail` (P1, descoberto pelo probe).** Nos 410 adiantamentos reais,
+  o `com298/list` traz `mnyTitAberto=null` / `mnyTitPago=null`, então `isPago` retorna `false` para
+  TODOS — o **Gate 3 (TOTALMENTE PAGO) bloquearia tudo**. O status pago provavelmente mora no
+  **endpoint de detalhe** (modal financeiro), igual ao `mnyTitPermutar`. **Bloqueante** para a
+  feature produzir ALGUMA candidata elegível; NÃO foi escopo do probe. Registrado no interview +
+  regis-followups.
+- **Gaps P0 abertos: 1 → 0.** Migration-debt O3: re-introdução dos reads D.I/DUIMP com data-base
+  CONCLUÍDA.
+
 ## v0.2.1 (2026-06-17) — respostas dos gaps P0 (Yuri) encodadas
 
 Feature: `permutas-painel-elegiveis`. Yuri respondeu os gaps P0; addendum ao ADR-0004.

@@ -7,7 +7,7 @@ implementation_status: planned
 status: draft
 owners: [yuri]
 related_files: []
-last_review: 2026-06-17
+last_review: 2026-06-18
 preconditions:
   - "PermutaCandidata com Adiantamento + Invoice casada."
   - "Taxa/valor negociado lidos do com308."
@@ -58,9 +58,9 @@ Detalhe completo em `business-rules/classificacao-juros-desconto.md` e entidade
   `principalMoeda` (`com308.titFltTaxaMneg` / `com308.titMnyValorMneg`). É confirmação de
   fonte, não um P0.
 
-## Relação com a data-base (P0-4 — leitura ainda pendente)
+## Relação com a data-base (P0-4 — RESOLVIDO, probe 2026-06-18)
 
 - A `dataBase` (D.I/DUIMP) **não** entra na fórmula de classificação (que é só taxa × principal);
-  ela é insumo de **exibição** e **aging**. A leitura do campo wire da data-base segue
-  `blocked-by: P0-4` (ver `avaliarElegibilidade` / `declaracao-importacao`), mas isso **não**
-  bloqueia o cálculo de juros/desconto.
+  ela é insumo de **exibição** e **aging**. A leitura do campo wire da data-base foi **resolvida**
+  (`cdiDtaCi` `imp019` / `dioDtaDesembaraco` `imp223`; ver `avaliarElegibilidade` /
+  `declaracao-importacao`) — não bloqueava o cálculo de juros/desconto de qualquer modo.

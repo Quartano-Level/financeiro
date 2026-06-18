@@ -114,3 +114,44 @@ gap P0 ainda aberto.
 ### Consequência de versionamento
 
 Ontologia patch **0.2.0 → 0.2.1** (regras encodadas, 2 stubs promovidos a draft; sem entidade/ação nova).
+
+---
+
+## Addendum (2026-06-18) — P0-3 e P0-4 resolvidos por probe de rede · ontologia v0.2.2
+
+Probe de rede empírico no **dev tenant Columbia** (2026-06-18, `priCod=1153`, `filCod=2`, validado
+contra **410 adiantamentos reais**) confirmou os campos wire que estavam pendentes. Nenhuma decisão
+estrutural anterior foi revertida.
+
+### P0-3 (filtro "Adiantamento=SIM") — RESOLVIDO (campo wire confirmado)
+
+- Chave wire = **`docVldTipoAdto` = `1`** (numérico, modelo `FinDocCab`). Já plugado em
+  `conexosPermutasConstants.ts`.
+- O placeholder anterior (`adiantamento#EQ` / `'S'`) era um **BUG**, não só incerteza: retornava
+  **HTTP 500 `adiantamento (FinDocCab)`** (campo inexistente).
+- Evidência: PROFORMA finalizadas com `docVldTipoAdto=1` carregam `gerNum=198` (ADTO FORNECEDOR
+  INTERNACIONAIS) e `gcdDesNome="ADIANTAMENTO PROFORMA"`.
+- **Deixa de ser build-probe.**
+
+### P0-4 (data-base D.I/DUIMP) — RESOLVIDO (campos wire confirmados)
+
+- **D.I (`imp019`):** `cdiDtaCi` — data "CI" (epoch-ms; acompanha `cdiEspNumci` = nº da CI; confere
+  com o PDF "DI = CI").
+- **DUIMP (`imp223`):** `dioDtaDesembaraco` — data de desembaraço (epoch-ms).
+- **XOR DI/DUIMP confirmado em dados reais** (processo tem uma OU outra). Já plugado em
+  `ConexosClient.mapDeclaracaoDataBase`. **A coluna aging agora popula.**
+- Deixa de ser `blocked-by: P0-4`. **Não há mais gap P0 aberto nesta fatia.**
+
+### NOVO gap descoberto pelo probe — `gate-3-pago-via-detail` (P1, registrado, não resolvido)
+
+- Nos 410 adiantamentos reais, o `com298/list` traz `mnyTitAberto=null` / `mnyTitPago=null` →
+  `isPago` retorna `false` para TODOS → o **Gate 3 (TOTALMENTE PAGO) bloquearia tudo**. O status
+  pago provavelmente mora no **endpoint de detalhe** (modal financeiro), igual ao `mnyTitPermutar`.
+- **Bloqueante** para a feature produzir ALGUMA candidata elegível, mas **NÃO** foi escopo deste
+  probe. Registrado em `permutas-painel-elegiveis-interview.md` (gaps) e
+  `permutas-painel-elegiveis-regis-followups.md`.
+
+### Consequência de versionamento
+
+Ontologia patch **0.2.1 → 0.2.2** (campos wire confirmados empiricamente; P0-3/P0-4 resolvidos; novo
+gap P1 registrado; sem entidade/ação nova).

@@ -289,10 +289,22 @@ Todas as tasks (1–11; 12 se aprovada) completas **E**:
 - [ ] Rebase de `main` aplicado sem conflitos pendentes ✅
 - [ ] [delta tem feat em `src/`] bump de versão do app (FE==BE lockstep) via `scripts/bump-version.ps1` + `CHANGELOG.md` ✅
 
-### Itens NÃO-bloqueantes do verde (probe / gated — não impedem Ship)
+### Estado dos probes / gaps (atualizado pelo probe de rede 2026-06-18)
 
-- **⏸ GATED-P0-4** (único gap P0 aberto): extração da `dataBase` wire (`imp019`/`imp223`) e, por consequência, a **coluna/valor de aging**. Modelado como `undefined`/"pendente" em todas as camadas; o resto da fatia fecha verde sem ele. Gate 4 (XOR de existência) **funciona hoje**. Quando o probe capturar o campo → um `/feature-tweak DeclaracaoImportacao "popular dataBase via probe P0-4"` liga a coluna aging.
-- **🔬 BUILD-PROBE** (Conexos dev tenant — não-bloqueantes): (a) literal da chave wire do filtro `adiantamento` (Task 2/3, valor provisório isolado); (b) confirmar doc-fonte `com308` de `taxaAdiantamento`/`taxaInvoice`/`principalMoeda` (Task 7, fórmula já testada).
+- **✅ P0-4 RESOLVIDO** (probe de rede dev tenant Columbia, `filCod=2`, 410 adiantamentos reais):
+  data-base wire = `cdiDtaCi` (`imp019`, D.I) / `dioDtaDesembaraco` (`imp223`, DUIMP), epoch-ms;
+  XOR confirmado em dados reais. Plugado em `ConexosClient.mapDeclaracaoDataBase`. **A coluna aging
+  popula** — não mais gated.
+- **✅ P0-3 RESOLVIDO** (mesmo probe): chave wire do filtro `adiantamento` = **`docVldTipoAdto=1`**
+  (FinDocCab). O placeholder anterior (`adiantamento#EQ:'S'`) era um **BUG** (HTTP 500). Plugado em
+  `conexosPermutasConstants.ts`. Deixa de ser build-probe.
+- **🔴 NOVO GAP BLOQUEANTE — `gate-3-pago-via-detail` (P1):** o status **TOTALMENTE PAGO** (Gate 3)
+  vem `null` no `com298/list` (`mnyTitAberto`/`mnyTitPago`=`null` nos 410 reais) → `isPago=false` p/
+  TODOS → o Gate 3 **bloquearia tudo**. Fonte provável = **endpoint de detalhe** (modal financeiro),
+  igual ao `mnyTitPermutar` (`getMnyTitPermutar` detail). **Bloqueante para a eleição produzir
+  ALGUMA candidata elegível** — confirmar a fonte wire antes. NÃO foi escopo do probe de 2026-06-18.
+- **🔬 BUILD-PROBE** restante (não-bloqueante): confirmar doc-fonte `com308` de
+  `taxaAdiantamento`/`taxaInvoice`/`principalMoeda` (Task 7, fórmula já testada).
 
 ---
 
@@ -300,4 +312,4 @@ Todas as tasks (1–11; 12 se aprovada) completas **E**:
 
 **Tasks.md path:** `/private/tmp/permutas-painel-wt/ontology/_inbox/permutas-painel-elegiveis-tasks.md`
 **Ordem de execução:** 1 → 2 → (3 ∥ 4) → 5 (TDD vermelho) → (6 ∥ 7) → 8 → 9 → 10 → 11 → [12 se aprovada].
-**Pausas HITL previstas:** decisão da Task 12 (UI agora ou 1b); QaCoach roteiro no dev tenant para validar o trigger `POST /permutas/eleicao` (novo handler). P0-4/build-probes **não** pausam o loop (gated/isolados).
+**Pausas HITL previstas:** decisão da Task 12 (UI agora ou 1b); QaCoach roteiro no dev tenant para validar o trigger `POST /permutas/eleicao` (novo handler). P0-3/P0-4 **RESOLVIDOS** (probe de rede 2026-06-18); build-probe `com308` **não** pausa o loop (isolado). **NOVO gap `gate-3-pago-via-detail` (P1)** é bloqueante para a eleição produzir ALGUMA candidata elegível — confirmar fonte wire do status pago antes (probe de detalhe).

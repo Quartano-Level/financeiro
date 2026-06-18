@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "generated": "2026-06-17",
-    "version": "0.2.1",
-    "note": "Financeiro ontology — first domain modelling (Frente I Permutas, Fatia 1, READ-ONLY) via /feature-new permutas-painel-elegiveis (ADR-0004 + 2026-06-17 addendum). Entities/actions/rules below are modelled but NOT YET implemented in code (no src/ changes in this feature — ontology-only proposal). Implementation files map will be filled by TaskScoper/AutoLoopRunner. v0.2.1: Yuri's P0 answers encoded — P0-1/P0-3/P0-5/P0-6/P0-7/P0-8/P1-2 RESOLVED, two stubs promoted to draft; P0-4 alone stays OPEN as a Conexos wire-field probe (see ontology/_inbox/permutas-painel-elegiveis-interview.md).",
+    "generated": "2026-06-18",
+    "version": "0.2.2",
+    "note": "Financeiro ontology — first domain modelling (Frente I Permutas, Fatia 1, READ-ONLY) via /feature-new permutas-painel-elegiveis (ADR-0004 + addenda). Entities/actions/rules below are modelled but NOT YET implemented in code (no src/ changes in this feature — ontology-only proposal). Implementation files map will be filled by TaskScoper/AutoLoopRunner. v0.2.2: network probe (dev tenant Columbia, 2026-06-18, filCod=2, 410 real adiantamentos) RESOLVED P0-3 (filter wire key = docVldTipoAdto=1 / FinDocCab) and P0-4 (data-base wire fields cdiDtaCi imp019 / dioDtaDesembaraco imp223; XOR confirmed; aging populates). NO P0 gaps remain. NEW gap gate-3-pago-via-detail (P1): TOTALMENTE PAGO status null in com298/list — likely detail endpoint. See ontology/_inbox/permutas-painel-elegiveis-interview.md.",
     "upstream": "../../produtizacao/nf-projects",
     "status_legend": {
       "implemented": "code in src/ implements the entity/action under the target architecture",
@@ -16,6 +16,8 @@
       "file": "entities/adiantamento.md",
       "status": "planned",
       "impl_files": [],
+      "resolved_by": ["P0-3 (filter wire key docVldTipoAdto=1 / FinDocCab; probe 2026-06-18)"],
+      "open_gap": ["gate-3-pago-via-detail (P1): TOTALMENTE PAGO null in com298/list"],
       "read_scaffold": ["src/backend/domain/client/ConexosClient.ts (listFinanceiroAPagar, getMnyTitPermutar)"]
     },
     "Invoice": {
@@ -28,8 +30,8 @@
       "file": "entities/declaracao-importacao.md",
       "status": "planned",
       "impl_files": [],
-      "blocked_by": ["P0-4"],
-      "note": "Re-introduz reads imp019/imp223 podados no ADR-0003 (escopo data-base/existência)."
+      "resolved_by": ["P0-4 (dataBase wire fields cdiDtaCi imp019 / dioDtaDesembaraco imp223; probe 2026-06-18; XOR confirmed in real data)"],
+      "note": "Re-introduz reads imp019/imp223 podados no ADR-0003 (escopo data-base/existência). data-base wire fields confirmed; aging populates."
     },
     "VariacaoCambial": {
       "file": "entities/variacao-cambial.md",
@@ -43,23 +45,23 @@
       "file": "entities/permuta-candidata.md",
       "status": "planned",
       "impl_files": [],
-      "resolved_by": ["P0-6", "P0-8", "P0-5"],
-      "gated_by": ["P0-4 (aging column read)"],
+      "resolved_by": ["P0-6", "P0-8", "P0-5", "P0-4 (aging column read; probe 2026-06-18)"],
+      "open_gap": ["gate-3-pago-via-detail (P1)"],
       "note": "Permuta consumada (fin010) é Fatia 2 — fora de escopo. Shape 1:1; N:M → backlog (composto-nm)."
     }
   },
   "actions": {
-    "elegerAdiantamentos": { "file": "actions/eleger-adiantamentos.md", "entity": "Adiantamento", "status": "planned", "impl_files": [], "resolved_by": ["P0-3", "P0-7"], "build_probe": ["wire-key literal of adiantamento filter"] },
-    "avaliarElegibilidade": { "file": "actions/avaliar-elegibilidade.md", "entity": "PermutaCandidata", "status": "planned", "impl_files": [], "blocked_by": ["P0-4"], "note": "Gate 4 validates XOR now; only data extraction gated on probe." },
+    "elegerAdiantamentos": { "file": "actions/eleger-adiantamentos.md", "entity": "Adiantamento", "status": "planned", "impl_files": [], "resolved_by": ["P0-3 (docVldTipoAdto=1; probe 2026-06-18)", "P0-7"] },
+    "avaliarElegibilidade": { "file": "actions/avaliar-elegibilidade.md", "entity": "PermutaCandidata", "status": "planned", "impl_files": [], "resolved_by": ["P0-4 (Gate 4 dataBase via cdiDtaCi/dioDtaDesembaraco; probe 2026-06-18)"], "open_gap": ["gate-3-pago-via-detail (P1): Gate 3 source null in com298/list"] },
     "casarInvoice": { "file": "actions/casar-invoice.md", "entity": "Invoice", "status": "planned", "impl_files": [], "resolved_by": ["P0-6", "P0-5"] },
     "calcularVariacaoCambial": { "file": "actions/calcular-variacao-cambial.md", "entity": "VariacaoCambial", "status": "planned", "impl_files": [], "resolved_by": ["P0-1"], "build_probe": ["com308 doc-source for rate/principal"] },
-    "exporNoPainel": { "file": "actions/expor-no-painel.md", "entity": "PermutaCandidata", "status": "planned", "impl_files": [], "resolved_by": ["P0-8"], "gated_by": ["P0-4 (aging read)"] }
+    "exporNoPainel": { "file": "actions/expor-no-painel.md", "entity": "PermutaCandidata", "status": "planned", "impl_files": [], "resolved_by": ["P0-8", "P0-4 (aging column populates; probe 2026-06-18)"] }
   },
   "business_rules": {
-    "elegibilidade-permuta": { "file": "business-rules/elegibilidade-permuta.md", "invariant": "I3", "has_canonical_test": false, "resolved_by": ["P0-6", "P0-5"], "gated_by": ["P0-4"] },
-    "di-xor-duimp": { "file": "business-rules/di-xor-duimp.md", "invariant": "I2", "has_canonical_test": false, "gated_by": ["P0-4 (dataBase read; XOR rule applicable now)"] },
+    "elegibilidade-permuta": { "file": "business-rules/elegibilidade-permuta.md", "invariant": "I3", "has_canonical_test": false, "resolved_by": ["P0-6", "P0-5"], "open_gap": ["gate-3-pago-via-detail (P1)"] },
+    "di-xor-duimp": { "file": "business-rules/di-xor-duimp.md", "invariant": "I2", "has_canonical_test": false, "resolved_by": ["P0-4 (dataBase read + XOR confirmed in real data; probe 2026-06-18)"] },
     "classificacao-juros-desconto": { "file": "business-rules/classificacao-juros-desconto.md", "status": "draft", "has_canonical_test": false, "resolved_by": ["P0-1", "P1-2"], "build_probe": ["doc-source of rate/principal"] },
-    "aging-anchor": { "file": "business-rules/aging-anchor.md", "status": "draft", "has_canonical_test": false, "resolved_by": ["P0-8"], "gated_by": ["P0-4 (dataBase read)"] }
+    "aging-anchor": { "file": "business-rules/aging-anchor.md", "status": "draft", "has_canonical_test": false, "resolved_by": ["P0-8", "P0-4 (dataBase read; probe 2026-06-18)"] }
   },
   "state_machines": {
     "elegibilidade-permuta-candidata": { "file": "state-machines/elegibilidade-permuta-candidata.md", "entity": "PermutaCandidata", "status": "planned" }
@@ -70,9 +72,8 @@
       "direction": "read-only",
       "status": "partial",
       "impl_files": ["src/backend/domain/client/ConexosClient.ts"],
-      "resolved_by": ["P0-3", "P0-7"],
-      "blocked_by": ["P0-4"],
-      "build_probe": ["wire-key literal of adiantamento filter"]
+      "resolved_by": ["P0-3 (docVldTipoAdto=1; probe 2026-06-18)", "P0-4 (cdiDtaCi / dioDtaDesembaraco; probe 2026-06-18)", "P0-7"],
+      "open_gap": ["gate-3-pago-via-detail (P1): TOTALMENTE PAGO null in com298/list"]
     }
   },
   "ui_flows": {},
