@@ -8,7 +8,7 @@ status: draft
 owners: [yuri]
 related_files: []
 last_review: 2026-06-18
-states: [DESCOBERTA, ELEGIVEL, BLOQUEADA]
+states: [DESCOBERTA, ELEGIVEL, CASAMENTO_MANUAL, BLOQUEADA]
 out_of_scope_states: [EXECUTADA]
 ---
 
@@ -23,8 +23,9 @@ out_of_scope_states: [EXECUTADA]
 | Constante | Valor | Significado |
 |-----------|-------|-------------|
 | `DESCOBERTA` | `'descoberta'` | Adiantamento eleito; ainda não avaliado. |
-| `ELEGIVEL` | `'elegivel'` | Passou nos 4 gates **E** tem INVOICE casada (I3). |
-| `BLOQUEADA` | `'bloqueada'` | Falhou ≥1 gate, sem INVOICE casada (0/múltiplas), caso N:M, ou data-base indisponível. Reportada **com motivo** (taxonomia abaixo), não é falha. |
+| `ELEGIVEL` | `'elegivel'` | Passou nos 4 gates **E** tem exatamente 1 INVOICE casada (I3) — auto 1:1. |
+| `CASAMENTO_MANUAL` | `'casamento-manual'` | Passou nos **4 gates**, mas o casamento é **N:M** (>1 INVOICE FINALIZADA): falta **só o analista escolher a invoice**. **Não é reprovação** (≠ BLOQUEADA). Escopo: motivos `composto-nm` / `multiplas-invoices` (ADR-0005). Mantém o motivo informativo. |
+| `BLOQUEADA` | `'bloqueada'` | Falhou ≥1 gate, sem INVOICE casada (0), ou data-base indisponível. Reportada **com motivo** (taxonomia abaixo), não é falha. **N:M deixou de cair aqui** (→ `CASAMENTO_MANUAL`, ADR-0005). |
 
 ## Taxonomia de motivos do estado `BLOQUEADA` (P0-5/P0-6/P0-8 — RESOLVIDO)
 
@@ -32,16 +33,19 @@ Toda candidata `bloqueada` carrega um **motivo** (`PermutaCandidata.motivoBloque
 
 | Motivo | Valor | Origem | Significado |
 |--------|-------|--------|-------------|
-| Composto N:M | `'composto-nm'` | `casarInvoice` | Várias proformas/invoices no processo — N:M existe e é frequente, mas é **backlog** nesta fatia (não processado). |
-| Sem invoice | `'sem-invoice'` | `casarInvoice` | 0 INVOICE FINALIZADA no processo (aguardando emissão). |
-| Múltiplas invoices | `'multiplas-invoices'` | `casarInvoice` | >1 INVOICE FINALIZADA quando se quer distinguir de `composto-nm` (mesma família N:M). |
+| Composto N:M | `'composto-nm'` | `casarInvoice` | Várias proformas/invoices no processo — N:M. **Desde ADR-0005, NÃO é mais bloqueio: leva a `CASAMENTO_MANUAL`** (motivo informativo). A escrita final (escolha da invoice) é Fatia 2. |
+| Sem invoice | `'sem-invoice'` | `casarInvoice` | 0 INVOICE FINALIZADA no processo (aguardando emissão). **Segue `BLOQUEADA`.** |
+| Múltiplas invoices | `'multiplas-invoices'` | `casarInvoice` | >1 INVOICE FINALIZADA (mesma família N:M de `composto-nm`). **Desde ADR-0005 → `CASAMENTO_MANUAL`**, não bloqueio. |
 | Falha de gate | `'falha-gate'` | `avaliarElegibilidade` | Falhou algum dos gates 1–4 (tipo / valorPermutar>0 / TOTALMENTE PAGO / D.I XOR DUIMP). |
 | Data-base indisponível | `'data-base-indisponivel'` | `avaliarElegibilidade` (Gate 4) | Gate 4 sem D.I **nem** DUIMP — sem âncora de data-base. |
 | Detalhe indisponível | `'detail-indisponivel'` | `elegerAdiantamentos` (Gate 2, `getMnyTitPermutar`) | **Blip transiente** do Conexos — a leitura do DETALHE da PROFORMA (`getMnyTitPermutar`) falhou após retries e lançou `ConexosError`. **NÃO é reprovação legítima** (`falha-gate`): a candidata pode ser elegível; ficou bloqueada porque não conseguimos ler o valor a permutar. Re-avaliável na próxima run (idempotente). Introduzido em P0-3. |
 
 > Nota: `composto-nm` e `multiplas-invoices` pertencem à mesma família (mais de 1 invoice).
 > Use `multiplas-invoices` se quiser distinguir do composto N:M de proformas; senão `composto-nm`
-> cobre o caso geral de N:M. Yuri (P0-5/P0-6) fixou que **N:M é backlog nesta fatia**.
+> cobre o caso geral de N:M. **ADR-0005 (Yuri, 2026-06-18):** N:M deixou de ser `BLOQUEADA` e
+> passou ao estado `CASAMENTO_MANUAL` — os 4 gates passaram; falta só a escolha da invoice pelo
+> analista (a baixa/escrita final é Fatia 2). Os motivos `composto-nm`/`multiplas-invoices` viram
+> **informativos** (qual sabor de N:M), não bloqueio.
 
 > **`EXECUTADA` está FORA DE ESCOPO.** A transição para uma `Permuta` consumada (baixa na
 > `fin010`) pertence à **Fatia 2** e **não** é modelada aqui — incluí-la exigiria o caminho
@@ -52,29 +56,31 @@ Toda candidata `bloqueada` carrega um **motivo** (`PermutaCandidata.motivoBloque
 
 | # | De → Para | Ação (nomeada) | Regra | Vigência |
 |---|-----------|----------------|-------|----------|
-| T1 | `DESCOBERTA → ELEGIVEL` | `avaliarElegibilidade` + `casarInvoice` | 4 gates satisfeitos **E** INVOICE casada (I3). Gate 4 valida XOR + data-base (`cdiDtaCi`/`dioDtaDesembaraco`; P0-4 RESOLVIDO, probe 2026-06-18). | 2026-06-18 |
-| T2 | `DESCOBERTA → BLOQUEADA` | `avaliarElegibilidade` / `casarInvoice` | Qualquer gate falho (`falha-gate`), 0 invoice (`sem-invoice`), >1 invoice / N:M (`composto-nm` / `multiplas-invoices`), sem D.I nem DUIMP (`data-base-indisponivel`), ou detalhe da PROFORMA indisponível após retries (`detail-indisponivel`, P0-3 — blip transiente, não reprovação). Anota `motivoBloqueio`. | 2026-06-18 |
+| T1 | `DESCOBERTA → ELEGIVEL` | `avaliarElegibilidade` + `casarInvoice` | 4 gates satisfeitos **E** exatamente 1 INVOICE casada (I3) — auto 1:1. Gate 4 valida XOR + data-base (`cdiDtaCi`/`dioDtaDesembaraco`; P0-4 RESOLVIDO, probe 2026-06-18). | 2026-06-18 |
+| T2 | `DESCOBERTA → BLOQUEADA` | `avaliarElegibilidade` / `casarInvoice` | Qualquer gate falho (`falha-gate`), 0 invoice (`sem-invoice`), sem D.I nem DUIMP (`data-base-indisponivel`), ou detalhe da PROFORMA indisponível após retries (`detail-indisponivel`, P0-3 — blip transiente, não reprovação). Anota `motivoBloqueio`. **N:M NÃO entra mais aqui (→ T3).** | 2026-06-18 |
+| T3 | `DESCOBERTA → CASAMENTO_MANUAL` | `avaliarElegibilidade` + `casarInvoice` | **4 gates satisfeitos** mas casamento **N:M** (>1 INVOICE FINALIZADA → `composto-nm` / `multiplas-invoices`). Falta só o analista escolher a invoice; a baixa é Fatia 2. Anota `motivoBloqueio` informativo. **ADR-0005.** | 2026-06-18 |
 
 ```
-        elegerAdiantamentos
-                │
-                ▼
-          ┌───────────┐
-          │ DESCOBERTA│
-          └─────┬─────┘
-       T1 ✓     │     T2 ✗
-   (4 gates +   │   (gate falho /
-   INVOICE)     │    sem INVOICE /
-                │    anomalia XOR)
-        ┌───────┴────────┐
-        ▼                ▼
-   ┌─────────┐     ┌──────────┐
-   │ ELEGIVEL│     │ BLOQUEADA│
-   └─────────┘     └──────────┘
-        ┊
-        ┊  (Fatia 2 — FORA DE ESCOPO)
-        ▼
-   [ EXECUTADA → Permuta consumada / fin010 ]
+            elegerAdiantamentos
+                    │
+                    ▼
+              ┌───────────┐
+              │ DESCOBERTA│
+              └─────┬─────┘
+        ┌───────────┼────────────────────┐
+   T1 ✓ │      T3 ◐ │               T2 ✗ │
+ (4 gates +  (4 gates,           (gate falho /
+  1 INVOICE)  N:M >1 INVOICE)     0 INVOICE /
+        │           │             anomalia XOR /
+        ▼           ▼             data-base ind.)
+   ┌─────────┐ ┌──────────────────┐   ▼
+   │ ELEGIVEL│ │ CASAMENTO_MANUAL │ ┌──────────┐
+   └─────────┘ └──────────────────┘ │ BLOQUEADA│
+        ┊             ┊             └──────────┘
+        ┊             ┊  (escolha da invoice +
+        ┊             ┊   baixa = Fatia 2)
+        ▼             ▼
+   [ EXECUTADA → Permuta consumada / fin010 — FORA DE ESCOPO ]
 ```
 
 ## Notas

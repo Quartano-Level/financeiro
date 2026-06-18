@@ -205,15 +205,31 @@ export default class IngestaoPermutasService {
         ...(c.adiantamento.valorPermutar !== undefined
             ? { valorPermutar: c.adiantamento.valorPermutar }
             : {}),
-        estadoElegibilidade:
-            c.estadoElegibilidade === ESTADO_ELEGIBILIDADE.ELEGIVEL
-                ? 'elegivel'
-                : c.estadoElegibilidade === ESTADO_ELEGIBILIDADE.BLOQUEADA
-                  ? 'bloqueada'
-                  : 'descoberta',
+        estadoElegibilidade: this.toEstadoRow(c.estadoElegibilidade),
         ...(c.motivoBloqueio !== undefined ? { motivoBloqueio: c.motivoBloqueio } : {}),
         ...(c.aging !== undefined ? { agingDays: c.aging } : {}),
     });
+
+    /**
+     * Mapeia o estado de elegibilidade do domínio para o valor da coluna
+     * `permuta_adiantamento.estado_elegibilidade` (migration 0005 inclui
+     * `casamento-manual` — ADR-0005). 1:1, sem normalização: o relacional carrega
+     * o estado real (≠ snapshot, que colapsa N:M → bloqueada para o `/painel`).
+     */
+    private toEstadoRow = (
+        estado: PermutaCandidata['estadoElegibilidade'],
+    ): AdiantamentoRow['estadoElegibilidade'] => {
+        switch (estado) {
+            case ESTADO_ELEGIBILIDADE.ELEGIVEL:
+                return 'elegivel';
+            case ESTADO_ELEGIBILIDADE.CASAMENTO_MANUAL:
+                return 'casamento-manual';
+            case ESTADO_ELEGIBILIDADE.BLOQUEADA:
+                return 'bloqueada';
+            default:
+                return 'descoberta';
+        }
+    };
 
     /** Invoices casadas, deduplicadas por `docCod` (uma invoice pode reaparecer). */
     private toInvoiceRows = (candidatas: PermutaCandidata[]): InvoiceRow[] => {

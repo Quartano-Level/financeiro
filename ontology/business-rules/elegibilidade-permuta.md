@@ -48,16 +48,20 @@ Falha em qualquer conjunto → `BLOQUEADA` (reportada, NÃO contada como falha d
 ## Definição de "INVOICE casada" (P0-6 + P0-5 — RESOLVIDO)
 
 - **"INVOICE casada" = exatamente 1 invoice FINALIZADA no processo.** Por contagem:
-  - **1** → casamento 1:1 → satisfaz a condição.
+  - **1** → casamento auto 1:1 → `ELEGIVEL`.
   - **0** → `BLOQUEADA` (motivo `sem-invoice`, aguardando emissão).
-  - **>1** → `BLOQUEADA` (motivo `composto-nm` — caso N:M, backlog).
-- **Fatia 1 só executa 1:1.** N:M existe e é frequente, mas vai para **backlog** (bloqueada,
-  reportada, não processada). `PermutaCandidata` mantém shape **1:1**. Ver `actions/casar-invoice.md`
-  e a taxonomia de motivos em `state-machines/elegibilidade-permuta-candidata.md`.
+  - **>1** → `CASAMENTO_MANUAL` (motivo informativo `composto-nm` / `multiplas-invoices`).
+    **ADR-0005:** passou os 4 gates; **não é bloqueio** — falta só o analista escolher a invoice.
+- **Fatia 1 executa o auto 1:1** e **sinaliza o N:M** como `CASAMENTO_MANUAL` (pronto para a escolha
+  do analista). A **escrita final** (escolha + baixa) é **Fatia 2**. `PermutaCandidata` mantém shape
+  **1:1** no relacional (a invoice casada do N:M é resolvida na Fatia 2). Ver `actions/casar-invoice.md`,
+  `decisions/0005-estado-casamento-manual.md` e a taxonomia em
+  `state-machines/elegibilidade-permuta-candidata.md`.
 
 ## Teste canônico (a escrever no TDD)
 
 - `has_canonical_test: false` — caso canônico: 1 adiantamento + 1 invoice + D.I, 4 gates
   verdes → ELEGIVEL; mesma candidata sem invoice → BLOQUEADA (`sem-invoice`); com múltiplas
-  invoices → BLOQUEADA (`composto-nm`). Fixado pelo TaskScoper/TDD. Âncora real: PDF processo
-  `2048` (priCod=1153).
+  invoices → **CASAMENTO_MANUAL** (`composto-nm`, 4 gates passados — ADR-0005). Fixado pelo
+  TaskScoper/TDD. Âncora real: PDF processo `2048` (priCod=1153). Coberto em
+  `ElegibilidadeService.test.ts` (N:M → casamento-manual; sem-invoice → bloqueada).

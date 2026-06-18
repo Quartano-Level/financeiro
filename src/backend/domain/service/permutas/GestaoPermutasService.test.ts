@@ -36,6 +36,21 @@ const adiantamentos: AdiantamentoAtivo[] = [
         motivoBloqueio: 'sem-invoice',
         stale: false,
     },
+    {
+        // N:M — passou os 4 gates, aguarda escolha de invoice (ADR-0005).
+        docCod: 'A3',
+        priCod: '4000',
+        filCod: 2,
+        referencia: 'CT/3',
+        exportador: 'JINDAL',
+        valorMoedaNegociada: 2000,
+        moeda: 'USD',
+        pago: true,
+        estadoElegibilidade: 'casamento-manual',
+        motivoBloqueio: 'composto-nm',
+        agingDays: 12,
+        stale: false,
+    },
 ];
 
 const invoices: InvoiceRow[] = [
@@ -90,15 +105,33 @@ describe('GestaoPermutasService.exporGestao', () => {
 
         expect(res.fonte).toBe('banco');
         expect(typeof res.geradoEm).toBe('string');
-        expect(res.pendentes).toHaveLength(2);
+        expect(res.pendentes).toHaveLength(3);
         expect(res.invoicesEmAberto).toHaveLength(1);
         expect(res.casamentos).toHaveLength(1);
+        // ADR-0005: N:M (A3) conta em casamentoManual, NÃO em bloqueadas.
         expect(res.totais).toEqual({
-            pendentes: 2,
+            pendentes: 3,
             invoicesEmAberto: 1,
             elegiveis: 1,
             bloqueadas: 1,
+            casamentoManual: 1,
         });
+    });
+
+    it('maps casamento-manual estado → status casamento-manual (ADR-0005)', async () => {
+        const service = new GestaoPermutasService(
+            buildRelational(),
+            buildProcessamento(),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+
+        const nm = res.pendentes.find((p) => p.docCod === 'A3');
+        expect(nm?.status).toBe('casamento-manual');
+        expect(nm?.motivoBloqueio).toBe('composto-nm');
+        // Não vaza para bloqueada nem elegível.
+        expect(res.pendentes.find((p) => p.docCod === 'A2')?.status).toBe('bloqueada');
+        expect(res.pendentes.find((p) => p.docCod === 'A1')?.status).toBe('elegivel');
     });
 
     it('maps aging_days→diasEmAberto and defaults missing fields', async () => {

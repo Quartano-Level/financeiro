@@ -86,6 +86,23 @@ const bloqueada: PermutaCandidata = {
     gatesAvaliados: [],
 };
 
+const casamentoManual: PermutaCandidata = {
+    priCod: '4000',
+    adiantamento: {
+        docCod: 'A3',
+        priCod: '4000',
+        filCod: 2,
+        dataEmissao: new Date('2026-03-01'),
+        valor: 2000,
+        moeda: 'USD',
+        pago: true,
+        valorPermutar: 2000,
+    },
+    estadoElegibilidade: ESTADO_ELEGIBILIDADE.CASAMENTO_MANUAL,
+    motivoBloqueio: MOTIVO_BLOQUEIO.COMPOSTO_NM,
+    gatesAvaliados: [],
+};
+
 const buildEleicao = (candidatas: PermutaCandidata[]) =>
     ({
         computeCandidatas: jest.fn().mockResolvedValue({
@@ -195,6 +212,26 @@ describe('IngestaoPermutasService', () => {
         expect(adiantamentoRows.map((r) => r.docCod).sort()).toEqual(['A1', 'A2']);
         const invoiceRows = repo.upsertInvoices.mock.calls[0][2];
         expect(invoiceRows.map((r) => r.docCod)).toEqual(['I1']);
+    });
+
+    it('persists estado_elegibilidade=casamento-manual for N:M candidatas (ADR-0005)', async () => {
+        const eleicao = buildEleicao([elegivel, casamentoManual]);
+        const { repo } = buildRelational();
+        const service = new IngestaoPermutasService(
+            eleicao,
+            repo,
+            buildSnapshot(),
+            buildLogService().logService,
+        );
+
+        await service.executar({ triggeredBy: 'cron' });
+
+        const adiantamentoRows = repo.upsertAdiantamentos.mock.calls[0][2];
+        const nmRow = adiantamentoRows.find((r) => r.docCod === 'A3');
+        expect(nmRow?.estadoElegibilidade).toBe('casamento-manual');
+        expect(nmRow?.motivoBloqueio).toBe('composto-nm');
+        // N:M não vira casamento automático (só elegível com invoice casada).
+        expect(repo.replaceAutoCasamentos.mock.calls[0][2]).toHaveLength(1);
     });
 
     it('on compute failure: ROLLBACK (no write) + error header outside tx, rethrows', async () => {

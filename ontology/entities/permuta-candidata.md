@@ -61,31 +61,32 @@ contada como falha — ver glossary "Pendência bloqueada").
 | `priCod` | string | `Adiantamento.priCod` | Chave do processo. |
 | `filCod` | number | `Adiantamento.filCod` | **Invariante multi-filial I6** — filial da candidata. Persistido em `permuta_candidata_snapshot.fil_cod` (P0-2 RESOLVIDO; antes sempre `NULL`). |
 | `adiantamento` | `Adiantamento` | composição | Lado-débito (carrega o `filCod` canônico). |
-| `invoiceCasada` | `Invoice?` | `casarInvoice` | Lado-crédito = exatamente 1 invoice FINALIZADA (P0-6 RESOLVIDO; 0 → `sem-invoice`, >1 → `composto-nm`). |
+| `invoiceCasada` | `Invoice?` | `casarInvoice` | Lado-crédito = exatamente 1 invoice FINALIZADA (P0-6 RESOLVIDO; 0 → `sem-invoice`/bloqueada, >1 → `casamento-manual` com motivo `composto-nm`, ADR-0005). |
 | `declaracaoImportacao` | `DeclaracaoImportacao?` | Gate 4 | D.I XOR DUIMP (existência/XOR + data-base via `cdiDtaCi`/`dioDtaDesembaraco`; P0-4 RESOLVIDO, probe 2026-06-18). |
 | `variacaoCambial` | `VariacaoCambial?` | `calcularVariacaoCambial` | Classificação por TAXA de câmbio (P0-1 RESOLVIDO). |
 | `aging` | number (dias) | derivado | Âncora = data-base (P0-8 RESOLVIDO); `aging = hoje − dataBase`. Leitura da data-base RESOLVIDA (P0-4, probe 2026-06-18) — coluna aging popula. |
-| `estadoElegibilidade` | enum | máquina de estado | `descoberta \| elegivel \| bloqueada` (ver state-machine). |
-| `motivoBloqueio` | enum? | `casarInvoice` / `avaliarElegibilidade` | Quando `bloqueada`: `composto-nm \| sem-invoice \| multiplas-invoices \| falha-gate \| data-base-indisponivel` (ver state-machine). |
+| `estadoElegibilidade` | enum | máquina de estado | `descoberta \| elegivel \| casamento-manual \| bloqueada` (ver state-machine; `casamento-manual` = N:M pós-4-gates, ADR-0005). |
+| `motivoBloqueio` | enum? | `casarInvoice` / `avaliarElegibilidade` | Motivo informativo. Para `bloqueada`: `sem-invoice \| falha-gate \| data-base-indisponivel \| detail-indisponivel`. Para `casamento-manual`: `composto-nm \| multiplas-invoices` (N:M, ADR-0005). |
 | `gatesAvaliados` | registro | `avaliarElegibilidade` | Resultado de cada um dos 4 gates (auditoria I5). |
 
 ## Cardinalidade — 1:1 vs N:M (P0-5/P0-6 — RESOLVIDO)
 
-- Esta fatia modela e executa **SOMENTE o caso 1:1 (direto)**: 1 adiantamento PROFORMA ↔
-  1 invoice FINALIZADA no processo. `PermutaCandidata` mantém **shape 1:1** — **NÃO** modelar
-  alocação N:M agora.
+- Esta fatia executa o **auto 1:1 (direto)**: 1 adiantamento PROFORMA ↔ 1 invoice FINALIZADA no
+  processo. `PermutaCandidata` mantém **shape 1:1** no relacional — **NÃO** modelar a alocação
+  N:M agora.
 - O caso **N:M (composto)** (várias proformas/invoices no mesmo processo) **EXISTE e é
-  FREQUENTE**, mas nesta feature vai para **BACKLOG**: candidata `bloqueada` com motivo
-  `composto-nm`, **reportada, não processada** (glossary "Pendência bloqueada"). Se/quando N:M
-  for priorizado, o shape pode evoluir para coleções com alocação — fica no watchlist (Fatia
-  futura). Yuri decidiu, nesta fatia, manter 1:1 e mandar N:M para backlog.
+  FREQUENTE**. **ADR-0005:** como passa os 4 gates, deixou de ser `bloqueada` e passou ao estado
+  **`casamento-manual`** (motivo informativo `composto-nm` / `multiplas-invoices`) — pronto para o
+  analista **escolher a invoice**. A **alocação/escrita final é Fatia 2**: o shape pode evoluir
+  para coleções com alocação (watchlist). Nesta fatia, sinalizamos o N:M sem executá-lo.
 
 ## Estado de elegibilidade
 
 Ver `ontology/state-machines/elegibilidade-permuta-candidata.md`. Resumo:
-`descoberta → elegivel` (passou 4 gates + INVOICE casada) **ou** `descoberta → bloqueada`
-(falhou algum gate / sem INVOICE / anomalia XOR). O estado `executada` **pertence à Fatia 2**
-(transição para a `Permuta` consumada) e **não** é modelado aqui.
+`descoberta → elegivel` (4 gates + 1 INVOICE casada, auto 1:1); `descoberta → casamento-manual`
+(4 gates + N:M >1 INVOICE — falta o analista escolher a invoice, ADR-0005); `descoberta →
+bloqueada` (falhou algum gate / 0 INVOICE / anomalia XOR / data-base indisponível). O estado
+`executada` **pertence à Fatia 2** (transição para a `Permuta` consumada) e **não** é modelado aqui.
 
 ## Invariantes aplicáveis
 

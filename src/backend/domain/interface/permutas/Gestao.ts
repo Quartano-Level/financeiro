@@ -5,7 +5,7 @@ import type { ProcessamentoStatus } from './Processamento.js';
  * `src/frontend/lib/types.ts` (a tela consome este JSON diretamente).
  */
 
-export type StatusElegibilidade = 'elegivel' | 'bloqueada';
+export type StatusElegibilidade = 'elegivel' | 'bloqueada' | 'casamento-manual';
 
 export interface PermutaPendente {
     docCod: string;
@@ -55,5 +55,7 @@ export interface GestaoPermutasResponse {
         invoicesEmAberto: number;
         elegiveis: number;
         bloqueadas: number;
+        /** N:M que passaram os 4 gates, aguardando escolha de invoice (ADR-0005). */
+        casamentoManual: number;
     };
 }

@@ -9,6 +9,13 @@ export const ESTADO_ELEGIBILIDADE = {
     DESCOBERTA: 'descoberta',
     ELEGIVEL: 'elegivel',
     BLOQUEADA: 'bloqueada',
+    /**
+     * Passou os 4 gates, mas o casamento de invoice é N:M (>1 INVOICE FINALIZADA
+     * no processo) — falta SÓ o analista escolher a invoice. Não é uma reprovação
+     * de mérito (≠ BLOQUEADA): a candidata está pronta para casamento manual.
+     * Escopo: motivos `composto-nm` / `multiplas-invoices` (ADR-0005).
+     */
+    CASAMENTO_MANUAL: 'casamento-manual',
 } as const;
 
 export type EstadoElegibilidade = (typeof ESTADO_ELEGIBILIDADE)[keyof typeof ESTADO_ELEGIBILIDADE];

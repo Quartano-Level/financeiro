@@ -57,6 +57,7 @@ export default class GestaoPermutasService {
 
         const elegiveis = pendentes.filter((p) => p.status === 'elegivel').length;
         const bloqueadas = pendentes.filter((p) => p.status === 'bloqueada').length;
+        const casamentoManual = pendentes.filter((p) => p.status === 'casamento-manual').length;
 
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
@@ -80,6 +81,7 @@ export default class GestaoPermutasService {
                 invoicesEmAberto: invoicesEmAberto.length,
                 elegiveis,
                 bloqueadas,
+                casamentoManual,
             },
         };
     };
@@ -89,7 +91,11 @@ export default class GestaoPermutasService {
         statusByDocCod: Map<string, ProcessamentoStatus>,
     ): PermutaPendente => {
         const status: StatusElegibilidade =
-            a.estadoElegibilidade === 'elegivel' ? 'elegivel' : 'bloqueada';
+            a.estadoElegibilidade === 'elegivel'
+                ? 'elegivel'
+                : a.estadoElegibilidade === 'casamento-manual'
+                  ? 'casamento-manual'
+                  : 'bloqueada';
         const processamentoStatus = statusByDocCod.get(a.docCod);
         return {
             docCod: a.docCod,

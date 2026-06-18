@@ -17,7 +17,7 @@ export interface AdiantamentoRow {
     moeda?: string;
     pago: boolean;
     valorPermutar?: number;
-    estadoElegibilidade: 'descoberta' | 'elegivel' | 'bloqueada';
+    estadoElegibilidade: 'descoberta' | 'elegivel' | 'bloqueada' | 'casamento-manual';
     motivoBloqueio?: string;
     agingDays?: number;
 }
@@ -428,7 +428,7 @@ export default class PermutaRelationalRepository {
     // ---- Reads (tela Gestão) ----
 
     public listAdiantamentosAtivos = async (filtro?: {
-        estadoElegibilidade?: 'descoberta' | 'elegivel' | 'bloqueada';
+        estadoElegibilidade?: 'descoberta' | 'elegivel' | 'bloqueada' | 'casamento-manual';
     }): Promise<AdiantamentoAtivo[]> => {
         const rows = filtro?.estadoElegibilidade
             ? await this.databaseClient.selectMany(

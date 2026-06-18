@@ -100,9 +100,18 @@ export default class ElegibilidadeService {
         // Casamento de invoice (P0-6): 1 → casada; 0 → sem-invoice; >1 → composto-nm.
         const casamento = this.casamentoInvoiceService.casarInvoice(invoices);
         if (casamento.motivoBloqueio !== undefined) {
+            // N:M (`composto-nm` / `multiplas-invoices`): os 4 gates passaram, só
+            // falta o analista escolher a invoice → CASAMENTO_MANUAL (ADR-0005),
+            // NÃO bloqueada. O motivo segue informativo (qual sabor de N:M). Os
+            // demais motivos (`sem-invoice`, etc.) continuam reprovação → BLOQUEADA.
+            const isNm =
+                casamento.motivoBloqueio === MOTIVO_BLOQUEIO.COMPOSTO_NM ||
+                casamento.motivoBloqueio === MOTIVO_BLOQUEIO.MULTIPLAS_INVOICES;
             return {
                 ...base,
-                estadoElegibilidade: ESTADO_ELEGIBILIDADE.BLOQUEADA,
+                estadoElegibilidade: isNm
+                    ? ESTADO_ELEGIBILIDADE.CASAMENTO_MANUAL
+                    : ESTADO_ELEGIBILIDADE.BLOQUEADA,
                 motivoBloqueio: casamento.motivoBloqueio,
             };
         }

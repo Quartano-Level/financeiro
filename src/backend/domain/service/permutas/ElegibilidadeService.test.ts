@@ -63,14 +63,18 @@ describe('ElegibilidadeService.avaliarElegibilidade (I3: 4 gates + INVOICE casad
         expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.SEM_INVOICE);
     });
 
-    it('multiple invoices → BLOQUEADA(composto-nm)', () => {
+    it('multiple invoices (N:M) → CASAMENTO_MANUAL, gates all passed (ADR-0005)', () => {
         const result = service.avaliarElegibilidade({
             adiantamento: buildAdiantamento(),
             declaracoes: [di],
             invoices: [buildInvoice({ docCod: 'I1' }), buildInvoice({ docCod: 'I2' })],
         });
-        expect(result.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+        // N:M deixou de ser bloqueada: passou os 4 gates, falta o analista
+        // escolher a invoice. Motivo segue informativo (qual sabor de N:M).
+        expect(result.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.CASAMENTO_MANUAL);
         expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.COMPOSTO_NM);
+        expect(result.gatesAvaliados).toHaveLength(4);
+        expect(result.gatesAvaliados.every((g) => g.passed)).toBe(true);
     });
 
     it('valorPermutar = 0 → BLOQUEADA(falha-gate) (Gate 2)', () => {
