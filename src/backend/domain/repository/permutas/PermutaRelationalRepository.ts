@@ -87,6 +87,19 @@ const chunked = <T>(items: readonly T[], size: number): T[][] => {
 };
 
 /**
+ * Deduplica linhas pela chave natural do UPSERT (último vence). Necessário
+ * porque o mesmo `doc_cod` pode vir repetido no fan-out multi-filial: um
+ * `INSERT ... ON CONFLICT` não pode afetar a mesma linha-alvo duas vezes no
+ * mesmo comando (Postgres: "ON CONFLICT DO UPDATE command cannot affect row a
+ * second time").
+ */
+const dedupeByKey = <T>(rows: readonly T[], keyFn: (row: T) => string): T[] => {
+    const byKey = new Map<string, T>();
+    for (const row of rows) byKey.set(keyFn(row), row);
+    return [...byKey.values()];
+};
+
+/**
  * PermutaRelationalRepository — escreve/lê o modelo relacional da Fase B.
  *
  * SQL 100% parametrizado (`$nome` via SqlBuilder — Rule #5, zero interpolação).
@@ -174,7 +187,8 @@ export default class PermutaRelationalRepository {
         runId: string,
         rows: AdiantamentoRow[],
     ): Promise<void> => {
-        for (const chunk of chunked(rows, UPSERT_CHUNK)) {
+        const unique = dedupeByKey(rows, (r) => r.docCod);
+        for (const chunk of chunked(unique, UPSERT_CHUNK)) {
             await this.upsertAdiantamentoChunk(tx, runId, chunk);
         }
     };
@@ -242,7 +256,8 @@ export default class PermutaRelationalRepository {
         runId: string,
         rows: InvoiceRow[],
     ): Promise<void> => {
-        for (const chunk of chunked(rows, UPSERT_CHUNK)) {
+        const unique = dedupeByKey(rows, (r) => r.docCod);
+        for (const chunk of chunked(unique, UPSERT_CHUNK)) {
             await this.upsertInvoiceChunk(tx, runId, chunk);
         }
     };
@@ -300,7 +315,8 @@ export default class PermutaRelationalRepository {
         runId: string,
         rows: DeclaracaoRow[],
     ): Promise<void> => {
-        for (const chunk of chunked(rows, UPSERT_CHUNK)) {
+        const unique = dedupeByKey(rows, (r) => `${r.priCod}|${r.variante}`);
+        for (const chunk of chunked(unique, UPSERT_CHUNK)) {
             await this.upsertDeclaracaoChunk(tx, runId, chunk);
         }
     };
@@ -343,7 +359,8 @@ export default class PermutaRelationalRepository {
         rows: CasamentoRow[],
     ): Promise<void> => {
         await tx.update('DELETE FROM permuta_casamento', {});
-        for (const chunk of chunked(rows, UPSERT_CHUNK)) {
+        const unique = dedupeByKey(rows, (r) => `${r.invoiceDocCod}|${r.adiantamentoDocCod}`);
+        for (const chunk of chunked(unique, UPSERT_CHUNK)) {
             await this.insertCasamentoChunk(tx, runId, chunk);
         }
     };

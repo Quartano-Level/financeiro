@@ -141,6 +141,28 @@ describe('PermutaRelationalRepository', () => {
         expect(tx.insert as jest.Mock).toHaveBeenCalledTimes(3);
     });
 
+    it('upsertAdiantamentos dedups by doc_cod (last wins) — avoids "ON CONFLICT cannot affect row a second time"', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        const repo = new PermutaRelationalRepository(db);
+        // mesmo doc_cod repetido (fan-out multi-filial) + um distinto.
+        const rows: AdiantamentoRow[] = [
+            { ...adiantamento, docCod: 'A1', valorMoedaNegociada: 1000 },
+            { ...adiantamento, docCod: 'A1', valorMoedaNegociada: 2000 },
+            { ...adiantamento, docCod: 'A2', valorMoedaNegociada: 3000 },
+        ];
+
+        await repo.upsertAdiantamentos(tx, 'run-1', rows);
+
+        const [, params] = (tx.insert as jest.Mock).mock.calls[0];
+        // 2 tuplas únicas (A1, A2) — não 3.
+        expect(params.docCod_0).toBe('A1');
+        expect(params.docCod_1).toBe('A2');
+        expect(params.docCod_2).toBeUndefined();
+        // último A1 vence.
+        expect(params.valorMoedaNegociada_0).toBe(2000);
+    });
+
     it('upsertInvoices: ON CONFLICT DO UPDATE, parameterized', async () => {
         const tx = buildTx();
         const db = buildDb(tx);
