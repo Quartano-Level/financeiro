@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { inject, injectable } from 'tsyringe';
-import ConexosClient, { type DeclaracaoEntry } from '../../client/ConexosClient.js';
+import ConexosClient, {
+    type DeclaracaoEntry,
+    siglaMoedaNegociada,
+} from '../../client/ConexosClient.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import ConexosError from '../../errors/ConexosError.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
@@ -527,16 +530,33 @@ export default class EleicaoPermutasService {
                 filCod,
             );
             if (enriched.variacao !== undefined) candidata.variacaoCambial = enriched.variacao;
-            if (enriched.valorMoedaNegociadaAdto !== undefined) {
+            if (
+                enriched.valorMoedaNegociadaAdto !== undefined ||
+                enriched.moedaNegociadaAdto !== undefined
+            ) {
                 candidata.adiantamento = {
                     ...candidata.adiantamento,
-                    valorMoedaNegociada: enriched.valorMoedaNegociadaAdto,
+                    ...(enriched.valorMoedaNegociadaAdto !== undefined
+                        ? { valorMoedaNegociada: enriched.valorMoedaNegociadaAdto }
+                        : {}),
+                    ...(enriched.moedaNegociadaAdto !== undefined
+                        ? { moedaNegociada: enriched.moedaNegociadaAdto }
+                        : {}),
                 };
             }
-            if (enriched.valorMoedaNegociadaInvoice !== undefined && candidata.invoiceCasada) {
+            if (
+                (enriched.valorMoedaNegociadaInvoice !== undefined ||
+                    enriched.moedaNegociadaInvoice !== undefined) &&
+                candidata.invoiceCasada
+            ) {
                 candidata.invoiceCasada = {
                     ...candidata.invoiceCasada,
-                    valorMoedaNegociada: enriched.valorMoedaNegociadaInvoice,
+                    ...(enriched.valorMoedaNegociadaInvoice !== undefined
+                        ? { valorMoedaNegociada: enriched.valorMoedaNegociadaInvoice }
+                        : {}),
+                    ...(enriched.moedaNegociadaInvoice !== undefined
+                        ? { moedaNegociada: enriched.moedaNegociadaInvoice }
+                        : {}),
                 };
             }
         }
@@ -553,6 +573,8 @@ export default class EleicaoPermutasService {
         variacao?: PermutaCandidata['variacaoCambial'];
         valorMoedaNegociadaAdto?: number;
         valorMoedaNegociadaInvoice?: number;
+        moedaNegociadaAdto?: string;
+        moedaNegociadaInvoice?: string;
     }> => {
         const [titAdto, titInv] = await Promise.all([
             this.conexosClient.listTitulosAPagar({ docCod: adiantamento.docCod, filCod }),
@@ -562,14 +584,22 @@ export default class EleicaoPermutasService {
         const taxaInvoice = titInv[0]?.taxa;
         const valorMoedaNegociadaAdto = titAdto[0]?.valorNegociado;
         const valorMoedaNegociadaInvoice = titInv[0]?.valorNegociado;
+        // Moeda NEGOCIADA do título (220=USD / "DOLAR DOS EUA"), distinta da
+        // moeda do DOCUMENTO (BRL). Rotula `valorMoedaNegociada` na tela Gestão.
+        const moedaNegociadaAdto = siglaMoedaNegociada(titAdto[0]);
+        const moedaNegociadaInvoice = siglaMoedaNegociada(titInv[0]);
         const principalMoeda = valorMoedaNegociadaInvoice ?? valorMoedaNegociadaAdto;
         const enriched: {
             variacao?: PermutaCandidata['variacaoCambial'];
             valorMoedaNegociadaAdto?: number;
             valorMoedaNegociadaInvoice?: number;
+            moedaNegociadaAdto?: string;
+            moedaNegociadaInvoice?: string;
         } = {
             ...(valorMoedaNegociadaAdto !== undefined ? { valorMoedaNegociadaAdto } : {}),
             ...(valorMoedaNegociadaInvoice !== undefined ? { valorMoedaNegociadaInvoice } : {}),
+            ...(moedaNegociadaAdto !== undefined ? { moedaNegociadaAdto } : {}),
+            ...(moedaNegociadaInvoice !== undefined ? { moedaNegociadaInvoice } : {}),
         };
         if (
             taxaAdiantamento === undefined ||

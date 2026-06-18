@@ -15,6 +15,8 @@ export interface AdiantamentoRow {
     valor?: number;
     valorMoedaNegociada?: number;
     moeda?: string;
+    /** Sigla da moeda NEGOCIADA (`com308`), distinta de `moeda` (doc). */
+    moedaNegociada?: string;
     pago: boolean;
     valorPermutar?: number;
     estadoElegibilidade: 'descoberta' | 'elegivel' | 'bloqueada' | 'casamento-manual';
@@ -33,6 +35,8 @@ export interface InvoiceRow {
     valor?: number;
     valorMoedaNegociada?: number;
     moeda?: string;
+    /** Sigla da moeda NEGOCIADA (`com308`), distinta de `moeda` (doc). */
+    moedaNegociada?: string;
     pago: boolean;
 }
 
@@ -210,6 +214,7 @@ export default class PermutaRelationalRepository {
             params[`valor_${i}`] = r.valor ?? null;
             params[`valorMoedaNegociada_${i}`] = r.valorMoedaNegociada ?? null;
             params[`moeda_${i}`] = r.moeda ?? null;
+            params[`moedaNegociada_${i}`] = r.moedaNegociada ?? null;
             params[`pago_${i}`] = r.pago;
             params[`valorPermutar_${i}`] = r.valorPermutar ?? null;
             params[`estado_${i}`] = r.estadoElegibilidade;
@@ -218,14 +223,15 @@ export default class PermutaRelationalRepository {
             return (
                 `($docCod_${i}, $priCod_${i}, $filCod_${i}, $referencia_${i}, ` +
                 `$exportador_${i}, $dataEmissao_${i}, $valor_${i}, $valorMoedaNegociada_${i}, ` +
-                `$moeda_${i}, $pago_${i}, $valorPermutar_${i}, $estado_${i}, $motivo_${i}, ` +
+                `$moeda_${i}, $moedaNegociada_${i}, $pago_${i}, $valorPermutar_${i}, ` +
+                `$estado_${i}, $motivo_${i}, ` +
                 `$aging_${i}, $runId, now(), FALSE, now())`
             );
         });
         await tx.insert(
             `INSERT INTO permuta_adiantamento (
                 doc_cod, pri_cod, fil_cod, referencia, exportador, data_emissao,
-                valor, valor_moeda_negociada, moeda, pago, valor_permutar,
+                valor, valor_moeda_negociada, moeda, moeda_negociada, pago, valor_permutar,
                 estado_elegibilidade, motivo_bloqueio, aging_days,
                 last_ingest_run_id, last_seen_at, stale, updated_at
             ) VALUES ${tuples.join(', ')}
@@ -238,6 +244,7 @@ export default class PermutaRelationalRepository {
                 valor = EXCLUDED.valor,
                 valor_moeda_negociada = EXCLUDED.valor_moeda_negociada,
                 moeda = EXCLUDED.moeda,
+                moeda_negociada = EXCLUDED.moeda_negociada,
                 pago = EXCLUDED.pago,
                 valor_permutar = EXCLUDED.valor_permutar,
                 estado_elegibilidade = EXCLUDED.estado_elegibilidade,
@@ -279,17 +286,18 @@ export default class PermutaRelationalRepository {
             params[`valor_${i}`] = r.valor ?? null;
             params[`valorMoedaNegociada_${i}`] = r.valorMoedaNegociada ?? null;
             params[`moeda_${i}`] = r.moeda ?? null;
+            params[`moedaNegociada_${i}`] = r.moedaNegociada ?? null;
             params[`pago_${i}`] = r.pago;
             return (
                 `($docCod_${i}, $priCod_${i}, $filCod_${i}, $referencia_${i}, ` +
                 `$exportador_${i}, $dataEmissao_${i}, $valor_${i}, $valorMoedaNegociada_${i}, ` +
-                `$moeda_${i}, $pago_${i}, $runId, now(), FALSE, now())`
+                `$moeda_${i}, $moedaNegociada_${i}, $pago_${i}, $runId, now(), FALSE, now())`
             );
         });
         await tx.insert(
             `INSERT INTO permuta_invoice (
                 doc_cod, pri_cod, fil_cod, referencia, exportador, data_emissao,
-                valor, valor_moeda_negociada, moeda, pago,
+                valor, valor_moeda_negociada, moeda, moeda_negociada, pago,
                 last_ingest_run_id, last_seen_at, stale, updated_at
             ) VALUES ${tuples.join(', ')}
             ON CONFLICT (doc_cod) DO UPDATE SET
@@ -301,6 +309,7 @@ export default class PermutaRelationalRepository {
                 valor = EXCLUDED.valor,
                 valor_moeda_negociada = EXCLUDED.valor_moeda_negociada,
                 moeda = EXCLUDED.moeda,
+                moeda_negociada = EXCLUDED.moeda_negociada,
                 pago = EXCLUDED.pago,
                 last_ingest_run_id = EXCLUDED.last_ingest_run_id,
                 last_seen_at = EXCLUDED.last_seen_at,
@@ -485,6 +494,7 @@ export default class PermutaRelationalRepository {
             ? { valorMoedaNegociada: Number(r.valor_moeda_negociada) }
             : {}),
         ...(r.moeda != null ? { moeda: String(r.moeda) } : {}),
+        ...(r.moeda_negociada != null ? { moedaNegociada: String(r.moeda_negociada) } : {}),
         pago: Boolean(r.pago),
         ...(r.valor_permutar != null ? { valorPermutar: Number(r.valor_permutar) } : {}),
         estadoElegibilidade: String(
@@ -507,6 +517,7 @@ export default class PermutaRelationalRepository {
             ? { valorMoedaNegociada: Number(r.valor_moeda_negociada) }
             : {}),
         ...(r.moeda != null ? { moeda: String(r.moeda) } : {}),
+        ...(r.moeda_negociada != null ? { moedaNegociada: String(r.moeda_negociada) } : {}),
         pago: Boolean(r.pago),
     });
 

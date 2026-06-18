@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import ConexosClient, { type LegacyConexosShape } from './ConexosClient.js';
+import ConexosClient, { type LegacyConexosShape, siglaMoedaNegociada } from './ConexosClient.js';
 import ConexosError from '../errors/ConexosError.js';
 
 const buildLegacy = (): jest.Mocked<LegacyConexosShape> => ({
@@ -9,6 +9,29 @@ const buildLegacy = (): jest.Mocked<LegacyConexosShape> => ({
     getGeneric: jest.fn().mockResolvedValue({ rows: [] }),
     getFiliais: jest.fn().mockResolvedValue([]),
     getFilCodDefault: jest.fn().mockResolvedValue(null),
+});
+
+describe('siglaMoedaNegociada', () => {
+    it('maps moedaCod 220 → USD (preferred over moedaNome)', () => {
+        expect(siglaMoedaNegociada({ moedaCod: 220, moedaNome: 'IGNORED' })).toBe('USD');
+    });
+
+    it('maps moedaCod 1 → BRL', () => {
+        expect(siglaMoedaNegociada({ moedaCod: 1 })).toBe('BRL');
+    });
+
+    it('falls back to moedaNome when moedaCod is unknown/absent', () => {
+        expect(siglaMoedaNegociada({ moedaNome: 'DOLAR DOS EUA' })).toBe('DOLAR DOS EUA');
+        expect(siglaMoedaNegociada({ moedaCod: 999, moedaNome: 'OUTRA' })).toBe('OUTRA');
+    });
+
+    it('defaults to BRL when neither code nor name is present', () => {
+        expect(siglaMoedaNegociada({})).toBe('BRL');
+    });
+
+    it('returns undefined when there is no título at all', () => {
+        expect(siglaMoedaNegociada(undefined)).toBeUndefined();
+    });
 });
 
 describe('ConexosClient', () => {

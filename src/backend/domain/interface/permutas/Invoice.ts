@@ -25,4 +25,11 @@ export default interface Invoice {
      * `TituloAPagar.valorNegociado`). Distinto de `valor` (face). Opcional.
      */
     valorMoedaNegociada?: number;
+    /**
+     * Sigla da moeda NEGOCIADA do título (`com308` `moedaCod` 220→'USD' /
+     * `moedaNome`), distinta de `moeda` (do DOCUMENTO — `moeEspSigla` null →
+     * 'BRL'). É a moeda que rotula `valorMoedaNegociada` na tela Gestão.
+     * Opcional — depende do detalhe do título.
+     */
+    moedaNegociada?: string;
 }

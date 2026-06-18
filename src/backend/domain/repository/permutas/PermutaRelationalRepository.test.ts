@@ -50,7 +50,8 @@ const adiantamento: AdiantamentoRow = {
     exportador: 'DBP',
     pago: true,
     valorMoedaNegociada: 1000,
-    moeda: 'USD',
+    moeda: 'BRL',
+    moedaNegociada: 'USD',
     estadoElegibilidade: 'elegivel',
     agingDays: 30,
 };
@@ -61,7 +62,8 @@ const invoice: InvoiceRow = {
     referencia: 'INV/1',
     pago: false,
     valorMoedaNegociada: 1000,
-    moeda: 'USD',
+    moeda: 'BRL',
+    moedaNegociada: 'USD',
 };
 const declaracao: DeclaracaoRow = { priCod: '2048', variante: 'DI' };
 const casamento: CasamentoRow = {
@@ -125,6 +127,10 @@ describe('PermutaRelationalRepository', () => {
         expect(params.docCod_0).toBe('A1');
         expect(params.estado_0).toBe('elegivel');
         expect(params.valorMoedaNegociada_0).toBe(1000);
+        // moeda NEGOCIADA (USD) is persisted distinctly from the doc moeda (BRL).
+        expect(sql).toContain('moeda_negociada');
+        expect(params.moeda_0).toBe('BRL');
+        expect(params.moedaNegociada_0).toBe('USD');
     });
 
     it('upsertAdiantamentos chunks into multi-row inserts of 500', async () => {
@@ -175,6 +181,10 @@ describe('PermutaRelationalRepository', () => {
         expect(sql).toContain('ON CONFLICT (doc_cod) DO UPDATE');
         expect(params.docCod_0).toBe('I1');
         expect(params.pago_0).toBe(false);
+        // moeda NEGOCIADA (USD) persisted distinctly from the doc moeda (BRL).
+        expect(sql).toContain('moeda_negociada');
+        expect(params.moeda_0).toBe('BRL');
+        expect(params.moedaNegociada_0).toBe('USD');
     });
 
     it('upsertDeclaracoes: ON CONFLICT (pri_cod, variante) DO UPDATE', async () => {
@@ -246,7 +256,8 @@ describe('PermutaRelationalRepository', () => {
                 referencia: 'CT/1',
                 pago: true,
                 valor_moeda_negociada: 1000,
-                moeda: 'USD',
+                moeda: 'BRL',
+                moeda_negociada: 'USD',
                 estado_elegibilidade: 'elegivel',
                 aging_days: 30,
                 stale: false,
@@ -261,6 +272,9 @@ describe('PermutaRelationalRepository', () => {
             docCod: 'A1',
             estadoElegibilidade: 'elegivel',
             valorMoedaNegociada: 1000,
+            // doc moeda (BRL) and negotiated moeda (USD) are mapped distinctly.
+            moeda: 'BRL',
+            moedaNegociada: 'USD',
             agingDays: 30,
         });
     });

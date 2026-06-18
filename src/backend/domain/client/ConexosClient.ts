@@ -214,6 +214,37 @@ export interface TituloAPagar {
     valorBrl?: number;
 }
 
+/**
+ * Mapa `moeCodMneg` → sigla limpa exibida na UI. `220` é o dólar dos EUA
+ * (sample da entrevista 2026-05-28); `1` é o Real. Estendido sob demanda —
+ * códigos fora da tabela caem no fallback `moedaNome ?? 'BRL'`.
+ */
+const MOEDA_COD_SIGLA: Record<number, string> = {
+    1: 'BRL',
+    220: 'USD',
+};
+
+/**
+ * Deriva a sigla da moeda NEGOCIADA do título (`com308`). Prioriza o código
+ * estável `moedaCod` (220=USD, 1=BRL); na ausência, usa o `moedaNome` literal
+ * ("DOLAR DOS EUA"); por fim, default conservador 'BRL'. Distinta da moeda do
+ * DOCUMENTO (`moeEspSigla` null → 'BRL'), que rotulava errado o valor em moeda
+ * estrangeira na coluna "Valor Moeda Negociada" da tela Gestão.
+ */
+export const siglaMoedaNegociada = (titulo?: {
+    moedaCod?: number;
+    moedaNome?: string;
+}): string | undefined => {
+    if (!titulo) return undefined;
+    if (titulo.moedaCod !== undefined && MOEDA_COD_SIGLA[titulo.moedaCod] !== undefined) {
+        return MOEDA_COD_SIGLA[titulo.moedaCod];
+    }
+    if (titulo.moedaNome !== undefined && titulo.moedaNome !== '') {
+        return titulo.moedaNome;
+    }
+    return 'BRL';
+};
+
 export interface BaixaTitulo {
     borDtaMvto: Date;
     valor: number;

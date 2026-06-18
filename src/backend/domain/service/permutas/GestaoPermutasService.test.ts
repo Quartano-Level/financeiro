@@ -157,6 +157,57 @@ describe('GestaoPermutasService.exporGestao', () => {
         expect(bloqueada?.motivoBloqueio).toBe('sem-invoice');
     });
 
+    it('labels valorMoedaNegociada with the NEGOCIADA currency (USD), not the doc currency (BRL)', async () => {
+        // Bug fix: the column shows the value in the foreign (negotiated) currency,
+        // so its label must be the negotiated sigla (USD), never the doc moeda (BRL).
+        const adtoBrlDocUsdNeg: AdiantamentoAtivo = {
+            docCod: 'A9',
+            priCod: '9000',
+            filCod: 2,
+            referencia: 'CT/9',
+            valorMoedaNegociada: 1100,
+            moeda: 'BRL',
+            moedaNegociada: 'USD',
+            pago: true,
+            estadoElegibilidade: 'elegivel',
+            stale: false,
+        };
+        const invBrlDocUsdNeg: InvoiceRow = {
+            docCod: 'I9',
+            priCod: '9000',
+            filCod: 2,
+            referencia: 'INV/9',
+            valorMoedaNegociada: 1100,
+            moeda: 'BRL',
+            moedaNegociada: 'USD',
+            pago: false,
+        };
+        const casamentoUsdNeg: CasamentoRow = {
+            invoiceDocCod: 'I9',
+            adiantamentoDocCod: 'A9',
+            priCod: '9000',
+            valorASerUsado: 1100,
+            // even if the casamento row carried BRL, the read adiantamento wins.
+            moeda: 'BRL',
+        };
+        const service = new GestaoPermutasService(
+            buildRelational({
+                adiantamentos: [adtoBrlDocUsdNeg],
+                invoices: [invBrlDocUsdNeg],
+                casamentos: [casamentoUsdNeg],
+            }),
+            buildProcessamento(),
+            buildLog(),
+        );
+
+        const res = await service.exporGestao('req-1');
+
+        expect(res.pendentes.find((p) => p.docCod === 'A9')?.moeda).toBe('USD');
+        expect(res.invoicesEmAberto.find((i) => i.docCod === 'I9')?.moeda).toBe('USD');
+        expect(res.casamentos[0].invoice.moeda).toBe('USD');
+        expect(res.casamentos[0].adiantamentos[0].moeda).toBe('USD');
+    });
+
     it('groups casamentos by invoice and attaches adiantamento referencia', async () => {
         const service = new GestaoPermutasService(
             buildRelational(),

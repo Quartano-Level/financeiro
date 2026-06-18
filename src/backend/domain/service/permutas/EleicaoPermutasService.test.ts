@@ -144,6 +144,55 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
         expect(complete[0].data).toMatchObject({ totalCandidatas: 1, totalElegiveis: 1 });
     });
 
+    it('hydrates moedaNegociada from the título (moedaCod 220 → USD) on adiantamento + invoice', async () => {
+        // Doc currency is BRL (default), but the NEGOCIADA currency of the título
+        // is USD (moedaCod 220). The candidata must carry USD as moedaNegociada so
+        // the Gestão column "Valor Moeda Negociada" labels the value as USD, not BRL.
+        const adtoBrlDoc = { ...adiantamento, moeda: 'BRL' };
+        const invBrlDoc = { ...invoice, moeda: 'BRL' };
+        const conexos = buildConexos({
+            listAdiantamentosProforma: jest
+                .fn()
+                .mockResolvedValue({ adiantamentos: [adtoBrlDoc], capHit: false }),
+            listFinanceiroAPagar: jest
+                .fn()
+                .mockResolvedValue({ proformas: [], invoices: [invBrlDoc] }),
+            // Both títulos negotiated in USD with a locked rate.
+            listTitulosAPagar: jest.fn().mockResolvedValue([
+                {
+                    titCod: 'T1',
+                    valorNegociado: 1100,
+                    taxa: 5.0,
+                    moedaCod: 220,
+                    moedaNome: 'DOLAR DOS EUA',
+                },
+            ]),
+        } as Partial<jest.Mocked<ConexosClient>>);
+        const repo = buildRepo();
+        const { logService } = buildLogService();
+        const { elegibilidade, variacao, aging, concurrency, db } = realServices();
+        const service = new EleicaoPermutasService(
+            conexos,
+            elegibilidade,
+            variacao,
+            aging,
+            repo as unknown as PermutaSnapshotRepository,
+            logService,
+            concurrency,
+            db,
+        );
+
+        const result = await service.executar({ triggeredBy: 'user-123' });
+
+        const c = result.candidatas[0];
+        expect(c.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.ELEGIVEL);
+        // doc currency stays BRL; negotiated currency is USD.
+        expect(c.adiantamento.moeda).toBe('BRL');
+        expect(c.adiantamento.moedaNegociada).toBe('USD');
+        expect(c.adiantamento.valorMoedaNegociada).toBe(1100);
+        expect(c.invoiceCasada?.moedaNegociada).toBe('USD');
+    });
+
     it('is idempotent: two runs produce the same candidate set', async () => {
         const conexos = buildConexos({
             listAdiantamentosProforma: jest

@@ -103,7 +103,9 @@ export default class GestaoPermutasService {
             referencia: a.referencia ?? a.docCod,
             exportador: a.exportador ?? '',
             valorMoedaNegociada: a.valorMoedaNegociada ?? 0,
-            moeda: a.moeda ?? 'USD',
+            // A coluna exibe `valorMoedaNegociada` (moeda ESTRANGEIRA do título):
+            // o rótulo deve ser a moeda NEGOCIADA (USD), não a do documento (BRL).
+            moeda: a.moedaNegociada ?? a.moeda ?? 'USD',
             diasEmAberto: a.agingDays ?? null,
             status,
             ...(a.motivoBloqueio !== undefined ? { motivoBloqueio: a.motivoBloqueio } : {}),
@@ -117,7 +119,8 @@ export default class GestaoPermutasService {
         referencia: i.referencia ?? i.docCod,
         exportador: i.exportador ?? '',
         valorMoedaNegociada: i.valorMoedaNegociada ?? 0,
-        moeda: i.moeda ?? 'USD',
+        // Rótulo da moeda NEGOCIADA (USD), não a do documento (BRL).
+        moeda: i.moedaNegociada ?? i.moeda ?? 'USD',
     });
 
     /**
@@ -162,7 +165,9 @@ export default class GestaoPermutasService {
                 docCod: c.adiantamentoDocCod,
                 referencia: adto?.referencia ?? c.adiantamentoDocCod,
                 valorASerUsado: c.valorASerUsado ?? adto?.valorMoedaNegociada ?? 0,
-                moeda: c.moeda ?? adto?.moeda ?? 'USD',
+                // Moeda NEGOCIADA do adiantamento (USD). `c.moeda` já é a sigla
+                // negociada (ingestão), mas o `adto` lido é a fonte mais fresca.
+                moeda: adto?.moedaNegociada ?? c.moeda ?? adto?.moeda ?? 'USD',
                 ...(processamentoStatus !== undefined ? { processamentoStatus } : {}),
             });
         }

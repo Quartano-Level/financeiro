@@ -39,4 +39,11 @@ export default interface Adiantamento {
      * coluna "Valor Moeda Negociada". Opcional — depende do detalhe do título.
      */
     valorMoedaNegociada?: number;
+    /**
+     * Sigla da moeda NEGOCIADA do título (`com308` `moedaCod` 220→'USD' /
+     * `moedaNome`), distinta de `moeda` (do DOCUMENTO — `moeEspSigla` null →
+     * 'BRL'). É a moeda que rotula `valorMoedaNegociada` na coluna "Valor Moeda
+     * Negociada" da tela Gestão. Opcional — depende do detalhe do título.
+     */
+    moedaNegociada?: string;
 }

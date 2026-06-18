@@ -201,6 +201,9 @@ export default class IngestaoPermutasService {
             ? { valorMoedaNegociada: c.adiantamento.valorMoedaNegociada }
             : {}),
         ...(c.adiantamento.moeda !== undefined ? { moeda: c.adiantamento.moeda } : {}),
+        ...(c.adiantamento.moedaNegociada !== undefined
+            ? { moedaNegociada: c.adiantamento.moedaNegociada }
+            : {}),
         pago: c.adiantamento.pago,
         ...(c.adiantamento.valorPermutar !== undefined
             ? { valorPermutar: c.adiantamento.valorPermutar }
@@ -249,6 +252,7 @@ export default class IngestaoPermutasService {
                     ? { valorMoedaNegociada: inv.valorMoedaNegociada }
                     : {}),
                 ...(inv.moeda !== undefined ? { moeda: inv.moeda } : {}),
+                ...(inv.moedaNegociada !== undefined ? { moedaNegociada: inv.moedaNegociada } : {}),
                 pago: inv.pago,
             });
         }
@@ -271,6 +275,14 @@ export default class IngestaoPermutasService {
         return [...byKey.values()];
     };
 
+    /**
+     * Moeda do casamento (rotula `valorASerUsado`, em moeda NEGOCIADA): a sigla
+     * negociada da invoice, com fallback para a do adiantamento e, por fim, a do
+     * documento da invoice. Garante "USD" em vez de "BRL" na tela Gestão.
+     */
+    private casamentoMoeda = (c: PermutaCandidata): string | undefined =>
+        c.invoiceCasada?.moedaNegociada ?? c.adiantamento.moedaNegociada ?? c.invoiceCasada?.moeda;
+
     /** Casamentos automáticos 1:1 — só candidatas elegíveis com invoice casada. */
     private toCasamentoRows = (candidatas: PermutaCandidata[]): CasamentoRow[] => {
         const rows: CasamentoRow[] = [];
@@ -286,7 +298,9 @@ export default class IngestaoPermutasService {
                 ...(c.adiantamento.valorMoedaNegociada !== undefined
                     ? { valorASerUsado: c.adiantamento.valorMoedaNegociada }
                     : {}),
-                ...(c.invoiceCasada.moeda !== undefined ? { moeda: c.invoiceCasada.moeda } : {}),
+                // Moeda exibida ao lado do `valorASerUsado` (em moeda negociada):
+                // prioriza a sigla NEGOCIADA (USD) sobre a do documento (BRL).
+                ...(this.casamentoMoeda(c) !== undefined ? { moeda: this.casamentoMoeda(c) } : {}),
                 ...(vc?.classificacao !== undefined
                     ? { variacaoClassificacao: vc.classificacao }
                     : {}),

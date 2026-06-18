@@ -37,7 +37,8 @@ const elegivel: PermutaCandidata = {
         filCod: 2,
         dataEmissao: new Date('2026-03-01'),
         valor: 1000,
-        moeda: 'USD',
+        moeda: 'BRL',
+        moedaNegociada: 'USD',
         pago: true,
         valorPermutar: 1000,
         referencia: 'CT/1',
@@ -49,7 +50,8 @@ const elegivel: PermutaCandidata = {
         priCod: '2048',
         dataEmissao: new Date('2026-04-01'),
         valor: 1000,
-        moeda: 'USD',
+        moeda: 'BRL',
+        moedaNegociada: 'USD',
         pago: false,
         referencia: 'INV/1',
         valorMoedaNegociada: 1000,
@@ -183,7 +185,8 @@ describe('IngestaoPermutasService', () => {
         expect(repo.replaceAutoCasamentos).toHaveBeenCalledTimes(1);
         expect(repo.markStale).toHaveBeenCalledTimes(1);
 
-        // Casamento carries the VC sign-fixed classification (JUROS).
+        // Casamento carries the VC sign-fixed classification (JUROS) and the
+        // NEGOCIADA currency (USD) — not the doc currency (BRL).
         const casamentoRows = repo.replaceAutoCasamentos.mock.calls[0][2];
         expect(casamentoRows).toHaveLength(1);
         expect(casamentoRows[0]).toMatchObject({
@@ -191,7 +194,15 @@ describe('IngestaoPermutasService', () => {
             adiantamentoDocCod: 'A1',
             variacaoClassificacao: 'JUROS',
             variacaoResultado: 120,
+            moeda: 'USD',
         });
+
+        // moeda NEGOCIADA (USD) maps onto the fact rows distinctly from the doc
+        // moeda (BRL), so the Gestão column labels the value as USD.
+        const adiantamentoRows = repo.upsertAdiantamentos.mock.calls[0][2];
+        expect(adiantamentoRows[0]).toMatchObject({ moeda: 'BRL', moedaNegociada: 'USD' });
+        const invoiceRows = repo.upsertInvoices.mock.calls[0][2];
+        expect(invoiceRows[0]).toMatchObject({ moeda: 'BRL', moedaNegociada: 'USD' });
 
         // Back-compat: snapshot persisted too.
         expect(snapshot.persistRun).toHaveBeenCalledTimes(1);
