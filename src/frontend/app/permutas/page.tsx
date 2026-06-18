@@ -3,8 +3,12 @@
 import * as React from 'react'
 import { ArrowLeftRight, Ban, CheckCircle2, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
-import { fetchGestaoPermutas } from '@/lib/api'
-import type { GestaoPermutasResponse, StatusElegibilidade } from '@/lib/types'
+import { fetchGestaoPermutas, processarAdiantamento } from '@/lib/api'
+import type {
+  GestaoPermutasResponse,
+  ProcessamentoStatus,
+  StatusElegibilidade,
+} from '@/lib/types'
 import { cn, formatNumber } from '@/lib/utils'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
@@ -50,6 +54,33 @@ function StatusBadge({ status, motivo }: { status: 'elegivel' | 'bloqueada'; mot
   )
 }
 
+/** Rótulos do status de processamento do analista. */
+const PROCESSAMENTO_LABEL: Record<ProcessamentoStatus, string> = {
+  pendente: 'Pendente',
+  processando: 'Processando',
+  processado: 'Processado',
+  erro: 'Erro',
+}
+
+/** Badge do status de processamento (botão "Processar"). */
+function ProcessamentoBadge({ status }: { status: ProcessamentoStatus }) {
+  if (status === 'processado') {
+    return (
+      <Badge className="border-transparent bg-success-subtle text-success-foreground">
+        <CheckCircle2 aria-hidden /> Processado
+      </Badge>
+    )
+  }
+  if (status === 'erro') {
+    return (
+      <Badge className="border-transparent bg-danger-subtle text-danger-foreground">
+        <Ban aria-hidden /> Erro
+      </Badge>
+    )
+  }
+  return <Badge variant="outline">{PROCESSAMENTO_LABEL[status]}</Badge>
+}
+
 /** Valor em moeda negociada (número pt-BR) + código da moeda em tom suave. */
 function Moeda({ valor, moeda }: { valor: number; moeda: string }) {
   return (
@@ -90,10 +121,25 @@ export default function GestaoPermutasPage() {
     }
   }, [])
 
-  const processar = (adtoRef: string, invoiceRef: string) => {
-    // Mock (Fatia 2 — escrita em fin010 ainda não existe). Apenas feedback visual.
-    toast.success(`Permuta ${adtoRef} → ${invoiceRef} processada (simulação)`)
-  }
+  const [processando, setProcessando] = React.useState<string | null>(null)
+
+  const processar = React.useCallback(
+    async (adtoDocCod: string, adtoRef: string, invoiceDocCod: string) => {
+      setProcessando(adtoDocCod)
+      try {
+        await processarAdiantamento(adtoDocCod, invoiceDocCod)
+        toast.success(`Adiantamento ${adtoRef} processado`)
+        await load()
+      } catch (err) {
+        toast.error(
+          `Falha ao processar ${adtoRef}${err instanceof Error ? `: ${err.message}` : ''}`,
+        )
+      } finally {
+        setProcessando(null)
+      }
+    },
+    [load],
+  )
 
   const pendentesFiltrados =
     data && filtro !== 'todos'
@@ -212,7 +258,12 @@ export default function GestaoPermutasPage() {
                           {p.diasEmAberto ?? '—'}
                         </TableCell>
                         <TableCell>
-                          <StatusBadge status={p.status} motivo={p.motivoBloqueio} />
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <StatusBadge status={p.status} motivo={p.motivoBloqueio} />
+                            {p.processamentoStatus ? (
+                              <ProcessamentoBadge status={p.processamentoStatus} />
+                            ) : null}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -248,10 +299,17 @@ export default function GestaoPermutasPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data.casamentos.flatMap((c) => {
+                    {data.casamentos.flatMap((c, g) => {
                       const linhas = c.adiantamentos.length > 0 ? c.adiantamentos : [null]
+                      // Banding por GRUPO (invoice): cada grupo é um bloco de cor
+                      // uniforme — evita o hover pintar a célula esticada (rowSpan)
+                      // e as bordas só-do-lado-direito que davam aspecto "bugado".
+                      const groupBg = g % 2 === 1 ? 'bg-muted/40' : 'bg-card'
                       return linhas.map((adto, i) => (
-                        <TableRow key={`${c.invoice.docCod}-${adto?.docCod ?? 'none'}`}>
+                        <TableRow
+                          key={`${c.invoice.docCod}-${adto?.docCod ?? 'none'}`}
+                          className={cn('border-b-0 hover:bg-transparent', groupBg)}
+                        >
                           {i === 0 ? (
                             <>
                               <TableCell rowSpan={linhas.length} className="align-top">
@@ -279,19 +337,45 @@ export default function GestaoPermutasPage() {
                           ) : null}
                           {adto ? (
                             <>
-                              <TableCell className="font-medium">{adto.referencia}</TableCell>
-                              <TableCell className="text-right">
+                              <TableCell
+                                className={cn(
+                                  'font-medium',
+                                  i > 0 && 'border-t border-border/40',
+                                )}
+                              >
+                                {adto.referencia}
+                              </TableCell>
+                              <TableCell
+                                className={cn(
+                                  'text-right',
+                                  i > 0 && 'border-t border-border/40',
+                                )}
+                              >
                                 <Moeda valor={adto.valorASerUsado} moeda={adto.moeda} />
                               </TableCell>
-                              <TableCell className="text-right">
-                                <Button
-                                  size="sm"
-                                  onClick={() =>
-                                    processar(adto.referencia, c.invoice.referencia)
-                                  }
-                                >
-                                  Processar
-                                </Button>
+                              <TableCell
+                                className={cn(
+                                  'text-right',
+                                  i > 0 && 'border-t border-border/40',
+                                )}
+                              >
+                                {adto.processamentoStatus === 'processado' ? (
+                                  <ProcessamentoBadge status="processado" />
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    disabled={processando === adto.docCod}
+                                    onClick={() =>
+                                      void processar(
+                                        adto.docCod,
+                                        adto.referencia,
+                                        c.invoice.docCod,
+                                      )
+                                    }
+                                  >
+                                    {processando === adto.docCod ? 'Processando…' : 'Processar'}
+                                  </Button>
+                                )}
                               </TableCell>
                             </>
                           ) : (

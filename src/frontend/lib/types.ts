@@ -24,6 +24,9 @@ export interface FiliaisResponse {
 
 export type StatusElegibilidade = 'elegivel' | 'bloqueada'
 
+/** Status do analista sobre um adiantamento (botão "Processar"). */
+export type ProcessamentoStatus = 'pendente' | 'processando' | 'processado' | 'erro'
+
 /** Adiantamento PROFORMA pendente de permuta (linha da visão geral). */
 export interface PermutaPendente {
   docCod: string
@@ -35,6 +38,8 @@ export interface PermutaPendente {
   diasEmAberto: number | null
   status: StatusElegibilidade
   motivoBloqueio?: string
+  /** Status do processamento do analista, quando registrado no banco. */
+  processamentoStatus?: ProcessamentoStatus
 }
 
 /** INVOICE finalizada em aberto (lado-crédito do casamento). */
@@ -53,6 +58,8 @@ export interface CasamentoAdiantamento {
   referencia: string
   valorASerUsado: number
   moeda: string
+  /** Status do processamento do analista, quando registrado no banco. */
+  processamentoStatus?: ProcessamentoStatus
 }
 
 /** Uma invoice em aberto e os adiantamentos sugeridos para casá-la (N:M). */

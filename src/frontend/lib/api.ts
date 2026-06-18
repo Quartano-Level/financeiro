@@ -62,3 +62,31 @@ export async function fetchGestaoPermutas(): Promise<GestaoPermutasResponse> {
     return gestaoPermutasFixture
   }
 }
+
+/**
+ * Registra o processamento de um adiantamento (botão "Processar"). Bate em
+ * `POST /permutas/adiantamentos/:docCod/processar` com o token de auth. O status
+ * gravado (`processado`) sobrevive à re-ingestão diária. Lança em erro de rede /
+ * HTTP para o caller exibir um toast e NÃO atualizar a tela como sucesso.
+ */
+export async function processarAdiantamento(
+  docCod: string,
+  invoiceDocCod?: string,
+): Promise<void> {
+  const res = await fetch(
+    `${API}/permutas/adiantamentos/${encodeURIComponent(docCod)}/processar`,
+    {
+      method: 'POST',
+      headers: await withAuthHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(invoiceDocCod ? { invoiceDocCod } : {}),
+    },
+  )
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const j = await res.json()
+      detail = j?.error ? ` — ${j.error}` : ''
+    } catch {}
+    throw new Error(`API ${res.status}${detail}`)
+  }
+}
