@@ -22,7 +22,7 @@ export interface FiliaisResponse {
  * fed by `lib/permutas-fixture.ts` (real probed data) as a demo safety-net.
  */
 
-export type StatusElegibilidade = 'elegivel' | 'bloqueada'
+export type StatusElegibilidade = 'elegivel' | 'bloqueada' | 'casamento-manual'
 
 /** Status do analista sobre um adiantamento (botão "Processar"). */
 export type ProcessamentoStatus = 'pendente' | 'processando' | 'processado' | 'erro'
@@ -81,5 +81,7 @@ export interface GestaoPermutasResponse {
     invoicesEmAberto: number
     elegiveis: number
     bloqueadas: number
+    /** N:M que passaram os 4 gates, aguardando escolha de invoice (ADR-0005). */
+    casamentoManual: number
   }
 }

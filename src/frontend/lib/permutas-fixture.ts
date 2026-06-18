@@ -89,6 +89,19 @@ export const gestaoPermutasFixture: GestaoPermutasResponse = {
       status: 'bloqueada',
       motivoBloqueio: 'sem-invoice',
     },
+    {
+      // N:M — passou os 4 gates, mas o processo tem >1 INVOICE FINALIZADA: falta
+      // só o analista escolher a invoice (ADR-0005). Não é bloqueada.
+      docCod: '26102',
+      filCod: 2,
+      referencia: 'CT077/26 3º',
+      exportador: 'JINDAL STAINLESS LIMITED',
+      valorMoedaNegociada: 84210.15,
+      moeda: 'USD',
+      diasEmAberto: 12,
+      status: 'casamento-manual',
+      motivoBloqueio: 'composto-nm',
+    },
   ],
   invoicesEmAberto: [
     {
@@ -158,9 +171,10 @@ export const gestaoPermutasFixture: GestaoPermutasResponse = {
     },
   ],
   totais: {
-    pendentes: 7,
+    pendentes: 8,
     invoicesEmAberto: 3,
     elegiveis: 5,
-    bloqueadas: 2,
+    bloqueadas: 1,
+    casamentoManual: 1,
   },
 }

@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { ArrowLeftRight, Ban, CheckCircle2, RefreshCw } from 'lucide-react'
+import { ArrowLeftRight, Ban, CheckCircle2, Layers, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { fetchGestaoPermutas, processarAdiantamento } from '@/lib/api'
 import type {
@@ -36,11 +36,21 @@ const MOTIVO_LABEL: Record<string, string> = {
   'detail-indisponivel': 'Detalhe indisponível',
 }
 
-function StatusBadge({ status, motivo }: { status: 'elegivel' | 'bloqueada'; motivo?: string }) {
+function StatusBadge({ status, motivo }: { status: StatusElegibilidade; motivo?: string }) {
   if (status === 'elegivel') {
     return (
       <Badge className="border-transparent bg-success-subtle text-success-foreground">
         <CheckCircle2 aria-hidden /> Elegível
+      </Badge>
+    )
+  }
+  if (status === 'casamento-manual') {
+    return (
+      <Badge
+        className="border-transparent bg-warning-subtle text-warning-foreground"
+        title={MOTIVO_LABEL[motivo ?? ''] ?? 'Casamento manual (N:M)'}
+      >
+        <Layers aria-hidden /> Casamento manual (N:M)
       </Badge>
     )
   }
@@ -92,6 +102,13 @@ function Moeda({ valor, moeda }: { valor: number; moeda: string }) {
 
 /** Filtro de status aplicado à tabela de pendentes (dirigido pelos KPIs). */
 type FiltroStatus = 'todos' | StatusElegibilidade
+
+/** Rótulo do estado-vazio por filtro de status. */
+const FILTRO_VAZIO_LABEL: Record<StatusElegibilidade, string> = {
+  elegivel: 'elegível',
+  bloqueada: 'bloqueado',
+  'casamento-manual': 'em casamento manual',
+}
 
 export default function GestaoPermutasPage() {
   const [data, setData] = React.useState<GestaoPermutasResponse | null>(null)
@@ -178,7 +195,7 @@ export default function GestaoPermutasPage() {
         <EmptyState title="Não foi possível carregar a gestão de permutas" />
       ) : (
         <>
-          <KPIGrid columns={4}>
+          <KPIGrid columns={5}>
             <SimpleKPI
               color="info"
               label="Adiantamentos pendentes"
@@ -196,6 +213,15 @@ export default function GestaoPermutasPage() {
               tooltip="Filtrar a tabela pelos elegíveis"
               active={filtro === 'elegivel'}
               onClick={() => setFiltro('elegivel')}
+            />
+            <SimpleKPI
+              color="warning"
+              label="Casamento manual"
+              value={data.totais.casamentoManual}
+              footer="N:M, falta escolher invoice"
+              tooltip="Filtrar a tabela pelos casamentos manuais (N:M)"
+              active={filtro === 'casamento-manual'}
+              onClick={() => setFiltro('casamento-manual')}
             />
             <SimpleKPI
               color="danger"
@@ -225,7 +251,7 @@ export default function GestaoPermutasPage() {
                   title={
                     filtro === 'todos'
                       ? 'Nenhum adiantamento pendente'
-                      : `Nenhum adiantamento ${filtro === 'elegivel' ? 'elegível' : 'bloqueado'}`
+                      : `Nenhum adiantamento ${FILTRO_VAZIO_LABEL[filtro]}`
                   }
                   description={
                     filtro === 'todos'
@@ -400,8 +426,8 @@ export default function GestaoPermutasPage() {
 function LoadingSkeleton() {
   return (
     <div className="space-y-6">
-      <KPIGrid columns={4}>
-        {Array.from({ length: 4 }).map((_, i) => (
+      <KPIGrid columns={5}>
+        {Array.from({ length: 5 }).map((_, i) => (
           <Skeleton key={i} className="h-24" />
         ))}
       </KPIGrid>
