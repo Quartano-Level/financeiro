@@ -87,13 +87,16 @@ export default class ElegibilidadeService {
             };
         }
 
-        // Qualquer gate (1–4) falho → `falha-gate`.
+        // Algum gate (2/3/4) falhou → motivo ESPECÍFICO do gate reprovado, em vez
+        // do genérico `falha-gate`. Prioridade pela causa-raiz: NÃO PAGO (gate 3)
+        // antes de SEM SALDO (gate 2) — o saldo a permutar deriva do valor pago,
+        // então um não-pago também zera o gate 2; mostrar "não pago" é o acionável.
         const algumGateFalhou = gatesAvaliados.some((g) => !g.passed);
         if (algumGateFalhou) {
             return {
                 ...base,
                 estadoElegibilidade: ESTADO_ELEGIBILIDADE.BLOQUEADA,
-                motivoBloqueio: MOTIVO_BLOQUEIO.FALHA_GATE,
+                motivoBloqueio: this.motivoDoGateFalho(gatesAvaliados),
             };
         }
 
@@ -124,6 +127,20 @@ export default class ElegibilidadeService {
                 : {}),
             estadoElegibilidade: ESTADO_ELEGIBILIDADE.ELEGIVEL,
         };
+    };
+
+    /**
+     * Mapeia o gate reprovado para um motivo ESPECÍFICO (em vez do genérico
+     * `falha-gate`). Prioridade pela causa-raiz quando mais de um gate falha:
+     *   gate 3 (NÃO PAGO) → gate 2 (SEM SALDO) → gate 4 (D.I + DUIMP) → fallback.
+     */
+    private motivoDoGateFalho = (gates: GateResult[]): MotivoBloqueio => {
+        const falhou = (gate: GateResult['gate']): boolean =>
+            gates.some((g) => g.gate === gate && !g.passed);
+        if (falhou(GATE.TOTALMENTE_PAGO)) return MOTIVO_BLOQUEIO.NAO_PAGO;
+        if (falhou(GATE.VALOR_PERMUTAR)) return MOTIVO_BLOQUEIO.SEM_SALDO_PERMUTAR;
+        if (falhou(GATE.DI_XOR_DUIMP)) return MOTIVO_BLOQUEIO.DI_DUIMP_AMBOS;
+        return MOTIVO_BLOQUEIO.FALHA_GATE;
     };
 
     /**

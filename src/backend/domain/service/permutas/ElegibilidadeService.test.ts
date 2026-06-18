@@ -77,26 +77,27 @@ describe('ElegibilidadeService.avaliarElegibilidade (I3: 4 gates + INVOICE casad
         expect(result.gatesAvaliados.every((g) => g.passed)).toBe(true);
     });
 
-    it('valorPermutar = 0 → BLOQUEADA(falha-gate) (Gate 2)', () => {
+    it('valorPermutar = 0 (pago) → BLOQUEADA(sem-saldo-permutar) (Gate 2)', () => {
         const result = service.avaliarElegibilidade({
             adiantamento: buildAdiantamento({ valorPermutar: 0 }),
             declaracoes: [di],
             invoices: [buildInvoice()],
         });
         expect(result.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
-        expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.FALHA_GATE);
+        expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.SEM_SALDO_PERMUTAR);
         const gate2 = result.gatesAvaliados.find((g) => g.gate === GATE.VALOR_PERMUTAR);
         expect(gate2?.passed).toBe(false);
     });
 
-    it('not fully paid → BLOQUEADA(falha-gate) (Gate 3)', () => {
+    it('not fully paid → BLOQUEADA(nao-pago) (Gate 3, raiz antes do Gate 2)', () => {
         const result = service.avaliarElegibilidade({
-            adiantamento: buildAdiantamento({ pago: false }),
+            // não pago zera o saldo (gate 2 também falha) → mostra a causa-raiz.
+            adiantamento: buildAdiantamento({ pago: false, valorPermutar: 0 }),
             declaracoes: [di],
             invoices: [buildInvoice()],
         });
         expect(result.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
-        expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.FALHA_GATE);
+        expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.NAO_PAGO);
         const gate3 = result.gatesAvaliados.find((g) => g.gate === GATE.TOTALMENTE_PAGO);
         expect(gate3?.passed).toBe(false);
     });
@@ -128,14 +129,14 @@ describe('ElegibilidadeService — Gate 4 D.I XOR DUIMP (I2)', () => {
         expect(result.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.ELEGIVEL);
     });
 
-    it('both D.I and DUIMP → BLOQUEADA(falha-gate) (XOR anomaly)', () => {
+    it('both D.I and DUIMP → BLOQUEADA(di-duimp-ambos) (XOR anomaly)', () => {
         const result = service.avaliarElegibilidade({
             adiantamento: buildAdiantamento(),
             declaracoes: [di, duimp],
             invoices: [buildInvoice()],
         });
         expect(result.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
-        expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.FALHA_GATE);
+        expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.DI_DUIMP_AMBOS);
     });
 
     it('neither D.I nor DUIMP → BLOQUEADA(data-base-indisponivel)', () => {

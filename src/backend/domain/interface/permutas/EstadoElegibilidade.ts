@@ -31,7 +31,13 @@ export const MOTIVO_BLOQUEIO = {
     SEM_INVOICE: 'sem-invoice',
     /** >1 INVOICE FINALIZADA — distinguível do composto N:M (mesma família). */
     MULTIPLAS_INVOICES: 'multiplas-invoices',
-    /** Falhou algum dos gates 1–4. */
+    /** Gate 3 reprovado — adiantamento NÃO está totalmente pago (mnyTitAberto > 0). */
+    NAO_PAGO: 'nao-pago',
+    /** Gate 2 reprovado — sem saldo a permutar (mnyTitPermutar = 0), embora pago. */
+    SEM_SALDO_PERMUTAR: 'sem-saldo-permutar',
+    /** Gate 4 anomalia — D.I E DUIMP presentes no mesmo processo (XOR violado). */
+    DI_DUIMP_AMBOS: 'di-duimp-ambos',
+    /** Fallback — falhou um gate sem motivo específico mapeado (não esperado). */
     FALHA_GATE: 'falha-gate',
     /** Gate 4 sem D.I nem DUIMP — sem âncora de data-base. */
     DATA_BASE_INDISPONIVEL: 'data-base-indisponivel',

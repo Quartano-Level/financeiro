@@ -28,6 +28,9 @@ import {
 
 /** Rótulos legíveis para os motivos de bloqueio do snapshot. */
 const MOTIVO_LABEL: Record<string, string> = {
+  'nao-pago': 'Não totalmente pago',
+  'sem-saldo-permutar': 'Sem saldo a permutar',
+  'di-duimp-ambos': 'D.I e DUIMP (anomalia)',
   'data-base-indisponivel': 'Sem D.I / DUIMP',
   'sem-invoice': 'Sem invoice',
   'composto-nm': 'Múltiplas invoices (N:M)',

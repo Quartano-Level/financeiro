@@ -70,9 +70,17 @@ blocked-by:
 
 ## Motivos de bloqueio (taxonomia)
 
-- `falha-gate` (gates 1–4), `data-base-indisponivel` (gate 4 sem D.I nem DUIMP). Casamento de
-  invoice (0/múltiplas → `sem-invoice` / `composto-nm` / `multiplas-invoices`) é de `casarInvoice`.
-  Ver `state-machines/elegibilidade-permuta-candidata.md`.
+Motivo **específico por gate reprovado** (substituiu o genérico `falha-gate`, 2026-06-19):
+- `nao-pago` — Gate 3 reprovado (não totalmente pago, `mnyTitAberto > 0`).
+- `sem-saldo-permutar` — Gate 2 reprovado (pago, mas `mnyTitPermutar = 0`).
+- `di-duimp-ambos` — Gate 4 anomalia (D.I **e** DUIMP no mesmo processo).
+- `data-base-indisponivel` — Gate 4 sem D.I **nem** DUIMP.
+- Prioridade quando >1 gate falha: `nao-pago` → `sem-saldo-permutar` → `di-duimp-ambos` (causa-raiz
+  primeiro — o saldo deriva do valor pago). `falha-gate` permanece só como **fallback** não esperado.
+
+Casamento de invoice (de `casarInvoice`): `0 → sem-invoice` (bloqueada); `>1 → composto-nm`/
+`multiplas-invoices` → estado `casamento-manual` (ADR-0005), **não** bloqueada.
+Ver `state-machines/elegibilidade-permuta-candidata.md`.
 
 ## Postcondição (garantia)
 
