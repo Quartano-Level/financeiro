@@ -30,17 +30,22 @@ O **mesmo principal em moeda estrangeira** (USD ou outra) é revalorizado em **D
 reais_adiantamento = principal_moeda × taxa_adiantamento   (câmbio fechado/contratado no adiantamento)
 reais_invoice      = principal_moeda × taxa_invoice        (taxa do invoice / nova taxa)
 
-delta = reais_invoice − reais_adiantamento
-      = principal_moeda × (taxa_invoice − taxa_adiantamento)
+delta = reais_adiantamento − reais_invoice
+      = principal_moeda × (taxa_adiantamento − taxa_invoice)
 ```
+
+> **Sinal corrigido (Yuri 2026-06-18).** O `delta` é `adiantamento − invoice`. Âncora real:
+> `taxa_adiantamento = 5,31` e `taxa_invoice = 5,19` ⇒ `delta > 0` ⇒ **JUROS** (passiva). O câmbio
+> caiu desde o adiantamento, então a Trading deve a diferença (variação passiva = juros). A fórmula
+> anterior (`invoice − adiantamento`) invertia o sinal e classificava esse caso como desconto.
 
 ### Classificação
 
 | Condição | Resultado | Valor | Conta contábil |
 |----------|-----------|-------|----------------|
-| `taxa_invoice > taxa_adiantamento` (delta > 0) | **JUROS** | `delta` | **131 — VAR. CAMBIAL PASSIVA REALIZADA** |
-| `taxa_invoice < taxa_adiantamento` (delta < 0) | **DESCONTO** | `|delta|` | **130 — VAR. CAMBIAL ATIVA REALIZADA** |
-| `taxa_invoice = taxa_adiantamento` (delta = 0) | sem juros/desconto | `0` | — |
+| `taxa_adiantamento > taxa_invoice` (delta > 0) | **JUROS** | `delta` | **131 — VAR. CAMBIAL PASSIVA REALIZADA** |
+| `taxa_adiantamento < taxa_invoice` (delta < 0) | **DESCONTO** | `|delta|` | **130 — VAR. CAMBIAL ATIVA REALIZADA** |
+| `taxa_adiantamento = taxa_invoice` (delta = 0) | sem juros/desconto | `0` | — |
 
 ### Entradas
 
@@ -71,8 +76,8 @@ delta = reais_invoice − reais_adiantamento
 
 ## Teste canônico (a escrever no TDD)
 
-- `has_canonical_test: false` — casos canônicos:
-  - `taxa_invoice > taxa_adiantamento` → JUROS, valor = delta, conta 131.
-  - `taxa_invoice < taxa_adiantamento` → DESCONTO, valor = |delta|, conta 130.
+- `has_canonical_test: true` — casos canônicos (em `VariacaoCambialPermutaService.test.ts`):
+  - `taxa_adiantamento > taxa_invoice` → JUROS, valor = delta, conta 131 (caso real 5,31/5,19).
+  - `taxa_adiantamento < taxa_invoice` → DESCONTO, valor = |delta|, conta 130.
   - taxas iguais → sem juros/desconto.
-  Fixados pelo TaskScoper/TDD. Âncora real: PDF processo `2048` (priCod=1153).
+  Âncora real: PDF processo `2048` (priCod=1153); taxas 5,31 (adto) vs 5,19 (invoice) → JUROS.

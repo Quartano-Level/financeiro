@@ -4,28 +4,28 @@ import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
 describe('VariacaoCambialPermutaService.calcular (P0-1: classificação por TAXA)', () => {
     const service = new VariacaoCambialPermutaService();
 
-    it('taxaInvoice > taxaAdiantamento → JUROS, resultado=delta, conta 131', () => {
+    it('taxaAdiantamento > taxaInvoice → JUROS, resultado=delta, conta 131 (caso real 5,31/5,19)', () => {
+        const vc = service.calcular({
+            moeda: 'USD',
+            principalMoeda: 1000,
+            taxaAdiantamento: 5.31,
+            taxaInvoice: 5.19,
+        });
+        // delta = 1000 × (5.31 − 5.19) = 120 → JUROS (taxa do adiantamento maior).
+        expect(vc.delta).toBeCloseTo(120);
+        expect(vc.classificacao).toBe('JUROS');
+        expect(vc.resultado).toBeCloseTo(120);
+        expect(vc.contaContabil).toBe('131');
+    });
+
+    it('taxaAdiantamento < taxaInvoice → DESCONTO, resultado=|delta|, conta 130', () => {
         const vc = service.calcular({
             moeda: 'USD',
             principalMoeda: 1000,
             taxaAdiantamento: 5.0,
             taxaInvoice: 5.2,
         });
-        // delta = 1000 × (5.2 − 5.0) = 200
-        expect(vc.delta).toBeCloseTo(200);
-        expect(vc.classificacao).toBe('JUROS');
-        expect(vc.resultado).toBeCloseTo(200);
-        expect(vc.contaContabil).toBe('131');
-    });
-
-    it('taxaInvoice < taxaAdiantamento → DESCONTO, resultado=|delta|, conta 130', () => {
-        const vc = service.calcular({
-            moeda: 'USD',
-            principalMoeda: 1000,
-            taxaAdiantamento: 5.2,
-            taxaInvoice: 5.0,
-        });
-        // delta = 1000 × (5.0 − 5.2) = −200
+        // delta = 1000 × (5.0 − 5.2) = −200 → DESCONTO.
         expect(vc.delta).toBeCloseTo(-200);
         expect(vc.classificacao).toBe('DESCONTO');
         expect(vc.resultado).toBeCloseTo(200);

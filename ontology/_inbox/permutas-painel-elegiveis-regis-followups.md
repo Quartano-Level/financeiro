@@ -95,3 +95,86 @@ Buckets: 70 NÃO PAGO · 332 TOTALMENTE PAGO · 6 PARCIALMENTE PAGO · 42 com pe
   aproximação `pago−permuta` quebra nesses casos). **⚠️ A variação cambial deve ser calculada sobre o
   valor PARCIAL efetivamente permutado, não sobre o valor integral do título** — revisar
   `computeVariacao` / `VariacaoCambialService` antes da Fatia 2.
+
+---
+
+## Run `2026-06-18-2039` — Fase B (modelo relacional + ingestão diária + Leitura/Processar)
+
+**Fonte:** `docs/regis-review/2026-06-18-2039/{REPORT,KANBAN}.md` (quick, escopo Fase B).
+**Overall score:** 6.9/10. **Scorecard:** Availability 7 · Deployability 6 · Integrability 6.5 ·
+Modifiability 6.5 · Performance 6 · Fault-Tolerance 7.5 · Security 7.5 · Testability 7.5.
+48 cards (2 "P0" pelo consolidator · 22 P1 · 15 P2 · 9 P3).
+
+### Veredito do gate (P0 vs. follow-up)
+
+Os **2 P0** promovidos pelo consolidator são ambos sobre o **cron de ingestão**:
+`availability-1` (agendar o cron + heartbeat) e `availability-2` (`Idempotency-Key` na ingestão, só
+relevante depois do cron ligado). **Decisão (AutoLoopRunner): NÃO re-entram no loop desta feature** —
+a configuração do scheduler está **explicitamente fora de escopo** do plano aprovado
+(`compiled-foraging-reef.md` §7 + prompt: *"Job cron-ready… Linha de cron documentada no header (não
+configurar cron)"*). Não há `infra/`/Terraform neste repo. São **follow-ups operacionais** a ativar
+quando o scheduler/infra for endereçado. ⇒ **Nenhum P0 in-scope** abriu para remediação imediata; a
+Fase B entregue está verde (typecheck/lint/test/PatternGuardian/DesignSystemReviewer).
+
+### "P0" (operacional — gated em ativar o cron, fora do escopo)
+- `availability-1` — Agendar `ingest-permutas` (Render Cron / GH Actions) + heartbeat/last_success_at.
+- `availability-2` — `Idempotency-Key` na ingestão (entrar junto de `availability-1`).
+
+### P1 — Alto
+- `availability-3` — Frontend: distinguir "indisponível" de "vazio" no fallback de `/gestao`.
+- `availability-4` — Compartilhar advisory lock entre ingest e eleicao (evitar fan-out Conexos paralelo).
+- `availability-5` — Timeout explícito nas chamadas Conexos antes do RetryExecutor.
+- `deployability-1` — Advisory lock no MigrationRunner + UMA origem de migrações (CI × boot).
+- `deployability-2` — Agendar o cron em produção (espelha `availability-1`).
+- `fault-tolerance-1` — Unir TX relacional + snapshot na MESMA transação (ou compensação documentada);
+  hoje `snapshotRepository.persistRun` é TX2 após TX1 commitar.
+- `fault-tolerance-2` — `UNIQUE(flow_id, kind)` em `permuta_eleicao_run` (migration 0005).
+- `fault-tolerance-4` — Job de reconciliação relacional × snapshot + detector de duplo-header.
+- `integrability-1` — Contrato `GestaoPermutasResponse` compartilhado backend↔frontend (Zod / contract test).
+- `integrability-2` — `valorMoedaNegociada` consistente OU `null` para bloqueadas (ver "campos undefined").
+- `integrability-3` — Parse Zod no consumer de `/gestao` + flag de fallback explícito.
+- `modifiability-1` — Extrair `chunked<T>` + `UPSERT_CHUNK` p/ lib compartilhada (Relational × Snapshot).
+- `modifiability-2` — Helper `bulkUpsert` declarativo (4 upsert-chunk → specs).
+- `modifiability-3` — Dividir `PermutaRelationalRepository` (512 LOC) em writes × reads.
+- `performance-1` — Paginar `/gestao` + `LIMIT` nas reads.
+- `performance-2` — `TRUNCATE`/recompute incremental no lugar de `DELETE FROM permuta_casamento`.
+- `performance-3` — `statement_timeout`/`lock_timeout`/`idle_in_transaction_session_timeout` no pool.
+- `performance-4` — Índice em `last_ingest_run_id` p/ acelerar `markStale`.
+- `security-1` — RBAC/tenant no `POST /processar` + `tenant_id` em `permuta_processamento` (P0 retroativo no multi-tenant).
+- `testability-1` — Teste de unidade para `jobs/ingest-permutas.ts`.
+- `testability-2` — Suite de integração SQL p/ `PermutaRelationalRepository` (Postgres efêmero) — valida 0003/0004.
+- `testability-3` — `ClockProvider` injetável (zerar `new Date()` — auditoria O6 determinística).
+
+### P2 — Médio
+- `availability-6` (retry tx transitório PG) · `availability-7` (stale-ratio/idade do run) ·
+  `deployability-3` (runbook rollback) · **`deployability-4` (bump v0.2.0→v0.3.0 + CHANGELOG — NÃO
+  executado nesta fatia, instrução "NÃO bump")** · `deployability-5` (smoke mandatório) ·
+  `fault-tolerance-3` (logar header de erro engolido) · `integrability-4` (Zod em
+  `mapDocPagar`/`listTitulosAPagar`) · `integrability-6` (fixture por env-flag + limpar PII) ·
+  `modifiability-4` (`pickDefined`) · `modifiability-6` (split `EleicaoPermutasService` +
+  `PermutaFanoutService`) · `performance-5` (mesmo PoolClient lock+tx) · `performance-7` (cache HTTP
+  por `last_ingest_run_id`) · `security-2` (validar `:docCod` Zod+CHECK) · `security-3` (audit
+  append-only `permuta_processamento_audit`) · `testability-4` (`IdProvider`) · `testability-5`
+  (subir coverageThreshold) · `testability-6` (fixtures Permutas + `supertest`).
+
+### P3 — Baixo
+- `deployability-6` (feature flag) · `integrability-5` (`httpJson()`) · `modifiability-5`
+  (externalizar `INGEST_LOCK_KEY`/chunk-size) · `performance-6` (`markStale` em CTE única) ·
+  `security-4` (`Idempotency-Key` no `/processar`) · `security-5` (redaction PII no log) ·
+  `testability-7` (assert audit-log em 401/422).
+
+### Campos Conexos que ficaram undefined (follow-up de dados, não bug)
+
+Conforme a instrução do plano ("se um campo não estiver trivialmente disponível sem fan-out extra,
+deixe opcional/undefined e registre como follow-up"):
+
+1. **`valorMoedaNegociada`** (Adiantamento e Invoice) — só hidratado para candidatas **elegíveis com
+   invoice casada**, via o fan-out `listTitulosAPagar` (`titMnyValorMneg`) que já roda em
+   `computeVariacao`. Para adiantamentos **bloqueados** e invoices não-casadas fica `undefined` (a tela
+   cai em `0`). Popular para todos exigiria fan-out `com308` extra por documento (custoso) → ver
+   `integrability-2`.
+2. **`referencia`** — `docEspNumero` (fallback `priEspRefcliente`) do payload default do `com298/list`.
+   Funciona; quando ausente a tela cai em `docCod`. Sem fan-out extra (OK).
+3. **`exportador`** — `dpeNomPessoa` (já existente). OK.
+
+Nenhum bloqueia a feature: a tela tem defaults e o fixture permanece como fallback de segurança.

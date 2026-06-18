@@ -179,14 +179,29 @@ export default class EleicaoPermutasService {
         };
     };
 
-    private runEleicao = async (params: EleicaoParams): Promise<EleicaoResult> => {
-        const { triggeredBy } = params;
+    /**
+     * Fan-out + gates + VC + aging compartilhado (P0-7). Lê filiais →
+     * adiantamentos → declarações/invoices → detalhe → gates → variação cambial
+     * → aging e devolve as candidatas + `flowId` + os totais derivados. NÃO
+     * persiste nada — é reusável pela eleição (snapshot do `/painel`) e pela
+     * ingestão diária (modelo relacional do `/gestao`). Propaga qualquer falha
+     * de fan-out ao caller, que decide como persistir o erro.
+     */
+    public computeCandidatas = async (): Promise<{
+        candidatas: PermutaCandidata[];
+        flowId: string;
+        totals: {
+            totalCandidatas: number;
+            totalElegiveis: number;
+            totalBloqueadas: number;
+            bloqueadasByMotivo: Record<string, number>;
+        };
+    }> => {
         const flowId = randomUUID();
-        const startedAt = new Date();
 
         await this.logService.info({
             type: LOG_TYPE.FLOW_START,
-            message: 'permuta eleicao started',
+            message: 'permuta compute candidatas started',
             data: { flowId, pageSize: PAGE_SIZE, maxPages: MAX_PAGES },
         });
 
@@ -211,7 +226,38 @@ export default class EleicaoPermutasService {
             const bloqueadas = candidatas.filter(
                 (c) => c.estadoElegibilidade === ESTADO_ELEGIBILIDADE.BLOQUEADA,
             );
-            const bloqueadasByMotivo = this.countByMotivo(bloqueadas);
+            return {
+                candidatas,
+                flowId,
+                totals: {
+                    totalCandidatas: candidatas.length,
+                    totalElegiveis: elegiveis.length,
+                    totalBloqueadas: bloqueadas.length,
+                    bloqueadasByMotivo: this.countByMotivo(bloqueadas),
+                },
+            };
+        } catch (error) {
+            // P0-4 — corta os workers de fan-out ainda em voo (best-effort).
+            abortController.abort();
+            await this.logService.error({
+                type: LOG_TYPE.FLOW_ERROR,
+                message: 'permuta compute candidatas aborted',
+                error,
+                data: { flowId, error: error instanceof Error ? error.message : String(error) },
+            });
+            throw error;
+        }
+    };
+
+    private runEleicao = async (params: EleicaoParams): Promise<EleicaoResult> => {
+        const { triggeredBy } = params;
+        const startedAt = new Date();
+        let flowId = '';
+
+        try {
+            const computed = await this.computeCandidatas();
+            flowId = computed.flowId;
+            const { candidatas, totals } = computed;
             const finishedAt = new Date();
 
             const runInput: PermutaEleicaoRunInput = {
@@ -220,10 +266,10 @@ export default class EleicaoPermutasService {
                 finishedAt,
                 status: 'success',
                 triggeredBy,
-                totalCandidatas: candidatas.length,
-                totalElegiveis: elegiveis.length,
-                totalBloqueadas: bloqueadas.length,
-                bloqueadasByMotivo,
+                totalCandidatas: totals.totalCandidatas,
+                totalElegiveis: totals.totalElegiveis,
+                totalBloqueadas: totals.totalBloqueadas,
+                bloqueadasByMotivo: totals.bloqueadasByMotivo,
             };
             const runId = await this.snapshotRepository.persistRun(runInput, candidatas);
 
@@ -233,10 +279,7 @@ export default class EleicaoPermutasService {
                 data: {
                     flowId,
                     snapshotId: runId,
-                    totalCandidatas: candidatas.length,
-                    totalElegiveis: elegiveis.length,
-                    totalBloqueadas: bloqueadas.length,
-                    bloqueadasByMotivo,
+                    ...totals,
                     durationMs: finishedAt.getTime() - startedAt.getTime(),
                 },
             });
@@ -244,16 +287,14 @@ export default class EleicaoPermutasService {
             return {
                 runId,
                 flowId,
-                totalCandidatas: candidatas.length,
-                totalElegiveis: elegiveis.length,
-                totalBloqueadas: bloqueadas.length,
-                bloqueadasByMotivo,
+                totalCandidatas: totals.totalCandidatas,
+                totalElegiveis: totals.totalElegiveis,
+                totalBloqueadas: totals.totalBloqueadas,
+                bloqueadasByMotivo: totals.bloqueadasByMotivo,
                 status: 'success',
                 candidatas,
             };
         } catch (error) {
-            // P0-4 — corta os workers de fan-out ainda em voo (best-effort).
-            abortController.abort();
             const message = error instanceof Error ? error.message : String(error);
             // Atomicidade: persiste a run com status=error e ZERO snapshot rows.
             const runId = await this.snapshotRepository.persistRun(
@@ -363,6 +404,7 @@ export default class EleicaoPermutasService {
                 moeda: i.moeda,
                 pago: i.pago,
                 ...(i.exportador !== undefined ? { exportador: i.exportador } : {}),
+                ...(i.referencia !== undefined ? { referencia: i.referencia } : {}),
             };
             const list = byPriCod.get(i.priCod) ?? [];
             list.push(mapped);
@@ -474,14 +516,29 @@ export default class EleicaoPermutasService {
         };
 
         // Variação cambial só para elegíveis com título a-pagar legível (P0-1).
+        // O mesmo fan-out de títulos (`listTitulosAPagar`) também hidrata o
+        // `valorMoedaNegociada` de adiantamento/invoice (coluna "Valor Moeda
+        // Negociada" da tela Gestão) — sem chamadas extras.
         if (result.estadoElegibilidade === ESTADO_ELEGIBILIDADE.ELEGIVEL && result.invoiceCasada) {
-            const variacao = await this.computeVariacao(
+            const enriched = await this.computeVariacao(
                 hydrated,
                 result.invoiceCasada,
                 dataBase,
                 filCod,
             );
-            if (variacao !== undefined) candidata.variacaoCambial = variacao;
+            if (enriched.variacao !== undefined) candidata.variacaoCambial = enriched.variacao;
+            if (enriched.valorMoedaNegociadaAdto !== undefined) {
+                candidata.adiantamento = {
+                    ...candidata.adiantamento,
+                    valorMoedaNegociada: enriched.valorMoedaNegociadaAdto,
+                };
+            }
+            if (enriched.valorMoedaNegociadaInvoice !== undefined && candidata.invoiceCasada) {
+                candidata.invoiceCasada = {
+                    ...candidata.invoiceCasada,
+                    valorMoedaNegociada: enriched.valorMoedaNegociadaInvoice,
+                };
+            }
         }
 
         return candidata;
@@ -492,28 +549,43 @@ export default class EleicaoPermutasService {
         invoice: Invoice,
         dataBase: Date | undefined,
         filCod: number,
-    ): Promise<PermutaCandidata['variacaoCambial']> => {
+    ): Promise<{
+        variacao?: PermutaCandidata['variacaoCambial'];
+        valorMoedaNegociadaAdto?: number;
+        valorMoedaNegociadaInvoice?: number;
+    }> => {
         const [titAdto, titInv] = await Promise.all([
             this.conexosClient.listTitulosAPagar({ docCod: adiantamento.docCod, filCod }),
             this.conexosClient.listTitulosAPagar({ docCod: invoice.docCod, filCod }),
         ]);
         const taxaAdiantamento = titAdto[0]?.taxa;
         const taxaInvoice = titInv[0]?.taxa;
-        const principalMoeda = titInv[0]?.valorNegociado ?? titAdto[0]?.valorNegociado;
+        const valorMoedaNegociadaAdto = titAdto[0]?.valorNegociado;
+        const valorMoedaNegociadaInvoice = titInv[0]?.valorNegociado;
+        const principalMoeda = valorMoedaNegociadaInvoice ?? valorMoedaNegociadaAdto;
+        const enriched: {
+            variacao?: PermutaCandidata['variacaoCambial'];
+            valorMoedaNegociadaAdto?: number;
+            valorMoedaNegociadaInvoice?: number;
+        } = {
+            ...(valorMoedaNegociadaAdto !== undefined ? { valorMoedaNegociadaAdto } : {}),
+            ...(valorMoedaNegociadaInvoice !== undefined ? { valorMoedaNegociadaInvoice } : {}),
+        };
         if (
             taxaAdiantamento === undefined ||
             taxaInvoice === undefined ||
             principalMoeda === undefined
         ) {
-            return undefined;
+            return enriched;
         }
-        return this.variacaoCambialService.calcular({
+        enriched.variacao = this.variacaoCambialService.calcular({
             moeda: titInv[0]?.moedaNome ?? invoice.moeda,
             principalMoeda,
             taxaAdiantamento,
             taxaInvoice,
             ...(dataBase !== undefined ? { dataBase } : {}),
         });
+        return enriched;
     };
 
     private countByMotivo = (bloqueadas: PermutaCandidata[]): Record<string, number> => {

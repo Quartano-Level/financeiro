@@ -25,5 +25,18 @@ export default interface Adiantamento {
     pago: boolean;
     /** Saldo a permutar (detail `getDetalheTitulos`). Gate 2 (`> 0`). */
     valorPermutar?: number;
+    /** Nome do exportador/destino do pagamento (`com298.dpeNomPessoa`). */
     exportador?: string;
+    /**
+     * Referência humana do documento — `docEspNumero` (fallback
+     * `priEspRefcliente`). Exibida na coluna "Referência" da tela Gestão.
+     * Opcional: ausente quando o `com298/list` não traz o campo.
+     */
+    referencia?: string;
+    /**
+     * Valor do documento em moeda estrangeira negociada (`titMnyValorMneg` /
+     * `TituloAPagar.valorNegociado`). Distinto de `valor` (face). Exibido na
+     * coluna "Valor Moeda Negociada". Opcional — depende do detalhe do título.
+     */
+    valorMoedaNegociada?: number;
 }

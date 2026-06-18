@@ -15,16 +15,19 @@ export interface CalcularVariacaoInput {
  *
  * Ontology: `ontology/business-rules/classificacao-juros-desconto.md`.
  * Classificação por comparação de TAXA de câmbio:
- *   delta = principalMoeda × (taxaInvoice − taxaAdiantamento)
- *   delta > 0 → JUROS    = delta   → conta 131 (passiva)
- *   delta < 0 → DESCONTO = |delta| → conta 130 (ativa)
+ *   delta = principalMoeda × (taxaAdiantamento − taxaInvoice)
+ *   delta > 0 (taxaAdiantamento > taxaInvoice) → JUROS    = delta   → conta 131 (passiva)
+ *   delta < 0 (taxaAdiantamento < taxaInvoice) → DESCONTO = |delta| → conta 130 (ativa)
  *   delta = 0 → neutro (sem juros/desconto)
+ *
+ * Âncora real (Yuri 2026-06-18): taxa_adiantamento=5,31 > taxa_invoice=5,19 → JUROS
+ * (o câmbio caiu desde o adiantamento; a Trading deve a diferença = passiva = juros).
  */
 @injectable()
 export default class VariacaoCambialPermutaService {
     public calcular = (input: CalcularVariacaoInput): VariacaoCambial => {
         const { moeda, principalMoeda, taxaAdiantamento, taxaInvoice, dataBase } = input;
-        const delta = principalMoeda * (taxaInvoice - taxaAdiantamento);
+        const delta = principalMoeda * (taxaAdiantamento - taxaInvoice);
 
         const base: VariacaoCambial = {
             moeda,

@@ -31,6 +31,13 @@ export default interface InvoiceLancamento {
     dataPagamento?: Date;
     exportador?: string;
     /**
+     * Referência humana do documento (`docEspNumero` / `priEspRefcliente`),
+     * mapeada no boundary `ConexosClient.mapDocPagar`. Consumida pela tela de
+     * Gestão de Permutas (coluna "Referência"). Opcional/aditivo — FM/JVE
+     * ignoram. `undefined` quando o `com298/list` não traz o campo.
+     */
+    referencia?: string;
+    /**
      * Valor residual a permutar (`mnyTitPermutar` no detail endpoint Conexos).
      * Hidratado via fan-out GET `/com298/<docCod>` em `enrichValorPermutar`.
      * Diagnóstico/auditoria; não consumido pelo FIFO.

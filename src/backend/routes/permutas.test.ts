@@ -11,7 +11,9 @@ jest.mock('../domain/appContainer.js', () => ({
 }));
 
 import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasService.js';
+import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
+import PermutaProcessamentoRepository from '../domain/repository/permutas/PermutaProcessamentoRepository.js';
 import { errorMiddleware } from '../http/errorMiddleware.js';
 import { requestIdMiddleware } from '../middleware/requestId.js';
 import permutasRouter from './permutas.js';
@@ -153,6 +155,105 @@ describe('GET /permutas/painel', () => {
             const body = await readJson(res);
             expect(res.status).toBe(200);
             expect(body.items).toEqual([]);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+describe('GET /permutas/gestao', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    it('returns the relational gestao payload (fonte=banco)', async () => {
+        const exporGestao = jest.fn().mockResolvedValue({
+            fonte: 'banco',
+            geradoEm: '2026-06-18T12:00:00.000Z',
+            pendentes: [{ docCod: 'A1', status: 'elegivel' }],
+            invoicesEmAberto: [],
+            casamentos: [],
+            totais: { pendentes: 1, invoicesEmAberto: 0, elegiveis: 1, bloqueadas: 0 },
+        });
+        container.registerInstance(GestaoPermutasService, { exporGestao } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/gestao`);
+            const body = await readJson(res);
+            expect(res.status).toBe(200);
+            expect(body.fonte).toBe('banco');
+            expect(body.totais.elegiveis).toBe(1);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+describe('POST /permutas/adiantamentos/:docCod/processar', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    it('upserts status=processado with the authenticated user identity', async () => {
+        const upsertProcessamento = jest.fn().mockResolvedValue(undefined);
+        container.registerInstance(PermutaProcessamentoRepository, {
+            upsertProcessamento,
+        } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/adiantamentos/A1/processar`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ invoiceDocCod: 'I1', observacao: 'casado' }),
+            });
+            const body = await readJson(res);
+            expect(res.status).toBe(200);
+            expect(body).toMatchObject({ adiantamentoDocCod: 'A1', status: 'processado' });
+            expect(upsertProcessamento).toHaveBeenCalledWith({
+                adiantamentoDocCod: 'A1',
+                status: 'processado',
+                processadoPor: 'user-abc',
+                invoiceDocCod: 'I1',
+                observacao: 'casado',
+            });
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('accepts an empty body (invoiceDocCod/observacao optional)', async () => {
+        const upsertProcessamento = jest.fn().mockResolvedValue(undefined);
+        container.registerInstance(PermutaProcessamentoRepository, {
+            upsertProcessamento,
+        } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/adiantamentos/A1/processar`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({}),
+            });
+            expect(res.status).toBe(200);
+            expect(upsertProcessamento).toHaveBeenCalledWith({
+                adiantamentoDocCod: 'A1',
+                status: 'processado',
+                processadoPor: 'user-abc',
+            });
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('requires authentication (401 when unauthenticated)', async () => {
+        const server = await listen(buildApp({ authenticated: false }));
+        try {
+            const res = await fetch(`${server.url}/permutas/adiantamentos/A1/processar`, {
+                method: 'POST',
+            });
+            expect(res.status).toBe(401);
         } finally {
             await server.close();
         }

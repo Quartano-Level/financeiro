@@ -6,10 +6,12 @@
  * `ontology/business-rules/classificacao-juros-desconto.md`.
  *
  * Fórmula canônica:
- *   delta = principalMoeda × (taxaInvoice − taxaAdiantamento)
- *   delta > 0 (taxaInvoice > taxaAdiantamento) → JUROS    = delta   → conta 131
- *   delta < 0 (taxaInvoice < taxaAdiantamento) → DESCONTO = |delta| → conta 130
+ *   delta = principalMoeda × (taxaAdiantamento − taxaInvoice)
+ *   delta > 0 (taxaAdiantamento > taxaInvoice) → JUROS    = delta   → conta 131
+ *   delta < 0 (taxaAdiantamento < taxaInvoice) → DESCONTO = |delta| → conta 130
  *   delta = 0 → sem juros/desconto (classificacao indefinida)
+ *
+ * Âncora real (Yuri 2026-06-18): taxa_adiantamento=5,31 > taxa_invoice=5,19 → JUROS.
  */
 export type ClassificacaoVariacao = 'JUROS' | 'DESCONTO';
 export type ContaContabilVariacao = '130' | '131';

@@ -1,0 +1,272 @@
+import 'reflect-metadata';
+import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import type { TransactionClient } from '../../client/database/PostgreeDatabaseClient.js';
+import PermutaRelationalRepository, {
+    type AdiantamentoRow,
+    type CasamentoRow,
+    type DeclaracaoRow,
+    type IngestRunHeader,
+    type InvoiceRow,
+} from './PermutaRelationalRepository.js';
+
+const buildTx = () =>
+    ({
+        insert: jest.fn().mockResolvedValue(1),
+        update: jest.fn().mockResolvedValue(0),
+        selectMany: jest.fn().mockResolvedValue([]),
+        selectFirst: jest.fn().mockResolvedValue(null),
+    }) as unknown as jest.Mocked<TransactionClient>;
+
+const buildDb = (tx: jest.Mocked<TransactionClient>) =>
+    ({
+        insert: jest.fn().mockResolvedValue(1),
+        update: jest.fn().mockResolvedValue(0),
+        selectMany: jest.fn().mockResolvedValue([]),
+        selectFirst: jest.fn().mockResolvedValue(null),
+        withTransaction: jest.fn(async (fn: (t: TransactionClient) => Promise<unknown>) => fn(tx)),
+        withAdvisoryLock: jest.fn(async (_key: number, onAcquired: () => Promise<unknown>) =>
+            onAcquired(),
+        ),
+    }) as unknown as jest.Mocked<PostgreeDatabaseClient>;
+
+const header = (over: Partial<IngestRunHeader> = {}): IngestRunHeader => ({
+    flowId: 'flow-1',
+    startedAt: new Date('2026-06-18T10:00:00Z'),
+    finishedAt: new Date('2026-06-18T10:05:00Z'),
+    status: 'success',
+    triggeredBy: 'cron',
+    totalAdiantamentos: 1,
+    totalInvoices: 1,
+    totalCasamentos: 1,
+    totalStale: 0,
+    ...over,
+});
+
+const adiantamento: AdiantamentoRow = {
+    docCod: 'A1',
+    priCod: '2048',
+    filCod: 2,
+    referencia: 'CT/1',
+    exportador: 'DBP',
+    pago: true,
+    valorMoedaNegociada: 1000,
+    moeda: 'USD',
+    estadoElegibilidade: 'elegivel',
+    agingDays: 30,
+};
+const invoice: InvoiceRow = {
+    docCod: 'I1',
+    priCod: '2048',
+    filCod: 2,
+    referencia: 'INV/1',
+    pago: false,
+    valorMoedaNegociada: 1000,
+    moeda: 'USD',
+};
+const declaracao: DeclaracaoRow = { priCod: '2048', variante: 'DI' };
+const casamento: CasamentoRow = {
+    invoiceDocCod: 'I1',
+    adiantamentoDocCod: 'A1',
+    priCod: '2048',
+    valorASerUsado: 1000,
+    moeda: 'USD',
+    variacaoClassificacao: 'JUROS',
+    variacaoResultado: 120,
+};
+
+describe('PermutaRelationalRepository', () => {
+    it('persistIngestRun runs header + write inside ONE tx under advisory lock', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        const repo = new PermutaRelationalRepository(db);
+        const write = jest.fn().mockResolvedValue(undefined);
+
+        const runId = await repo.persistIngestRun(header(), 999, write);
+
+        expect(typeof runId).toBe('string');
+        expect(db.withAdvisoryLock as jest.Mock).toHaveBeenCalledTimes(1);
+        expect(db.withTransaction as jest.Mock).toHaveBeenCalledTimes(1);
+        // Header insert ran on the tx (not the pool).
+        const headerSql = (tx.insert as jest.Mock).mock.calls[0][0] as string;
+        expect(headerSql).toContain('INSERT INTO permuta_eleicao_run');
+        expect(headerSql).toContain("'ingest'");
+        expect(headerSql).not.toMatch(/'\s*\+|\$\{/);
+        // write() received the tx and the generated runId.
+        expect(write).toHaveBeenCalledWith(tx, runId);
+    });
+
+    it('persistIngestRun throws when the advisory lock is busy', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        (db.withAdvisoryLock as jest.Mock).mockImplementation(
+            async (_k: number, _ok: () => Promise<unknown>, onBusy: () => Promise<unknown>) =>
+                onBusy(),
+        );
+        const repo = new PermutaRelationalRepository(db);
+
+        await expect(repo.persistIngestRun(header(), 999, jest.fn())).rejects.toThrow(
+            /advisory lock busy/,
+        );
+    });
+
+    it('upsertAdiantamentos: ON CONFLICT DO UPDATE, parameterized, stale=false', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        const repo = new PermutaRelationalRepository(db);
+
+        await repo.upsertAdiantamentos(tx, 'run-1', [adiantamento]);
+
+        const [sql, params] = (tx.insert as jest.Mock).mock.calls[0];
+        expect(sql).toContain('INSERT INTO permuta_adiantamento');
+        expect(sql).toContain('ON CONFLICT (doc_cod) DO UPDATE');
+        expect(sql).toContain('stale = FALSE');
+        expect(sql).not.toMatch(/'\s*\+|\$\{/);
+        expect(params.runId).toBe('run-1');
+        expect(params.docCod_0).toBe('A1');
+        expect(params.estado_0).toBe('elegivel');
+        expect(params.valorMoedaNegociada_0).toBe(1000);
+    });
+
+    it('upsertAdiantamentos chunks into multi-row inserts of 500', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        const repo = new PermutaRelationalRepository(db);
+        const rows: AdiantamentoRow[] = Array.from({ length: 1100 }, (_, i) => ({
+            ...adiantamento,
+            docCod: `A${i}`,
+        }));
+
+        await repo.upsertAdiantamentos(tx, 'run-1', rows);
+        // 500 + 500 + 100 = 3 inserts.
+        expect(tx.insert as jest.Mock).toHaveBeenCalledTimes(3);
+    });
+
+    it('upsertInvoices: ON CONFLICT DO UPDATE, parameterized', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        const repo = new PermutaRelationalRepository(db);
+
+        await repo.upsertInvoices(tx, 'run-1', [invoice]);
+
+        const [sql, params] = (tx.insert as jest.Mock).mock.calls[0];
+        expect(sql).toContain('INSERT INTO permuta_invoice');
+        expect(sql).toContain('ON CONFLICT (doc_cod) DO UPDATE');
+        expect(params.docCod_0).toBe('I1');
+        expect(params.pago_0).toBe(false);
+    });
+
+    it('upsertDeclaracoes: ON CONFLICT (pri_cod, variante) DO UPDATE', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        const repo = new PermutaRelationalRepository(db);
+
+        await repo.upsertDeclaracoes(tx, 'run-1', [declaracao]);
+
+        const [sql, params] = (tx.insert as jest.Mock).mock.calls[0];
+        expect(sql).toContain('INSERT INTO permuta_declaracao_importacao');
+        expect(sql).toContain('ON CONFLICT (pri_cod, variante) DO UPDATE');
+        expect(params.priCod_0).toBe('2048');
+        expect(params.variante_0).toBe('DI');
+    });
+
+    it('replaceAutoCasamentos DELETEs then bulk-inserts the run casamentos', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        const repo = new PermutaRelationalRepository(db);
+
+        await repo.replaceAutoCasamentos(tx, 'run-1', [casamento]);
+
+        const deleteSql = (tx.update as jest.Mock).mock.calls[0][0] as string;
+        expect(deleteSql).toContain('DELETE FROM permuta_casamento');
+        const [insertSql, params] = (tx.insert as jest.Mock).mock.calls[0];
+        expect(insertSql).toContain('INSERT INTO permuta_casamento');
+        expect(params.invoiceDocCod_0).toBe('I1');
+        expect(params.adiantamentoDocCod_0).toBe('A1');
+        expect(params.varClass_0).toBe('JUROS');
+    });
+
+    it('replaceAutoCasamentos with empty rows still DELETEs (recompute clears stale matches)', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        const repo = new PermutaRelationalRepository(db);
+
+        await repo.replaceAutoCasamentos(tx, 'run-1', []);
+        expect(tx.update as jest.Mock).toHaveBeenCalledTimes(1); // DELETE only.
+        expect(tx.insert as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    it('markStale flags non-current-run rows across the three fact tables', async () => {
+        const tx = buildTx();
+        (tx.update as jest.Mock).mockResolvedValue(2);
+        const db = buildDb(tx);
+        const repo = new PermutaRelationalRepository(db);
+
+        const total = await repo.markStale(tx, 'run-1');
+
+        expect(tx.update as jest.Mock).toHaveBeenCalledTimes(3);
+        expect(total).toBe(6); // 2 per table × 3 tables.
+        for (const call of (tx.update as jest.Mock).mock.calls) {
+            const sql = call[0] as string;
+            expect(sql).toContain('SET stale = TRUE');
+            expect(sql).toContain('last_ingest_run_id IS DISTINCT FROM $runId');
+            expect(sql).not.toMatch(/'\s*\+|\$\{/);
+        }
+    });
+
+    it('listAdiantamentosAtivos filters NOT stale and maps rows', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        (db.selectMany as jest.Mock).mockResolvedValue([
+            {
+                doc_cod: 'A1',
+                pri_cod: '2048',
+                fil_cod: 2,
+                referencia: 'CT/1',
+                pago: true,
+                valor_moeda_negociada: 1000,
+                moeda: 'USD',
+                estado_elegibilidade: 'elegivel',
+                aging_days: 30,
+                stale: false,
+            },
+        ]);
+        const repo = new PermutaRelationalRepository(db);
+
+        const list = await repo.listAdiantamentosAtivos();
+        const sql = (db.selectMany as jest.Mock).mock.calls[0][0] as string;
+        expect(sql).toContain('WHERE NOT stale');
+        expect(list[0]).toMatchObject({
+            docCod: 'A1',
+            estadoElegibilidade: 'elegivel',
+            valorMoedaNegociada: 1000,
+            agingDays: 30,
+        });
+    });
+
+    it('listAdiantamentosAtivos with estado filter parameterizes the predicate', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        const repo = new PermutaRelationalRepository(db);
+
+        await repo.listAdiantamentosAtivos({ estadoElegibilidade: 'elegivel' });
+        const [sql, params] = (db.selectMany as jest.Mock).mock.calls[0];
+        expect(sql).toContain('estado_elegibilidade = $estado');
+        expect(params).toMatchObject({ estado: 'elegivel' });
+    });
+
+    it('listInvoicesEmAberto filters NOT pago AND NOT stale', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        const repo = new PermutaRelationalRepository(db);
+        await repo.listInvoicesEmAberto();
+        const sql = (db.selectMany as jest.Mock).mock.calls[0][0] as string;
+        expect(sql).toContain('NOT stale AND NOT pago');
+    });
+
+    it('findAdiantamento returns null when absent', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        const repo = new PermutaRelationalRepository(db);
+        expect(await repo.findAdiantamento('absent')).toBeNull();
+    });
+});

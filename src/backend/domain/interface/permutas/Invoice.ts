@@ -14,4 +14,15 @@ export default interface Invoice {
     moeda: string;
     pago: boolean;
     exportador?: string;
+    /**
+     * Referência humana do documento — `docEspNumero` (fallback
+     * `priEspRefcliente`). Exibida na coluna "Invoice em aberto" da tela.
+     * Opcional: ausente quando o `com298/list` não traz o campo.
+     */
+    referencia?: string;
+    /**
+     * Valor da invoice em moeda estrangeira negociada (`titMnyValorMneg` /
+     * `TituloAPagar.valorNegociado`). Distinto de `valor` (face). Opcional.
+     */
+    valorMoedaNegociada?: number;
 }

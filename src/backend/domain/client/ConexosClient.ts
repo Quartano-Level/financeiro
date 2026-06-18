@@ -541,6 +541,7 @@ export default class ConexosClient {
                     pago: mapped.pago,
                     exportador: mapped.exportador,
                     faturada: Boolean(row.faturada ?? row.flagFaturada ?? false),
+                    ...(mapped.referencia !== undefined ? { referencia: mapped.referencia } : {}),
                 };
                 if (mapped.valorPermutar !== undefined) {
                     invoice.valorPermutar = mapped.valorPermutar;
@@ -612,6 +613,7 @@ export default class ConexosClient {
                 moeda: mapped.moeda,
                 pago: mapped.pago,
                 ...(mapped.exportador !== undefined ? { exportador: mapped.exportador } : {}),
+                ...(mapped.referencia !== undefined ? { referencia: mapped.referencia } : {}),
                 ...(mapped.valorPermutar !== undefined
                     ? { valorPermutar: mapped.valorPermutar }
                     : {}),
@@ -1249,6 +1251,18 @@ export default class ConexosClient {
             : row.dpeNomPessoa
               ? String(row.dpeNomPessoa)
               : undefined,
+        /**
+         * Referência humana do documento. Vem de `docEspNumero` (nº/série do
+         * doc), com fallback para `priEspRefcliente` (ref. externa do processo)
+         * quando o doc não traz nº. Ambos já viajam no payload default do
+         * `com298/list`. `undefined` quando nenhum dos dois existe.
+         */
+        referencia:
+            row.docEspNumero != null && row.docEspNumero !== ''
+                ? String(row.docEspNumero)
+                : row.priEspRefcliente != null && row.priEspRefcliente !== ''
+                  ? String(row.priEspRefcliente)
+                  : undefined,
         /**
          * `mnyTitPermutar` no `com298/list` (saldo a permutar disponível
          * conforme exibido na UI Conexos). **IMPORTANTE:** validado
