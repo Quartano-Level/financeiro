@@ -1,14 +1,29 @@
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import { inject, injectable, singleton } from 'tsyringe';
 import type IClient from '../../core/client/IClient.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import RetryExecutor from '../../libs/executor/RetryExecutor.js';
 import SqlBuilder from '../../libs/sql/SqlBuilder.js';
 
+/**
+ * Transaction-scoped query surface handed to `withTransaction(fn)`. Mirrors the
+ * parameterized helpers of the pool client, but every call runs on the SAME
+ * dedicated `PoolClient` between BEGIN and COMMIT, so the work is atomic.
+ */
+export interface TransactionClient {
+    selectMany: (query: string, params?: Record<string, unknown>) => Promise<any[]>;
+    selectFirst: <T>(query: string, params?: Record<string, unknown>) => Promise<T | null>;
+    insert: (query: string, params?: Record<string, unknown>) => Promise<number>;
+    update: (query: string, params?: Record<string, unknown>) => Promise<number>;
+}
+
 @singleton()
 @injectable()
 export default class PostgreeDatabaseClient implements IClient {
-    private readonly poolMaxConnections = 1;
+    // ≥3 (P0-6): allows the eleicao trigger to hold a transaction/advisory lock
+    // while `/painel` (read) and a second concurrent request still get a
+    // connection instead of starving on a max=1 pool.
+    private readonly poolMaxConnections = 5;
     private readonly poolIdleTimeoutMillis = 10000;
     private readonly poolConnectionTimeoutMillis = 5000;
     private readonly sqlBuilder = new SqlBuilder();
@@ -75,6 +90,88 @@ export default class PostgreeDatabaseClient implements IClient {
 
     public insert = async (query: string, params?: Record<string, unknown>): Promise<number> => {
         return (await this.query(query, params)).rowCount ?? 0;
+    };
+
+    /**
+     * Runs `fn` inside a single atomic transaction on a dedicated pooled client
+     * (BEGIN → fn → COMMIT, or ROLLBACK + rethrow on any failure). The client is
+     * always returned to the pool. Parameterized helpers (`$name` via
+     * SqlBuilder) are exposed on the `TransactionClient` — all bound to the SAME
+     * session so the work commits or aborts together (Rule #5, atomicity P0-5).
+     */
+    public withTransaction = async <T>(fn: (tx: TransactionClient) => Promise<T>): Promise<T> => {
+        await this.init();
+        if (!this.connectionPool) throw new Error('Database connection pool not initialized');
+
+        const client = await this.connectionPool.connect();
+        const tx = this.buildTransactionClient(client);
+        try {
+            await client.query('BEGIN');
+            const result = await fn(tx);
+            await client.query('COMMIT');
+            return result;
+        } catch (error) {
+            try {
+                await client.query('ROLLBACK');
+            } catch {
+                // Swallow rollback failure — surface the ORIGINAL error below.
+            }
+            throw error;
+        } finally {
+            client.release();
+        }
+    };
+
+    /**
+     * Session-level advisory lock (P0-6). Returns `true` if acquired, `false` if
+     * another session already holds it — never blocks. Used to serialize the
+     * eleicao fan-out per `Idempotency-Key`: a concurrent duplicate fails to
+     * acquire and short-circuits to the existing run instead of double-firing.
+     *
+     * NOTE: a session-level lock is held by the SESSION that acquired it. Because
+     * the pooler may route a later `pg_advisory_unlock` to a different backend, we
+     * acquire AND release the lock on the SAME dedicated pooled client (see
+     * `withAdvisoryLock`). The raw `tryAdvisoryLock`/`advisoryUnlock` here run on
+     * the shared pool and are kept for callers that manage their own client.
+     */
+    public withAdvisoryLock = async <T>(
+        lockKey: number,
+        onAcquired: () => Promise<T>,
+        onBusy: () => Promise<T>,
+    ): Promise<T> => {
+        await this.init();
+        if (!this.connectionPool) throw new Error('Database connection pool not initialized');
+
+        const client = await this.connectionPool.connect();
+        try {
+            const res = await client.query('SELECT pg_try_advisory_lock($1) AS locked', [lockKey]);
+            const acquired = res.rows[0]?.locked === true;
+            if (!acquired) return onBusy();
+            try {
+                return await onAcquired();
+            } finally {
+                await client.query('SELECT pg_advisory_unlock($1)', [lockKey]);
+            }
+        } finally {
+            client.release();
+        }
+    };
+
+    private buildTransactionClient = (client: PoolClient): TransactionClient => {
+        const run = async (rawQuery: string, rawParams?: Record<string, unknown>): Promise<any> => {
+            const { query, params } = rawParams
+                ? this.sqlBuilder.build(rawQuery, rawParams)
+                : { query: rawQuery, params: undefined };
+            if (params) return client.query(query, params as any[]);
+            return client.query(query);
+        };
+        return {
+            selectMany: async (query, params) => (await run(query, params)).rows,
+            selectFirst: async <T>(query: string, params?: Record<string, unknown>) =>
+                ((await run(query, params)).rows[0] as T) ?? null,
+            insert: async (query, params) => (await run(query, params)).rowCount ?? 0,
+            update: async (query, params) => (await run(query, params)).rowCount ?? 0,
+        };
     };
 
     /**

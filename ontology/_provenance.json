@@ -1,13 +1,31 @@
 {
   "_meta": {
-    "generated": "2026-06-10",
-    "version": "0.1.0",
-    "note": "Tracks the origin of each ontology artifact. The Financeiro ontology was bootstrapped EMPTY from the fechamento-processos template — only the methodology layer (charter/principles, folder structure, design profile, agents/commands) was carried over. No domain artifacts have been imported or created yet.",
+    "generated": "2026-06-17",
+    "version": "0.2.1",
+    "note": "Tracks the origin of each ontology artifact. v0.2.0 added the first domain modelling: Frente I (Permutas) Fatia 1 (ADR-0004). v0.2.1: Yuri answered the P0 gaps — P0-1/P0-3/P0-5/P0-6/P0-7/P0-8/P1-2 RESOLVED and encoded into the artifacts; the two stubs (classificacao-juros-desconto, aging-anchor) were promoted to draft; P0-4 alone stays OPEN as a Conexos wire-field probe (ADR-0004 addendum). Nothing imported from upstream.",
     "template_source": "../fechamento-processos (commit 837363d, v0.10.2)",
     "upstream": "../../produtizacao/nf-projects"
   },
   "imported": {},
-  "custom": {},
+  "custom": {
+    "entities/adiantamento.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview Axis 1 + glossary + proposta", "adr": "0004" },
+    "entities/invoice.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview Axis 1 + glossary + proposta", "adr": "0004" },
+    "entities/declaracao-importacao.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview Axis 1; re-introduz reads podados (ADR-0003 O3)", "adr": "0004", "blocked_by": ["P0-4"], "note": "XOR/existence resolved; only dataBase wire-field read is gated on the P0-4 probe." },
+    "entities/variacao-cambial.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview Axis 1 + ConexosClient com308; P0-1 answer (TAXA comparison)", "adr": "0004", "resolved_by": ["P0-1", "P1-2"], "build_probe": ["com308 doc-source for rate/principal"] },
+    "entities/permuta-candidata.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview Axis 1 + glossary (backlog elegível); P0-5/P0-6/P0-8 answers", "adr": "0004", "resolved_by": ["P0-6", "P0-8", "P0-5"], "gated_by": ["P0-4 (aging read)"] },
+    "actions/eleger-adiantamentos.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview Axis 2; P0-3/P0-7 answers", "adr": "0004", "resolved_by": ["P0-3", "P0-7"], "build_probe": ["wire-key literal of adiantamento filter"] },
+    "actions/avaliar-elegibilidade.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview Axis 2/3 (4 gates)", "adr": "0004", "blocked_by": ["P0-4"], "note": "Gate 4 validates XOR now; only data extraction gated on probe." },
+    "actions/casar-invoice.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview Axis 2; P0-5/P0-6 answers", "adr": "0004", "resolved_by": ["P0-6", "P0-5"] },
+    "actions/calcular-variacao-cambial.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview Axis 2; P0-1 answer (TAXA comparison)", "adr": "0004", "resolved_by": ["P0-1"], "build_probe": ["com308 doc-source for rate/principal"] },
+    "actions/expor-no-painel.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview Axis 2; P0-8 answer", "adr": "0004", "resolved_by": ["P0-8"], "gated_by": ["P0-4 (aging read)"] },
+    "state-machines/elegibilidade-permuta-candidata.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview Axis 3 (estados) + P0-5/P0-6/P0-8 (taxonomy of block reasons)", "adr": "0004", "resolved_by": ["P0-5", "P0-6", "P0-8"] },
+    "business-rules/elegibilidade-permuta.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview Axis 3 (I3); P0-6/P0-5 answers", "adr": "0004", "resolved_by": ["P0-6", "P0-5"], "gated_by": ["P0-4"] },
+    "business-rules/di-xor-duimp.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview Axis 3 (I2)", "adr": "0004", "gated_by": ["P0-4 (dataBase read; XOR rule applicable now)"] },
+    "business-rules/classificacao-juros-desconto.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview P0-1 answer (canonical = TAXA comparison; promoted from stub)", "adr": "0004", "status": "draft", "resolved_by": ["P0-1", "P1-2"], "build_probe": ["doc-source of rate/principal"] },
+    "business-rules/aging-anchor.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview P0-8 answer (anchor = data-base; promoted from stub)", "adr": "0004", "status": "draft", "resolved_by": ["P0-8"], "gated_by": ["P0-4 (dataBase read)"] },
+    "integrations/conexos.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "interview Axis 4 + ConexosClient.ts (read side); P0-3/P0-7 answers", "adr": "0004", "resolved_by": ["P0-3", "P0-7"], "blocked_by": ["P0-4"], "build_probe": ["wire-key literal of adiantamento filter"] },
+    "decisions/0004-modelagem-permutas-fatia-1.md": { "feature": "permutas-painel-elegiveis", "date": "2026-06-17", "source": "OntologyCurator (+ 2026-06-17 addendum: P0 gaps resolved, only P0-4 open)", "type": "addition" }
+  },
   "carried_from_template": [
     "ontology/README.md (charter P1-P7 / I1-I6)",
     "ontology/design/taste-profile.md",

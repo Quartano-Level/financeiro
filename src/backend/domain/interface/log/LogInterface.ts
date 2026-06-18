@@ -1,11 +1,31 @@
 export type LogLevel = 'INFO' | 'ERROR' | 'WARN' | 'SUCCESS';
 
+/**
+ * Constantes tipadas de `LogType` para o flow de Permutas (ObservabilityAdvisor).
+ * Evita strings cruas no service layer — `LogType` aceita estas + as legadas.
+ * Reusa `CONEXOS_ERROR`/`CONEXOS_DEBUG`.
+ */
+export const LOG_TYPE = {
+    FLOW_START: 'FLOW_START',
+    FLOW_COMPLETE: 'FLOW_COMPLETE',
+    FLOW_ERROR: 'FLOW_ERROR',
+    BUSINESS_INFO: 'BUSINESS_INFO',
+    BUSINESS_WARN: 'BUSINESS_WARN',
+    CONEXOS_ERROR: 'CONEXOS_ERROR',
+    CONEXOS_DEBUG: 'CONEXOS_DEBUG',
+} as const;
+
 export type LogType =
     | 'VALIDATION_ERROR'
     | 'BUSINESS_ERROR'
     | 'CONEXOS_ERROR'
     | 'SYSTEM_ERROR'
     | 'CONEXOS_DEBUG'
+    | 'FLOW_START'
+    | 'FLOW_COMPLETE'
+    | 'FLOW_ERROR'
+    | 'BUSINESS_INFO'
+    | 'BUSINESS_WARN'
     | string;
 
 export interface LoggerMetadata {

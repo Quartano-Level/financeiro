@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "generated": "2026-06-10",
-    "version": "0.1.0",
-    "note": "Financeiro ontology — bootstrapped EMPTY from the fechamento-processos template (2026-06-10). The domain (entities/actions/business-rules/integrations/ui-flows/workflows) is modelled incrementally via the /feature-new pipeline; the OntologyCurator populates these collections per accepted feature. Until then they are empty BY DESIGN. The Conexos ERP integration is wired in code (src/backend/domain/client/ConexosClient.ts) but its ontology contract is (re)written on the first feature that touches it.",
+    "generated": "2026-06-17",
+    "version": "0.2.1",
+    "note": "Financeiro ontology — first domain modelling (Frente I Permutas, Fatia 1, READ-ONLY) via /feature-new permutas-painel-elegiveis (ADR-0004 + 2026-06-17 addendum). Entities/actions/rules below are modelled but NOT YET implemented in code (no src/ changes in this feature — ontology-only proposal). Implementation files map will be filled by TaskScoper/AutoLoopRunner. v0.2.1: Yuri's P0 answers encoded — P0-1/P0-3/P0-5/P0-6/P0-7/P0-8/P1-2 RESOLVED, two stubs promoted to draft; P0-4 alone stays OPEN as a Conexos wire-field probe (see ontology/_inbox/permutas-painel-elegiveis-interview.md).",
     "upstream": "../../produtizacao/nf-projects",
     "status_legend": {
       "implemented": "code in src/ implements the entity/action under the target architecture",
@@ -11,10 +11,70 @@
       "planned-migration": "ontology imported from upstream; local code does not implement it (yet) — track in migration-debt"
     }
   },
-  "entities": {},
-  "actions": {},
-  "business_rules": {},
-  "integrations": {},
+  "entities": {
+    "Adiantamento": {
+      "file": "entities/adiantamento.md",
+      "status": "planned",
+      "impl_files": [],
+      "read_scaffold": ["src/backend/domain/client/ConexosClient.ts (listFinanceiroAPagar, getMnyTitPermutar)"]
+    },
+    "Invoice": {
+      "file": "entities/invoice.md",
+      "status": "planned",
+      "impl_files": [],
+      "read_scaffold": ["src/backend/domain/client/ConexosClient.ts (listFinanceiroAPagar)"]
+    },
+    "DeclaracaoImportacao": {
+      "file": "entities/declaracao-importacao.md",
+      "status": "planned",
+      "impl_files": [],
+      "blocked_by": ["P0-4"],
+      "note": "Re-introduz reads imp019/imp223 podados no ADR-0003 (escopo data-base/existência)."
+    },
+    "VariacaoCambial": {
+      "file": "entities/variacao-cambial.md",
+      "status": "planned",
+      "impl_files": [],
+      "resolved_by": ["P0-1", "P1-2"],
+      "build_probe": ["com308 doc-source for taxaAdiantamento/taxaInvoice/principalMoeda"],
+      "read_scaffold": ["src/backend/domain/client/ConexosClient.ts (listTitulosAPagar)"]
+    },
+    "PermutaCandidata": {
+      "file": "entities/permuta-candidata.md",
+      "status": "planned",
+      "impl_files": [],
+      "resolved_by": ["P0-6", "P0-8", "P0-5"],
+      "gated_by": ["P0-4 (aging column read)"],
+      "note": "Permuta consumada (fin010) é Fatia 2 — fora de escopo. Shape 1:1; N:M → backlog (composto-nm)."
+    }
+  },
+  "actions": {
+    "elegerAdiantamentos": { "file": "actions/eleger-adiantamentos.md", "entity": "Adiantamento", "status": "planned", "impl_files": [], "resolved_by": ["P0-3", "P0-7"], "build_probe": ["wire-key literal of adiantamento filter"] },
+    "avaliarElegibilidade": { "file": "actions/avaliar-elegibilidade.md", "entity": "PermutaCandidata", "status": "planned", "impl_files": [], "blocked_by": ["P0-4"], "note": "Gate 4 validates XOR now; only data extraction gated on probe." },
+    "casarInvoice": { "file": "actions/casar-invoice.md", "entity": "Invoice", "status": "planned", "impl_files": [], "resolved_by": ["P0-6", "P0-5"] },
+    "calcularVariacaoCambial": { "file": "actions/calcular-variacao-cambial.md", "entity": "VariacaoCambial", "status": "planned", "impl_files": [], "resolved_by": ["P0-1"], "build_probe": ["com308 doc-source for rate/principal"] },
+    "exporNoPainel": { "file": "actions/expor-no-painel.md", "entity": "PermutaCandidata", "status": "planned", "impl_files": [], "resolved_by": ["P0-8"], "gated_by": ["P0-4 (aging read)"] }
+  },
+  "business_rules": {
+    "elegibilidade-permuta": { "file": "business-rules/elegibilidade-permuta.md", "invariant": "I3", "has_canonical_test": false, "resolved_by": ["P0-6", "P0-5"], "gated_by": ["P0-4"] },
+    "di-xor-duimp": { "file": "business-rules/di-xor-duimp.md", "invariant": "I2", "has_canonical_test": false, "gated_by": ["P0-4 (dataBase read; XOR rule applicable now)"] },
+    "classificacao-juros-desconto": { "file": "business-rules/classificacao-juros-desconto.md", "status": "draft", "has_canonical_test": false, "resolved_by": ["P0-1", "P1-2"], "build_probe": ["doc-source of rate/principal"] },
+    "aging-anchor": { "file": "business-rules/aging-anchor.md", "status": "draft", "has_canonical_test": false, "resolved_by": ["P0-8"], "gated_by": ["P0-4 (dataBase read)"] }
+  },
+  "state_machines": {
+    "elegibilidade-permuta-candidata": { "file": "state-machines/elegibilidade-permuta-candidata.md", "entity": "PermutaCandidata", "status": "planned" }
+  },
+  "integrations": {
+    "conexos": {
+      "file": "integrations/conexos.md",
+      "direction": "read-only",
+      "status": "partial",
+      "impl_files": ["src/backend/domain/client/ConexosClient.ts"],
+      "resolved_by": ["P0-3", "P0-7"],
+      "blocked_by": ["P0-4"],
+      "build_probe": ["wire-key literal of adiantamento filter"]
+    }
+  },
   "ui_flows": {},
   "workflows": {}
 }

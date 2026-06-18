@@ -996,4 +996,210 @@ describe('ConexosClient', () => {
             expect(docs[0].exportador).toBeUndefined();
         });
     });
+
+    describe('listAdiantamentosProforma (eleição — Permutas Fatia 1)', () => {
+        it('lists all proformas without priCod, with PROFORMA + FINALIZADO + adiantamento filters', async () => {
+            const legacy = buildLegacy();
+            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
+            const client = new ConexosClient(legacy);
+
+            await client.listAdiantamentosProforma({ filCod: 2 });
+
+            const body = legacy.listGenericPaginated.mock.calls[0][1] as Record<string, unknown>;
+            const filterList = body.filterList as Record<string, unknown>;
+            expect(filterList['tpdCod#EQ']).toBe(99);
+            expect(filterList['vldStatus#IN']).toEqual(['3']);
+            // 🔬 PROBE: assert the adiantamento filter KEY is present (not its prod value).
+            expect(filterList['adiantamento#EQ']).toBeDefined();
+            // P0-7: no priCod filter — the eleição lists all.
+            expect(filterList['priCod#IN']).toBeUndefined();
+        });
+
+        it('paginates the union and maps rows to Adiantamento (pago via mnyTitAberto)', async () => {
+            const legacy = buildLegacy();
+            legacy.listGenericPaginated
+                .mockResolvedValueOnce({
+                    count: 600,
+                    rows: Array.from({ length: 500 }, (_, i) => ({
+                        docCod: i + 1,
+                        priCod: 1153,
+                        docDtaEmissao: 1767571200000,
+                        docMnyValor: 1000,
+                        mnyTitAberto: 0,
+                    })),
+                })
+                .mockResolvedValueOnce({
+                    count: 600,
+                    rows: Array.from({ length: 100 }, (_, i) => ({
+                        docCod: 1000 + i,
+                        priCod: 2048,
+                        docDtaEmissao: 1767571200000,
+                        docMnyValor: 50,
+                        mnyTitAberto: 10,
+                    })),
+                });
+            const client = new ConexosClient(legacy);
+
+            const { adiantamentos, capHit } = await client.listAdiantamentosProforma({ filCod: 2 });
+
+            expect(legacy.listGenericPaginated).toHaveBeenCalledTimes(2);
+            expect(adiantamentos).toHaveLength(600);
+            expect(adiantamentos[0]).toMatchObject({ docCod: '1', priCod: '1153', pago: true });
+            expect(adiantamentos[500]).toMatchObject({
+                docCod: '1000',
+                priCod: '2048',
+                pago: false,
+            });
+            expect(capHit).toBe(false);
+        });
+
+        it('reports capHit=true when pagination hits MAX_PAGES (silent truncation)', async () => {
+            const legacy = buildLegacy();
+            // Every page is full (500 rows) and count never satisfied → loop runs
+            // until MAX_PAGES (50) and exits without a short page → capHit.
+            legacy.listGenericPaginated.mockResolvedValue({
+                count: 999_999,
+                rows: Array.from({ length: 500 }, (_, i) => ({ docCod: i + 1, priCod: 1 })),
+            });
+            const client = new ConexosClient(legacy);
+
+            const { capHit } = await client.listAdiantamentosProforma({ filCod: 2 });
+
+            expect(capHit).toBe(true);
+        });
+
+        it('rejects a row without docCod via Zod', async () => {
+            const legacy = buildLegacy();
+            legacy.listGenericPaginated.mockResolvedValue({
+                count: 1,
+                rows: [{ priCod: 1153, docMnyValor: 1 }],
+            });
+            const client = new ConexosClient(legacy);
+
+            await expect(client.listAdiantamentosProforma({ filCod: 2 })).rejects.toThrow();
+        });
+    });
+
+    describe('listDeclaracaoByProcesso (D.I imp019 XOR DUIMP imp223)', () => {
+        const onlyDi = (
+            endpoint: string,
+        ): { count: number; rows: Array<Record<string, unknown>> } =>
+            endpoint.startsWith('imp019')
+                ? { count: 1, rows: [{ priCod: 2048 }] }
+                : { count: 0, rows: [] };
+
+        it('returns only DI when only imp019 has a row', async () => {
+            const legacy = buildLegacy();
+            legacy.listGenericPaginated.mockImplementation(async (endpoint: string) =>
+                onlyDi(endpoint),
+            );
+            const client = new ConexosClient(legacy);
+
+            const result = await client.listDeclaracaoByProcesso({ priCods: ['2048'], filCod: 2 });
+
+            expect(result).toEqual([{ variante: 'DI', priCod: '2048' }]);
+        });
+
+        it('returns only DUIMP when only imp223 has a row', async () => {
+            const legacy = buildLegacy();
+            legacy.listGenericPaginated.mockImplementation(async (endpoint: string) =>
+                endpoint.startsWith('imp223')
+                    ? { count: 1, rows: [{ priCod: '3000' }] }
+                    : { count: 0, rows: [] },
+            );
+            const client = new ConexosClient(legacy);
+
+            const result = await client.listDeclaracaoByProcesso({ priCods: ['3000'], filCod: 2 });
+
+            expect(result).toEqual([{ variante: 'DUIMP', priCod: '3000' }]);
+        });
+
+        it('returns two entries (DI + DUIMP) when both exist — XOR decided in the service', async () => {
+            const legacy = buildLegacy();
+            legacy.listGenericPaginated.mockImplementation(async (endpoint: string) =>
+                endpoint.startsWith('imp019')
+                    ? { count: 1, rows: [{ priCod: '4000' }] }
+                    : { count: 1, rows: [{ priCod: '4000' }] },
+            );
+            const client = new ConexosClient(legacy);
+
+            const result = await client.listDeclaracaoByProcesso({ priCods: ['4000'], filCod: 2 });
+
+            expect(result).toHaveLength(2);
+            expect(result.map((d) => d.variante).sort()).toEqual(['DI', 'DUIMP']);
+        });
+
+        it('returns [] when neither declaration exists', async () => {
+            const legacy = buildLegacy();
+            legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
+            const client = new ConexosClient(legacy);
+
+            const result = await client.listDeclaracaoByProcesso({ priCods: ['9999'], filCod: 2 });
+
+            expect(result).toEqual([]);
+        });
+
+        it('leaves dataBase undefined while P0-4 probe is open', async () => {
+            const legacy = buildLegacy();
+            legacy.listGenericPaginated.mockImplementation(async (endpoint: string) =>
+                onlyDi(endpoint),
+            );
+            const client = new ConexosClient(legacy);
+
+            const result = await client.listDeclaracaoByProcesso({ priCods: ['2048'], filCod: 2 });
+
+            expect(result[0].dataBase).toBeUndefined();
+        });
+    });
+
+    describe('getMnyTitPermutar (P0-3 — retry + ConexosError)', () => {
+        it('returns the literal mnyTitPermutar on success', async () => {
+            const legacy = buildLegacy();
+            legacy.getGeneric.mockResolvedValue({ mnyTitPermutar: 44917.24 });
+            const client = new ConexosClient(legacy);
+
+            const value = await client.getMnyTitPermutar({ docCod: '21841', filCod: 2 });
+
+            expect(value).toBe(44917.24);
+        });
+
+        it('retries a transient detail failure, then succeeds', async () => {
+            const legacy = buildLegacy();
+            legacy.getGeneric
+                .mockRejectedValueOnce(new Error('socket hang up'))
+                .mockResolvedValueOnce({ mnyTitPermutar: 100 });
+            const client = new ConexosClient(legacy);
+
+            const value = await client.getMnyTitPermutar({ docCod: 'D1', filCod: 2 });
+
+            expect(value).toBe(100);
+            expect(legacy.getGeneric).toHaveBeenCalledTimes(2);
+        });
+
+        it('throws ConexosError (NOT undefined) after retries are exhausted', async () => {
+            const legacy = buildLegacy();
+            legacy.getGeneric.mockRejectedValue(new Error('upstream 503'));
+            const client = new ConexosClient(legacy);
+
+            await expect(
+                client.getMnyTitPermutar({ docCod: 'D9', filCod: 2 }),
+            ).rejects.toBeInstanceOf(ConexosError);
+            // RetryExecutor retries=2 → 2 attempts before giving up.
+            expect(legacy.getGeneric).toHaveBeenCalledTimes(2);
+        });
+
+        it('treats the 400-VALIDATION-with-responseData quirk as a valid response (no throw)', async () => {
+            const legacy = buildLegacy();
+            legacy.getGeneric.mockRejectedValue({
+                response: { status: 400, data: { responseData: { mnyTitPermutar: 7 } } },
+            });
+            const client = new ConexosClient(legacy);
+
+            const value = await client.getMnyTitPermutar({ docCod: '10649', filCod: 2 });
+
+            expect(value).toBe(7);
+            // Quirk path succeeds on the first attempt — no retry.
+            expect(legacy.getGeneric).toHaveBeenCalledTimes(1);
+        });
+    });
 });

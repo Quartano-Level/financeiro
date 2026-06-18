@@ -77,8 +77,30 @@ jobs:
     needs: backend
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/backend
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: src/backend/package-lock.json
+      - run: npm ci
+
+      # P0-1 — run DB migrations BEFORE the deploy so a fresh environment has
+      # `permuta_eleicao_run`/`schema_migrations` created before serving traffic.
+      # Idempotent (`schema_migrations`); fails the job (and blocks deploy) on
+      # any migration error instead of deploying against an un-migrated schema.
+      - name: Run database migrations
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+          ENVIRONMENT: production
+        run: npm run migrate
+
       - name: Trigger Render deploy hook
+        working-directory: .
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         run: |

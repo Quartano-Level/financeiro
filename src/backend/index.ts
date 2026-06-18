@@ -9,6 +9,7 @@ import { errorMiddleware } from './http/errorMiddleware.js';
 import { globalLimiter, heavyRouteLimiter } from './http/rateLimit.js';
 import { requestIdMiddleware } from './middleware/requestId.js';
 import conexosRouter from './routes/conexos.js';
+import permutasRouter from './routes/permutas.js';
 
 const app = express();
 
@@ -68,6 +69,11 @@ app.use('/conexos', heavyRouteLimiter);
 
 // Example route proving the Conexos ERP integration is live in the skeleton.
 app.use('/conexos', conexosRouter);
+
+// Permutas Frente I — Fatia 1 (READ-ONLY). Heavy fan-out to Conexos on the
+// eleicao trigger → mount under the strict limiter (security-6 / F-security-9).
+app.use('/permutas', heavyRouteLimiter);
+app.use('/permutas', permutasRouter);
 
 // Central error-handling middleware — logs full detail server-side, returns
 // a generic payload to the client (arch-review cards security-3 /

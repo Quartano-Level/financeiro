@@ -1,3 +1,4 @@
+import 'reflect-metadata';
 import BoundedConcurrency from './BoundedConcurrency.js';
 
 describe('BoundedConcurrency', () => {

@@ -1,6 +1,28 @@
 import { inject, injectable, singleton } from 'tsyringe';
 import ConexosError from '../errors/ConexosError.js';
 import RetryExecutor from '../libs/executor/RetryExecutor.js';
+import type Adiantamento from '../interface/permutas/Adiantamento.js';
+import type { VarianteDeclaracao } from '../interface/permutas/DeclaracaoImportacao.js';
+import {
+    ADIANTAMENTO_FILTER_KEY,
+    ADIANTAMENTO_FILTER_VALUE,
+    ENDPOINT_DI_LIST,
+    ENDPOINT_DUIMP_LIST,
+    TPD_PROFORMA as PERMUTA_TPD_PROFORMA,
+    VLD_STATUS_FINALIZADO as PERMUTA_VLD_FINALIZADO,
+} from './permutas/conexosPermutasConstants.js';
+import { com298RowSchema, declaracaoRowSchema } from './permutas/conexosPermutasSchemas.js';
+
+/**
+ * Existência de declaração aduaneira por processo (`imp019`/`imp223`),
+ * escopo restrito ao Gate 4 (XOR) + data-base. `dataBase` é ⏸ GATED-P0-4 —
+ * só popula quando o probe capturar o campo wire (não chutar).
+ */
+export interface DeclaracaoEntry {
+    variante: VarianteDeclaracao;
+    priCod: string;
+    dataBase?: Date;
+}
 
 export const LEGACY_CONEXOS_TOKEN = Symbol('LegacyConexosShape');
 
@@ -540,6 +562,144 @@ export default class ConexosClient {
     };
 
     /**
+     * Eleição de Permutas (Fatia 1, ação `elegerAdiantamentos`): lista TODAS as
+     * PROFORMA finalizadas marcadas como Adiantamento (3 filtros: Tipo=PROFORMA,
+     * Situação=FINALIZADO, Adiantamento=SIM), SEM filtro de `priCod` (P0-7: lista
+     * todas, multi-filial, sem janela incremental). Reusa `paginate`.
+     *
+     * 🔬 BUILD-PROBE (P0-3): o LITERAL da chave wire `adiantamento` está isolado
+     * em `ADIANTAMENTO_FILTER_KEY` (ponto único). O método/teste fecham verde com
+     * o placeholder — o teste assere a PRESENÇA da chave, não o valor de produção.
+     *
+     * `valorPermutar` NÃO vem do list (`mnyTitPermutar` é null no list) — o caller
+     * hidrata via `getMnyTitPermutar(docCod)` por candidato (Gate 2).
+     */
+    public listAdiantamentosProforma = async (params: {
+        filCod: number;
+    }): Promise<{ adiantamentos: Adiantamento[]; capHit: boolean }> => {
+        const { filCod } = params;
+        let capHit = false;
+        const rows = await this.paginate<Record<string, unknown>>({
+            endpoint: 'com298/list',
+            bodyBase: {
+                fieldList: [],
+                filterList: {
+                    'tpdCod#EQ': PERMUTA_TPD_PROFORMA,
+                    'vldStatus#IN': PERMUTA_VLD_FINALIZADO,
+                    [ADIANTAMENTO_FILTER_KEY]: ADIANTAMENTO_FILTER_VALUE,
+                },
+                serviceName: 'com298',
+            },
+            opts: { filCod },
+            onCapHit: () => {
+                capHit = true;
+            },
+        });
+
+        const adiantamentos = rows.map<Adiantamento>((row) => {
+            // Zod no boundary — rejeita rows sem identidade; coage ids p/ string.
+            const validated = com298RowSchema.parse(row);
+            const mapped = this.mapDocPagar(row);
+            const adiantamento: Adiantamento = {
+                docCod: validated.docCod,
+                priCod: validated.priCod,
+                // P0-2 — invariante multi-filial I6. Preferimos o `filCod` da
+                // ROW do Conexos quando presente; caso contrário usamos a filial
+                // sob a qual a página foi consultada (param `filCod`). Nunca NULL.
+                filCod: this.parseOptionalNumber(row.filCod) ?? filCod,
+                dataEmissao: mapped.dataEmissao,
+                valor: mapped.valor,
+                moeda: mapped.moeda,
+                pago: mapped.pago,
+                ...(mapped.exportador !== undefined ? { exportador: mapped.exportador } : {}),
+                ...(mapped.valorPermutar !== undefined
+                    ? { valorPermutar: mapped.valorPermutar }
+                    : {}),
+            };
+            return adiantamento;
+        });
+        return { adiantamentos, capHit };
+    };
+
+    /**
+     * Re-introduz o lado-leitura de declaração aduaneira podado no ADR-0003
+     * (migration-debt O3), escopo restrito a EXISTÊNCIA (XOR) + data-base
+     * (Gate 4 + aging). Lê `imp019/list` (D.I) e `imp223/list` (DUIMP) por
+     * `priCod`, retornando uma entrada por declaração encontrada (o XOR é
+     * decidido no service `ElegibilidadeService`).
+     *
+     * ⏸ GATED-P0-4: `dataBase` é extraída pelo mapper plugável
+     * `mapDeclaracaoDataBase`. Enquanto o probe não capturar o NOME do campo
+     * wire (`imp019`/`imp223`), o mapper devolve `undefined` — a existência/XOR
+     * funciona hoje sem o probe.
+     */
+    public listDeclaracaoByProcesso = async (params: {
+        priCods: string[];
+        filCod: number;
+    }): Promise<DeclaracaoEntry[]> => {
+        const { priCods, filCod } = params;
+        if (priCods.length === 0) return [];
+        const chunks = chunked(priCods);
+
+        const readVariante = async (
+            endpoint: string,
+            variante: VarianteDeclaracao,
+        ): Promise<DeclaracaoEntry[]> => {
+            const rows = (
+                await Promise.all(
+                    chunks.map((batch) =>
+                        this.paginate<Record<string, unknown>>({
+                            endpoint,
+                            bodyBase: {
+                                fieldList: [],
+                                filterList: { 'priCod#IN': batch },
+                                serviceName: endpoint.split('/')[0],
+                            },
+                            priCodsBatch: batch,
+                            opts: { filCod },
+                        }),
+                    ),
+                )
+            ).flat();
+
+            return rows.map<DeclaracaoEntry>((row) => {
+                const validated = declaracaoRowSchema.parse(row);
+                const dataBase = this.mapDeclaracaoDataBase(row, variante);
+                return {
+                    variante,
+                    priCod: validated.priCod,
+                    ...(dataBase !== undefined ? { dataBase } : {}),
+                };
+            });
+        };
+
+        const [di, duimp] = await Promise.all([
+            readVariante(ENDPOINT_DI_LIST, 'DI'),
+            readVariante(ENDPOINT_DUIMP_LIST, 'DUIMP'),
+        ]);
+        return [...di, ...duimp];
+    };
+
+    /**
+     * ⏸ GATED-P0-4 — mapper PLUGÁVEL e ISOLADO da extração da data-base wire.
+     *
+     * Yuri NÃO sabe os nomes dos campos wire da "data CI" da D.I (`imp019`) e da
+     * "data de desembaraço" da DUIMP (`imp223`). Até o probe de rede capturar o
+     * campo, este mapper devolve `undefined` (NÃO chutar o nome). Quando o probe
+     * resolver, plugar a leitura AQUI (ponto único) — ex.:
+     *   DI:    `this.parseDate(row.<campoDataCI>)`
+     *   DUIMP: `this.parseDate(row.<campoDataDesembaraco>)`
+     * e a coluna aging passa a popular sem tocar no resto da cadeia.
+     */
+    private mapDeclaracaoDataBase = (
+        _row: Record<string, unknown>,
+        _variante: VarianteDeclaracao,
+    ): Date | undefined => {
+        // TODO 🔬 PROBE (P0-4): plugar o campo wire da data-base aqui.
+        return undefined;
+    };
+
+    /**
      * Lista documentos a-pagar do `com298/list` filtrando por um conjunto de
      * `gerNum` (plano financeiro), em vez do filtro `tpdCod#EQ` usado pelo
      * método antigo `listFinanceiroAPagar`. Introduzido pela refatoração da
@@ -676,29 +836,51 @@ export default class ConexosClient {
         filCod: number;
     }): Promise<number | undefined> => {
         const { docCod, filCod } = params;
-        let detail: Record<string, unknown> | undefined;
         try {
-            detail = await this.legacy.getGeneric<Record<string, unknown>>(`com298/${docCod}`, {
-                filCod,
+            // P0-3 — wrapped in the same RetryExecutor as every other Conexos
+            // call (7/8→8/8 endpoints retried). A transient 5xx/network blip on
+            // the detail fetch no longer silently drops the candidate.
+            return await this.retryExecutor.execute(async () => {
+                let detail: Record<string, unknown> | undefined;
+                try {
+                    detail = await this.legacy.getGeneric<Record<string, unknown>>(
+                        `com298/${docCod}`,
+                        { filCod },
+                    );
+                } catch (err) {
+                    // Conexos quirk (observed 2026-06-01 on docCod=10649): the
+                    // detail endpoint can answer HTTP 400 `type=VALIDATION`
+                    // while still returning the document inside
+                    // `error.response.data.responseData`. That is a LEGITIMATE
+                    // response (not a blip) — extract `mnyTitPermutar` and
+                    // succeed WITHOUT retrying. Any other error propagates to
+                    // the RetryExecutor (retry → ConexosError if exhausted).
+                    const ax = err as {
+                        response?: {
+                            status?: number;
+                            data?: { responseData?: Record<string, unknown> };
+                        };
+                    };
+                    const responseData = ax.response?.data?.responseData;
+                    if (
+                        ax.response?.status === 400 &&
+                        responseData &&
+                        typeof responseData === 'object'
+                    ) {
+                        return this.parseOptionalNumber(responseData.mnyTitPermutar);
+                    }
+                    throw err;
+                }
+                if (!detail || typeof detail !== 'object') return undefined;
+                return this.parseOptionalNumber(detail.mnyTitPermutar);
             });
-        } catch (err) {
-            // Conexos quirk (observed 2026-06-01 on docCod=10649): the detail
-            // endpoint can answer HTTP 400 `type=VALIDATION` while still
-            // returning the document inside `error.response.data.responseData`.
-            // Treat that path as a soft warning — extract `mnyTitPermutar`
-            // from the response data when present, otherwise return undefined
-            // so the caller skips the candidate without taking down the report.
-            const ax = err as {
-                response?: { status?: number; data?: { responseData?: Record<string, unknown> } };
-            };
-            const responseData = ax.response?.data?.responseData;
-            if (ax.response?.status === 400 && responseData && typeof responseData === 'object') {
-                return this.parseOptionalNumber(responseData.mnyTitPermutar);
-            }
-            return undefined;
+        } catch (cause) {
+            // Retries exhausted on a transient failure — surface a TYPED error
+            // (NÃO `return undefined` silencioso). The caller (EleicaoPermutas)
+            // maps this to `MOTIVO_BLOQUEIO.DETAIL_INDISPONIVEL`, distinto de
+            // uma reprovação de gate legítima (`falha-gate`).
+            throw new ConexosError({ endpoint: `com298/${docCod}`, priCod: docCod, cause });
         }
-        if (!detail || typeof detail !== 'object') return undefined;
-        return this.parseOptionalNumber(detail.mnyTitPermutar);
     };
 
     /**
@@ -930,10 +1112,17 @@ export default class ConexosClient {
         bodyBase: Record<string, unknown>;
         priCodsBatch?: string[];
         opts?: { filCod?: number };
+        /**
+         * Invoked once with `true` when the loop exits because it hit `MAX_PAGES`
+         * (silent truncation) rather than a short/exhausted page. Lets callers
+         * emit a `BUSINESS_WARN` cap-hit without leaking pagination internals.
+         */
+        onCapHit?: () => void;
     }): Promise<Row[]> => {
-        const { endpoint, bodyBase, priCodsBatch, opts } = params;
+        const { endpoint, bodyBase, priCodsBatch, opts, onCapHit } = params;
         const accumulated: Row[] = [];
         let expectedTotal: number | undefined;
+        let exhausted = false;
 
         for (let pageNumber = 1; pageNumber <= MAX_PAGES; pageNumber++) {
             const body: Record<string, unknown> = {
@@ -968,9 +1157,13 @@ export default class ConexosClient {
             const pageWasShort = page.rows.length < PAGE_SIZE;
             const reachedExpected =
                 expectedTotal !== undefined && accumulated.length >= expectedTotal;
-            if (pageWasShort || reachedExpected) break;
+            if (pageWasShort || reachedExpected) {
+                exhausted = true;
+                break;
+            }
         }
 
+        if (!exhausted) onCapHit?.();
         return accumulated;
     };
 

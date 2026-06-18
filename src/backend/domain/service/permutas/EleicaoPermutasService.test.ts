@@ -1,0 +1,534 @@
+import 'reflect-metadata';
+import EleicaoPermutasService from './EleicaoPermutasService.js';
+import ElegibilidadeService from './ElegibilidadeService.js';
+import CasamentoInvoiceService from './CasamentoInvoiceService.js';
+import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
+import AgingService from './AgingService.js';
+import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
+import type ConexosClient from '../../client/ConexosClient.js';
+import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import type PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
+import type LogService from '../LogService.js';
+import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+import {
+    ESTADO_ELEGIBILIDADE,
+    MOTIVO_BLOQUEIO,
+} from '../../interface/permutas/EstadoElegibilidade.js';
+import ConexosError from '../../errors/ConexosError.js';
+
+type LogCall = { type: string; data?: Record<string, unknown> };
+
+const buildLogService = () => {
+    const calls: LogCall[] = [];
+    const capture = jest.fn(async (p: LogCall) => {
+        calls.push(p);
+    });
+    const logService = {
+        info: capture,
+        warn: capture,
+        error: capture,
+        success: capture,
+    } as unknown as LogService;
+    return { logService, calls };
+};
+
+const buildConexos = (over: Partial<jest.Mocked<ConexosClient>> = {}) =>
+    ({
+        listFiliais: jest.fn().mockResolvedValue([{ filCod: 2 }]),
+        listAdiantamentosProforma: jest
+            .fn()
+            .mockResolvedValue({ adiantamentos: [], capHit: false }),
+        getMnyTitPermutar: jest.fn().mockResolvedValue(1000),
+        listDeclaracaoByProcesso: jest.fn().mockResolvedValue([{ variante: 'DI', priCod: '2048' }]),
+        listFinanceiroAPagar: jest.fn().mockResolvedValue({ proformas: [], invoices: [] }),
+        listTitulosAPagar: jest.fn().mockResolvedValue([]),
+        ...over,
+    }) as unknown as ConexosClient;
+
+const buildRepo = () =>
+    ({
+        persistRun: jest.fn().mockResolvedValue('run-uuid'),
+        findRunIdByIdempotencyKey: jest.fn().mockResolvedValue(null),
+        recordIdempotencyKey: jest.fn().mockResolvedValue(undefined),
+        findRunSummaryById: jest.fn().mockResolvedValue(null),
+    }) as unknown as jest.Mocked<PermutaSnapshotRepository>;
+
+/**
+ * Minimal DB-client mock. `withAdvisoryLock(key, onAcquired, _onBusy)` always
+ * grants the lock here (single-process test) so the run proceeds normally.
+ */
+const buildDb = () =>
+    ({
+        withAdvisoryLock: jest.fn(async (_key: number, onAcquired: () => Promise<unknown>) =>
+            onAcquired(),
+        ),
+    }) as unknown as jest.Mocked<PostgreeDatabaseClient>;
+
+const realServices = () => ({
+    elegibilidade: new ElegibilidadeService(new CasamentoInvoiceService()),
+    variacao: new VariacaoCambialPermutaService(),
+    aging: new AgingService(),
+    concurrency: new BoundedConcurrency(),
+    db: buildDb(),
+});
+
+const adiantamento = {
+    docCod: 'A1',
+    priCod: '2048',
+    filCod: 2,
+    dataEmissao: new Date('2026-03-01'),
+    valor: 1000,
+    moeda: 'USD',
+    pago: true,
+    valorPermutar: 1000,
+};
+const invoice = {
+    docCod: 'I1',
+    priCod: '2048',
+    dataEmissao: new Date('2026-04-01'),
+    valor: 1000,
+    moeda: 'USD',
+    pago: false,
+};
+
+describe('EleicaoPermutasService (orchestrator / job)', () => {
+    it('runs the happy-path chain → 1 elegivel, persists snapshot, FLOW_COMPLETE', async () => {
+        const conexos = buildConexos({
+            listAdiantamentosProforma: jest
+                .fn()
+                .mockResolvedValue({ adiantamentos: [adiantamento], capHit: false }),
+            listFinanceiroAPagar: jest
+                .fn()
+                .mockResolvedValue({ proformas: [], invoices: [invoice] }),
+        } as Partial<jest.Mocked<ConexosClient>>);
+        const repo = buildRepo();
+        const { logService, calls } = buildLogService();
+        const { elegibilidade, variacao, aging, concurrency, db } = realServices();
+        const service = new EleicaoPermutasService(
+            conexos,
+            elegibilidade,
+            variacao,
+            aging,
+            repo as unknown as PermutaSnapshotRepository,
+            logService,
+            concurrency,
+            db,
+        );
+
+        const result = await service.executar({ triggeredBy: 'user-123' });
+
+        expect(result.status).toBe('success');
+        expect(result.totalElegiveis).toBe(1);
+        expect(result.totalBloqueadas).toBe(0);
+        expect(result.candidatas[0].estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.ELEGIVEL);
+
+        // persistRun called once with status success + the candidatas.
+        expect(repo.persistRun).toHaveBeenCalledTimes(1);
+        const [runArg, candidatasArg] = repo.persistRun.mock.calls[0];
+        expect(runArg.status).toBe('success');
+        expect(runArg.triggeredBy).toBe('user-123');
+        expect(candidatasArg).toHaveLength(1);
+
+        // flowId present on EVERY log line and equal to the run's flow_id.
+        expect(calls.length).toBeGreaterThan(0);
+        const flowIds = new Set(calls.map((c) => c.data?.flowId));
+        expect(flowIds.size).toBe(1);
+        expect([...flowIds][0]).toBe(runArg.flowId);
+
+        // FLOW_START + FLOW_COMPLETE summary (single line), uses named LogType.
+        const types = calls.map((c) => c.type);
+        expect(types).toContain(LOG_TYPE.FLOW_START);
+        const complete = calls.filter((c) => c.type === LOG_TYPE.FLOW_COMPLETE);
+        expect(complete).toHaveLength(1);
+        expect(complete[0].data).toMatchObject({ totalCandidatas: 1, totalElegiveis: 1 });
+    });
+
+    it('is idempotent: two runs produce the same candidate set', async () => {
+        const conexos = buildConexos({
+            listAdiantamentosProforma: jest
+                .fn()
+                .mockResolvedValue({ adiantamentos: [adiantamento], capHit: false }),
+            listFinanceiroAPagar: jest
+                .fn()
+                .mockResolvedValue({ proformas: [], invoices: [invoice] }),
+        } as Partial<jest.Mocked<ConexosClient>>);
+        const repo = buildRepo();
+        const { logService } = buildLogService();
+        const { elegibilidade, variacao, aging, concurrency, db } = realServices();
+        const service = new EleicaoPermutasService(
+            conexos,
+            elegibilidade,
+            variacao,
+            aging,
+            repo as unknown as PermutaSnapshotRepository,
+            logService,
+            concurrency,
+            db,
+        );
+
+        const first = await service.executar({ triggeredBy: 'u' });
+        const second = await service.executar({ triggeredBy: 'u' });
+        expect(second.candidatas.map((c) => c.adiantamento.docCod)).toEqual(
+            first.candidatas.map((c) => c.adiantamento.docCod),
+        );
+        expect(second.totalElegiveis).toBe(first.totalElegiveis);
+    });
+
+    it('emits BUSINESS_WARN capHit when pagination is truncated', async () => {
+        const conexos = buildConexos({
+            listAdiantamentosProforma: jest
+                .fn()
+                .mockResolvedValue({ adiantamentos: [], capHit: true }),
+        } as Partial<jest.Mocked<ConexosClient>>);
+        const repo = buildRepo();
+        const { logService, calls } = buildLogService();
+        const { elegibilidade, variacao, aging, concurrency, db } = realServices();
+        const service = new EleicaoPermutasService(
+            conexos,
+            elegibilidade,
+            variacao,
+            aging,
+            repo as unknown as PermutaSnapshotRepository,
+            logService,
+            concurrency,
+            db,
+        );
+
+        await service.executar({ triggeredBy: 'u' });
+
+        const warn = calls.find((c) => c.type === LOG_TYPE.BUSINESS_WARN);
+        expect(warn).toBeDefined();
+        expect(warn?.data).toMatchObject({ capHit: true, filCod: 2 });
+    });
+
+    it('blocks candidata with DETAIL_INDISPONIVEL when getMnyTitPermutar fails after retries (P0-3)', async () => {
+        const conexos = buildConexos({
+            listAdiantamentosProforma: jest
+                .fn()
+                .mockResolvedValue({ adiantamentos: [adiantamento], capHit: false }),
+            getMnyTitPermutar: jest
+                .fn()
+                .mockRejectedValue(new ConexosError({ endpoint: 'com298/A1', priCod: 'A1' })),
+        } as Partial<jest.Mocked<ConexosClient>>);
+        const repo = buildRepo();
+        const { logService, calls } = buildLogService();
+        const { elegibilidade, variacao, aging, concurrency, db } = realServices();
+        const service = new EleicaoPermutasService(
+            conexos,
+            elegibilidade,
+            variacao,
+            aging,
+            repo as unknown as PermutaSnapshotRepository,
+            logService,
+            concurrency,
+            db,
+        );
+
+        const result = await service.executar({ triggeredBy: 'u' });
+
+        // Run still completes (no abort) — just one blocked candidata.
+        expect(result.status).toBe('success');
+        expect(result.totalBloqueadas).toBe(1);
+        expect(result.candidatas[0].estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+        expect(result.candidatas[0].motivoBloqueio).toBe(MOTIVO_BLOQUEIO.DETAIL_INDISPONIVEL);
+        // Distinct from falha-gate: a BUSINESS_WARN is emitted, not a FLOW_ERROR.
+        expect(calls.some((c) => c.type === LOG_TYPE.FLOW_ERROR)).toBe(false);
+        const warn = calls.find((c) => c.data?.motivo === MOTIVO_BLOQUEIO.DETAIL_INDISPONIVEL);
+        expect(warn).toBeDefined();
+    });
+
+    it('aborts on Conexos failure → FLOW_ERROR, status=error run, 0 snapshot rows', async () => {
+        const boom = new Error('ensureSid failed');
+        const conexos = buildConexos({
+            listFiliais: jest.fn().mockRejectedValue(boom),
+        } as Partial<jest.Mocked<ConexosClient>>);
+        const repo = buildRepo();
+        const { logService, calls } = buildLogService();
+        const { elegibilidade, variacao, aging, concurrency, db } = realServices();
+        const service = new EleicaoPermutasService(
+            conexos,
+            elegibilidade,
+            variacao,
+            aging,
+            repo as unknown as PermutaSnapshotRepository,
+            logService,
+            concurrency,
+            db,
+        );
+
+        await expect(service.executar({ triggeredBy: 'u' })).rejects.toThrow('ensureSid failed');
+
+        // Error run persisted with empty candidatas (atomicity).
+        expect(repo.persistRun).toHaveBeenCalledTimes(1);
+        const [runArg, candidatasArg] = repo.persistRun.mock.calls[0];
+        expect(runArg.status).toBe('error');
+        expect(runArg.errorMessage).toBe('ensureSid failed');
+        expect(candidatasArg).toHaveLength(0);
+
+        expect(calls.some((c) => c.type === LOG_TYPE.FLOW_ERROR)).toBe(true);
+    });
+
+    describe('fan-out batching (P0-7) + parallelism (P0-4)', () => {
+        const makeAdiantamentos = (n: number) =>
+            Array.from({ length: n }, (_, i) => ({
+                ...adiantamento,
+                docCod: `A${i}`,
+                priCod: String(1000 + i),
+            }));
+
+        it('batches Conexos calls per filial instead of per adiantamento (no N+1)', async () => {
+            const adiantamentos = makeAdiantamentos(200);
+            const listDeclaracaoByProcesso = jest.fn().mockResolvedValue([]);
+            const listFinanceiroAPagar = jest
+                .fn()
+                .mockResolvedValue({ proformas: [], invoices: [] });
+            const conexos = buildConexos({
+                listFiliais: jest.fn().mockResolvedValue([{ filCod: 2 }]),
+                listAdiantamentosProforma: jest
+                    .fn()
+                    .mockResolvedValue({ adiantamentos, capHit: false }),
+                listDeclaracaoByProcesso,
+                listFinanceiroAPagar,
+            } as Partial<jest.Mocked<ConexosClient>>);
+            const repo = buildRepo();
+            const { logService } = buildLogService();
+            const { elegibilidade, variacao, aging, concurrency, db } = realServices();
+            const service = new EleicaoPermutasService(
+                conexos,
+                elegibilidade,
+                variacao,
+                aging,
+                repo as unknown as PermutaSnapshotRepository,
+                logService,
+                concurrency,
+                db,
+            );
+
+            const listFiliais = conexos.listFiliais as jest.Mock;
+            const listAdiantamentosProforma = conexos.listAdiantamentosProforma as jest.Mock;
+            await service.executar({ triggeredBy: 'u' });
+
+            // P0-7 metric: with 200 adiantamentos on 1 filial, the heavy list
+            // endpoints fire ONCE per filial (batched), not once per adiantamento.
+            // Before: 200 + 200 = 400 list calls. After: 1 + 1 = 2.
+            expect(listDeclaracaoByProcesso).toHaveBeenCalledTimes(1);
+            expect(listFinanceiroAPagar).toHaveBeenCalledTimes(1);
+            // The batched call carries ALL unique priCods, not a single one.
+            expect(listDeclaracaoByProcesso.mock.calls[0][0].priCods).toHaveLength(200);
+            expect(listFinanceiroAPagar.mock.calls[0][0].priCods).toHaveLength(200);
+
+            // P0-7 metric (802→≤80): total LIST-endpoint round-trips per run — the
+            // N+1 that grew O(A) — collapse to O(F). listFiliais(1) +
+            // listAdiantamentosProforma(1) + listDeclaracao(1) + listFinanceiro(1)
+            // = 4 for A=200,F=1. (Detail `getMnyTitPermutar` is per-doc by nature
+            // but now runs concurrency-bounded — P0-4 — not serialized.)
+            const listRoundTrips =
+                listFiliais.mock.calls.length +
+                listAdiantamentosProforma.mock.calls.length +
+                listDeclaracaoByProcesso.mock.calls.length +
+                listFinanceiroAPagar.mock.calls.length;
+            expect(listRoundTrips).toBeLessThanOrEqual(80);
+            expect(listRoundTrips).toBe(4);
+        });
+
+        it('indexes batched declaracoes/invoices back to the right priCod', async () => {
+            const adiantamentos = [
+                { ...adiantamento, docCod: 'A0', priCod: '1000' },
+                { ...adiantamento, docCod: 'A1', priCod: '1001' },
+            ];
+            const conexos = buildConexos({
+                listFiliais: jest.fn().mockResolvedValue([{ filCod: 2 }]),
+                listAdiantamentosProforma: jest
+                    .fn()
+                    .mockResolvedValue({ adiantamentos, capHit: false }),
+                // DI for 1000, none for 1001.
+                listDeclaracaoByProcesso: jest
+                    .fn()
+                    .mockResolvedValue([{ variante: 'DI', priCod: '1000' }]),
+                // invoice casada only for 1000.
+                listFinanceiroAPagar: jest.fn().mockResolvedValue({
+                    proformas: [],
+                    invoices: [{ ...invoice, docCod: 'I0', priCod: '1000' }],
+                }),
+            } as Partial<jest.Mocked<ConexosClient>>);
+            const repo = buildRepo();
+            const { logService } = buildLogService();
+            const { elegibilidade, variacao, aging, concurrency, db } = realServices();
+            const service = new EleicaoPermutasService(
+                conexos,
+                elegibilidade,
+                variacao,
+                aging,
+                repo as unknown as PermutaSnapshotRepository,
+                logService,
+                concurrency,
+                db,
+            );
+
+            const result = await service.executar({ triggeredBy: 'u' });
+
+            const c1000 = result.candidatas.find((c) => c.priCod === '1000');
+            const c1001 = result.candidatas.find((c) => c.priCod === '1001');
+            // 1000 has DI + invoice → elegivel; 1001 has neither → bloqueada.
+            expect(c1000?.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.ELEGIVEL);
+            expect(c1001?.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+        });
+
+        it('runs filiais concurrently (≥5× speedup over sequential I/O)', async () => {
+            const filiais = Array.from({ length: 5 }, (_, i) => ({ filCod: i + 1 }));
+            let active = 0;
+            let maxActive = 0;
+            const conexos = buildConexos({
+                listFiliais: jest.fn().mockResolvedValue(filiais),
+                listAdiantamentosProforma: jest.fn().mockImplementation(async () => {
+                    active += 1;
+                    maxActive = Math.max(maxActive, active);
+                    await new Promise((r) => setTimeout(r, 20));
+                    active -= 1;
+                    return { adiantamentos: [], capHit: false };
+                }),
+            } as Partial<jest.Mocked<ConexosClient>>);
+            const repo = buildRepo();
+            const { logService } = buildLogService();
+            const { elegibilidade, variacao, aging, concurrency, db } = realServices();
+            const service = new EleicaoPermutasService(
+                conexos,
+                elegibilidade,
+                variacao,
+                aging,
+                repo as unknown as PermutaSnapshotRepository,
+                logService,
+                concurrency,
+                db,
+            );
+
+            await service.executar({ triggeredBy: 'u' });
+
+            // P0-4 metric: 5 filiais processed concurrently (sequential would
+            // observe maxActive=1). Bounded at FILIAIS_CONCURRENCY (5).
+            expect(maxActive).toBe(5);
+        });
+    });
+
+    describe('idempotency + advisory lock (P0-6)', () => {
+        it('replays the existing run for a known Idempotency-Key, ZERO fan-out', async () => {
+            const listFiliais = jest.fn().mockResolvedValue([{ filCod: 2 }]);
+            const conexos = buildConexos({ listFiliais } as Partial<jest.Mocked<ConexosClient>>);
+            const repo = buildRepo();
+            (repo.findRunIdByIdempotencyKey as jest.Mock).mockResolvedValue('run-existing');
+            (repo.findRunSummaryById as jest.Mock).mockResolvedValue({
+                runId: 'run-existing',
+                flowId: 'flow-existing',
+                status: 'success',
+                totalCandidatas: 3,
+                totalElegiveis: 2,
+                totalBloqueadas: 1,
+                bloqueadasByMotivo: { 'sem-invoice': 1 },
+            });
+            const { logService } = buildLogService();
+            const { elegibilidade, variacao, aging, concurrency, db } = realServices();
+            const service = new EleicaoPermutasService(
+                conexos,
+                elegibilidade,
+                variacao,
+                aging,
+                repo as unknown as PermutaSnapshotRepository,
+                logService,
+                concurrency,
+                db,
+            );
+
+            const result = await service.executar({ triggeredBy: 'u', idempotencyKey: 'idem-1' });
+
+            expect(result.runId).toBe('run-existing');
+            expect(result.idempotentReplay).toBe(true);
+            expect(result.totalElegiveis).toBe(2);
+            // No new fan-out: Conexos never touched, no new run persisted.
+            expect(listFiliais).not.toHaveBeenCalled();
+            expect(repo.persistRun).not.toHaveBeenCalled();
+        });
+
+        it('does not fire a second fan-out when the advisory lock is busy (concurrent dup)', async () => {
+            const listFiliais = jest.fn().mockResolvedValue([{ filCod: 2 }]);
+            const conexos = buildConexos({ listFiliais } as Partial<jest.Mocked<ConexosClient>>);
+            const repo = buildRepo();
+            // Key unknown on first check, then the winner's run appears once the
+            // busy branch re-checks.
+            (repo.findRunIdByIdempotencyKey as jest.Mock)
+                .mockResolvedValueOnce(null)
+                .mockResolvedValue('run-winner');
+            (repo.findRunSummaryById as jest.Mock).mockResolvedValue({
+                runId: 'run-winner',
+                flowId: 'flow-winner',
+                status: 'success',
+                totalCandidatas: 1,
+                totalElegiveis: 1,
+                totalBloqueadas: 0,
+                bloqueadasByMotivo: {},
+            });
+            const { logService, calls } = buildLogService();
+            const { elegibilidade, variacao, aging, concurrency } = realServices();
+            // DB mock where the lock is BUSY → onBusy branch runs.
+            const busyDb = {
+                withAdvisoryLock: jest.fn(
+                    async (
+                        _k: number,
+                        _onAcquired: () => Promise<unknown>,
+                        onBusy: () => Promise<unknown>,
+                    ) => onBusy(),
+                ),
+            } as unknown as jest.Mocked<PostgreeDatabaseClient>;
+            const service = new EleicaoPermutasService(
+                conexos,
+                elegibilidade,
+                variacao,
+                aging,
+                repo as unknown as PermutaSnapshotRepository,
+                logService,
+                concurrency,
+                busyDb,
+            );
+
+            const result = await service.executar({ triggeredBy: 'u', idempotencyKey: 'idem-2' });
+
+            // Returns the concurrent winner's run, never re-runs the fan-out.
+            expect(result.runId).toBe('run-winner');
+            expect(result.idempotentReplay).toBe(true);
+            expect(listFiliais).not.toHaveBeenCalled();
+            expect(repo.persistRun).not.toHaveBeenCalled();
+            expect(calls.some((c) => c.type === LOG_TYPE.BUSINESS_WARN)).toBe(true);
+        });
+
+        it('records the Idempotency-Key after a fresh run completes', async () => {
+            const conexos = buildConexos({
+                listFiliais: jest.fn().mockResolvedValue([{ filCod: 2 }]),
+                listAdiantamentosProforma: jest
+                    .fn()
+                    .mockResolvedValue({ adiantamentos: [adiantamento], capHit: false }),
+                listFinanceiroAPagar: jest
+                    .fn()
+                    .mockResolvedValue({ proformas: [], invoices: [invoice] }),
+            } as Partial<jest.Mocked<ConexosClient>>);
+            const repo = buildRepo();
+            const { logService } = buildLogService();
+            const { elegibilidade, variacao, aging, concurrency, db } = realServices();
+            const service = new EleicaoPermutasService(
+                conexos,
+                elegibilidade,
+                variacao,
+                aging,
+                repo as unknown as PermutaSnapshotRepository,
+                logService,
+                concurrency,
+                db,
+            );
+
+            const result = await service.executar({ triggeredBy: 'u', idempotencyKey: 'idem-3' });
+
+            expect(result.status).toBe('success');
+            // Fresh run persisted AND the key recorded under the lock.
+            expect(repo.persistRun).toHaveBeenCalledTimes(1);
+            expect(repo.recordIdempotencyKey).toHaveBeenCalledWith('idem-3', result.runId);
+        });
+    });
+});

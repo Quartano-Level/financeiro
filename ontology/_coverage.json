@@ -1,40 +1,74 @@
 {
   "_meta": {
-    "generated": "2026-06-10",
-    "version": "0.1.0",
-    "note": "Coverage of ontology entities/actions by implemented code. Bootstrapped empty from the fechamento-processos template — no domain modelled yet. Updated by the OntologyCurator after each accepted feature.",
+    "generated": "2026-06-17",
+    "version": "0.2.1",
+    "note": "Coverage of ontology entities/actions by implemented code. First domain modelling (Frente I Permutas, Fatia 1) — ALL artifacts are 'planned' (ontology-only proposal; no src/ implementation in this feature). Coverage percentages are 0 by design until TaskScoper/AutoLoopRunner implement. v0.2.1: Yuri answered P0 gaps — P0-1/P0-3/P0-5/P0-6/P0-7/P0-8/P1-2 RESOLVED, both stubs promoted to draft; P0-4 alone stays OPEN (Conexos wire-field probe). Updated by the OntologyCurator after each accepted feature.",
     "upstream": "../../produtizacao/nf-projects",
-    "last_feature": "bootstrap (2026-06-10): template scaffold from fechamento-processos v0.10.2. No domain entities/actions/rules yet."
+    "last_feature": "permutas-painel-elegiveis (2026-06-17): first Frente I modelling — 5 entities, 5 actions, 1 state-machine, 4 business-rules, 1 integration (conexos read-only). ADR-0004 + addendum (P0 gaps resolved; only P0-4 open as probe)."
   },
   "summary": {
-    "entities_total": 0,
+    "entities_total": 5,
     "entities_imported": 0,
-    "entities_custom": 0,
+    "entities_custom": 5,
     "entities_core": 0,
     "entities_implemented": 0,
     "entities_partial": 0,
-    "entities_planned": 0,
+    "entities_planned": 5,
     "entities_planned_migration": 0,
     "entities_coverage_pct": 0,
-    "actions_total": 0,
+    "actions_total": 5,
     "actions_implemented": 0,
     "actions_coverage_pct": 0,
-    "business_rules_total": 0,
+    "business_rules_total": 4,
     "business_rules_with_tests": 0,
-    "integrations_total": 0,
+    "state_machines_total": 1,
+    "integrations_total": 1,
     "ui_flows_total": 0,
     "workflows_total": 0
   },
-  "by_entity": {},
-  "by_business_rule": {},
+  "by_entity": {
+    "Adiantamento": { "status": "planned", "actions": ["elegerAdiantamentos"], "impl_pct": 0 },
+    "Invoice": { "status": "planned", "actions": ["casarInvoice"], "impl_pct": 0 },
+    "DeclaracaoImportacao": { "status": "planned", "actions": ["avaliarElegibilidade"], "impl_pct": 0, "blocked_by": ["P0-4"], "note": "XOR/existence resolved; only dataBase wire-field read is gated on the P0-4 probe." },
+    "VariacaoCambial": { "status": "planned", "actions": ["calcularVariacaoCambial"], "impl_pct": 0, "resolved_by": ["P0-1"], "build_probe": ["confirm com308 doc-source for taxaAdiantamento/taxaInvoice/principalMoeda"] },
+    "PermutaCandidata": { "status": "planned", "actions": ["avaliarElegibilidade", "exporNoPainel"], "impl_pct": 0, "resolved_by": ["P0-6", "P0-8"], "gated_by": ["P0-4 (aging column read)"] }
+  },
+  "by_business_rule": {
+    "elegibilidade-permuta": { "invariant": "I3", "has_test": false, "resolved_by": ["P0-6", "P0-5"], "gated_by": ["P0-4"] },
+    "di-xor-duimp": { "invariant": "I2", "has_test": false, "gated_by": ["P0-4 (dataBase read; XOR rule itself applicable now)"] },
+    "classificacao-juros-desconto": { "status": "draft", "has_test": false, "resolved_by": ["P0-1", "P1-2"], "build_probe": ["doc-source of rate/principal"] },
+    "aging-anchor": { "status": "draft", "has_test": false, "resolved_by": ["P0-8"], "gated_by": ["P0-4 (dataBase wire-field read)"] }
+  },
   "health_flags": {
-    "p0_inbox_open": 0,
-    "p0_inbox_topics": [],
-    "business_rules_without_tests": [],
+    "p0_inbox_open": 1,
+    "p0_inbox_topics": [
+      "P0-4 — campo wire da data-base (imp019/imp223) — ÚNICO ABERTO (probe de diagnóstico)"
+    ],
+    "p0_inbox_resolved": [
+      "P0-1 — regra/fórmula juros vs desconto = comparação de TAXA de câmbio (131=juros/130=desconto)",
+      "P0-3 — eleição = listFinanceiroAPagar(PROFORMA) + filtro booleano adiantamento=SIM (literal da chave = build-probe)",
+      "P0-5 — Fatia 1 só 1:1; N:M → backlog (bloqueada/composto-nm)",
+      "P0-6 — 'INVOICE casada' = exatamente 1 invoice FINALIZADA no processo",
+      "P0-7 — query lista TODAS via 3 filtros; sem janela incremental; multi-filial; rate-limit = nota de impl",
+      "P0-8 — aging conta da DATA-BASE (CI da D.I / desembaraço da DUIMP); coluna gated em P0-4",
+      "P1-2 — contas 131=PASSIVA=juros / 130=ATIVA=desconto (resolvido junto de P0-1)"
+    ],
+    "build_probes": [
+      "P0-3 — literal da chave wire do filtro 'adiantamento' (ex.: adiantamento#EQ:'S')",
+      "P0-1 — confirmar doc-fonte de taxaAdiantamento/taxaInvoice/principalMoeda no com308"
+    ],
+    "business_rules_without_tests": [
+      "elegibilidade-permuta",
+      "di-xor-duimp",
+      "classificacao-juros-desconto",
+      "aging-anchor"
+    ],
     "design_system_replicated": true,
     "tooling_bootstrapped": true,
     "watchlist": [
-      "First /feature-new should (re)document the Conexos integration contract (ontology/integrations/conexos.md) — code is wired but ontology is empty."
+      "P0/P1-5 — caso N:M (composto): DECIDIDO backlog nesta fatia (bloqueada/composto-nm); shape de PermutaCandidata mantido 1:1, pode evoluir em fatia futura.",
+      "P1-A — caminho de leitura do adiantamento: RESOLVIDO por P0-3 (PROFORMA + filtro adiantamento=SIM; caminho tpdCod=143/gerNum=198 descartado).",
+      "Fatia 2 — entidade Permuta consumada + ação reconciliarPermuta (escrita fin010); exige caminho de write-back no ERP (risco arquitetural #1, O3)."
     ]
   }
 }

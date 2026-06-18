@@ -7,6 +7,7 @@
         "dev": "tsx index.ts",
         "build": "tsc && npx tsc-esm-fix dist",
         "start": "node dist/index.js",
+        "migrate": "tsx migrations/migrate.ts",
         "test": "jest",
         "test:watch": "jest --watch",
         "lint": "npx biome check .",

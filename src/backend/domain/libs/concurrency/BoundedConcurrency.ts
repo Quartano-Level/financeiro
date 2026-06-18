@@ -1,3 +1,5 @@
+import { injectable } from 'tsyringe';
+
 /**
  * Resultado settled de um item processado por `BoundedConcurrency.run`.
  * Espelha o shape de `PromiseSettledResult` mas é tipado explicitamente
@@ -19,6 +21,7 @@ export type BoundedConcurrencyResult<T> =
  * contribui para as falhas Conexos 504/LOGIN_ERROR_MAX_SESSIONS). Sem
  * `setTimeout` loops — pool puro de promessas.
  */
+@injectable()
 export default class BoundedConcurrency {
     /**
      * @param items   itens a processar.
