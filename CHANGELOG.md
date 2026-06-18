@@ -1,5 +1,15 @@
 # Columbia Financeiro — Changelog
 
+## v0.2.0 (2026-06-18) — permutas: painel de elegíveis (Frente I, Fatia 1)
+
+- feat(permutas): painel de pendências elegíveis read-only — automação das etapas 1–5 do fluxo manual.
+  - Leitura Conexos: `listAdiantamentosProforma`, `listDeclaracaoByProcesso` (D.I/DUIMP).
+  - Domínio: elegibilidade (4 gates), casamento 1:1, variação cambial (juros/desconto por taxa), aging, eleição, painel.
+  - Persistência: 1ª migration do repo + runner; snapshot + auditoria com transação atômica.
+  - Endpoints: `POST /permutas/eleicao` (trigger manual), `GET /permutas/painel`.
+  - Ontologia v0.2.1 (5 entidades, 5 ações, ADR-0004); Regis-Review `2026-06-17-2340` + 7 P0 remediados.
+  - Em aberto (não-bloqueante): probe P0-4 (campo wire da data-base) liga a coluna *aging* depois.
+
 ## v0.1.0 (2026-06-10) — bootstrap
 
 - chore(bootstrap): template virgem porém rodável a partir de `fechamento-processos` v0.10.2
