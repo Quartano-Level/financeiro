@@ -27,3 +27,11 @@ export function formatDate(dateStr: string): string {
 export function formatPercent(val: number): string {
   return `${(val * 100).toFixed(1)}%`
 }
+
+/** Plain pt-BR number with 2 decimals (e.g. 193.720,50) — for "Valor Moeda Negociada". */
+export function formatNumber(val: number): string {
+  return new Intl.NumberFormat('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(val)
+}

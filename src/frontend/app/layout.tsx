@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { DM_Sans } from 'next/font/google'
+import { Toaster } from 'sonner'
 import { RouteGate } from '@/components/auth/RouteGate'
 import { UserMenu } from '@/components/auth/UserMenu'
 import { AuthProvider } from '@/lib/auth/AuthProvider'
@@ -42,6 +43,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <main className="w-full px-4 sm:px-6 lg:px-8 py-6">
             <RouteGate>{children}</RouteGate>
           </main>
+          <Toaster position="bottom-right" richColors />
         </AuthProvider>
       </body>
     </html>

@@ -1,24 +1,38 @@
-import { LayoutDashboard } from 'lucide-react'
-import { EmptyState } from '@/components/ui/empty-state'
+import Link from 'next/link'
+import { ArrowLeftRight } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { PageHeader } from '@/components/ui/page-header'
 
 /**
- * Home (`/`) — skeleton landing for the Financeiro app. Authenticated by the
- * `RouteGate` in `app/layout.tsx`. Domain features (built via the `/feature-new`
- * pipeline) replace this placeholder with the real dashboard / report flows.
+ * Home (`/`) — landing do Financeiro. Autenticada pelo `RouteGate` em
+ * `app/layout.tsx`. Lista as frentes de domínio disponíveis; a primeira
+ * (Permutas — Frente I) já tem tela própria.
  */
 export default function HomePage() {
   return (
     <div className="space-y-6">
       <PageHeader
         title="Financeiro"
-        subtitle="Template inicial — sem features de domínio ainda."
+        subtitle="Automação assistida da área Financeira da Columbia Trading."
       />
-      <EmptyState
-        icon={<LayoutDashboard className="h-8 w-8" aria-hidden />}
-        title="Nenhuma análise disponível"
-        description="O domínio financeiro ainda não foi modelado. Use o pipeline (/feature-new) para criar a primeira feature; ela substituirá esta tela."
-      />
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ArrowLeftRight className="size-4" aria-hidden /> Permutas
+            </CardTitle>
+            <CardDescription>
+              Adiantamentos PROFORMA ↔ invoices: elegibilidade, casamento e baixa assistida (Frente I).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild>
+              <Link href="/permutas">Abrir Gestão de Permutas</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }
