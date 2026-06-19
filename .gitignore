@@ -57,3 +57,7 @@ coverage/
 # Local scratch / temp files (pipeline gap dumps, etc.)
 tmp-*.md
 *.tmp
+
+# macOS Finder metadata
+.DS_Store
+**/.DS_Store
