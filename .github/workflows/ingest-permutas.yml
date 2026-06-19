@@ -1,0 +1,46 @@
+name: Ingestão diária de Permutas
+
+# Cron GRATUITO via GitHub Actions (Render Cron Job é pago).
+# Reavalia TODOS os adiantamentos a cada run (re-fetch + UPSERT + recompute):
+# bloqueadas que receberam pagamento/DI-DUIMP viram elegíveis automaticamente.
+#
+# ⚠️ Schedules do GitHub Actions só disparam a partir do BRANCH PADRÃO (main).
+# Enquanto este arquivo não estiver em `main`, use o "Run workflow" manual
+# (workflow_dispatch) na aba Actions.
+on:
+  schedule:
+    - cron: '0 9 * * *' # 09:00 UTC = 06:00 BRT (antes do expediente)
+  workflow_dispatch: {} # permite rodar manualmente pela aba Actions
+
+# Evita duas ingestões simultâneas (o advisory lock já protege, mas isto é melhor).
+concurrency:
+  group: ingest-permutas
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: src/backend
+    env:
+      # Nomes EXATOS lidos pelo EnvironmentProvider/Conexos.
+      databaseConnectionString: ${{ secrets.DATABASE_CONNECTION_STRING }}
+      CONEXOS_BASE_URL: ${{ secrets.CONEXOS_BASE_URL }}
+      CONEXOS_USERNAME: ${{ secrets.CONEXOS_USERNAME }}
+      CONEXOS_PASSWORD: ${{ secrets.CONEXOS_PASSWORD }}
+      CONEXOS_FIL_COD: ${{ secrets.CONEXOS_FIL_COD }}
+      environment: production
+      client_name: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Instalar dependências (com devDeps p/ tsx)
+        run: npm ci --include=dev
+      - name: Aplicar migrations pendentes (idempotente)
+        run: npm run migrate
+      - name: Ingestão de permutas
+        run: npm run job:ingest-permutas
