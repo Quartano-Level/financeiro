@@ -143,6 +143,10 @@ function Moeda({ valor, moeda }: { valor: number | null; moeda: string }) {
 const fmtData = (iso?: string) =>
   iso ? new Date(iso).toLocaleDateString('pt-BR') : '—'
 
+/** Taxa de câmbio (pt-BR, até 4 casas — preserva a precisão p/ conferência). */
+const fmtTaxa = (t: number) =>
+  t.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+
 /** Campo rótulo/valor do painel de detalhe (expandir linha). */
 function Campo({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -517,6 +521,12 @@ export default function GestaoPermutasPage() {
                     {pendentesPagina.map((p) => {
                       const aberto = expandido === p.docCod
                       const d = p.detalhe
+                      // Saldo a permutar (mnyTitPermutar) vem em BRL; convertendo
+                      // pela taxa negociada dá o saldo na moeda negociada (USD/…).
+                      const saldoBrl = d?.valorPermutar
+                      const taxa = d?.taxaAdiantamento
+                      const saldoNeg =
+                        saldoBrl != null && taxa != null && taxa > 0 ? saldoBrl / taxa : null
                       return (
                         <React.Fragment key={p.docCod}>
                           <TableRow
@@ -570,7 +580,18 @@ export default function GestaoPermutasPage() {
                                     <Moeda valor={p.valorMoedaNegociada} moeda={p.moeda} />
                                   </Campo>
                                   <Campo label="Saldo a permutar">
-                                    {d?.valorPermutar != null ? formatNumber(d.valorPermutar) : '—'}
+                                    {saldoBrl != null ? (
+                                      <>
+                                        R$ {formatNumber(saldoBrl)}
+                                        {saldoNeg != null ? (
+                                          <div className="text-xs font-normal text-muted-foreground">
+                                            ≈ {formatNumber(saldoNeg)} {moedaCodigo(p.moeda)}
+                                          </div>
+                                        ) : null}
+                                      </>
+                                    ) : (
+                                      '—'
+                                    )}
                                   </Campo>
                                   <Campo label="D.I / DUIMP">{d?.declaracao?.variante ?? '—'}</Campo>
                                   <Campo label="Data-base (D.I/DUIMP)">
@@ -578,11 +599,11 @@ export default function GestaoPermutasPage() {
                                   </Campo>
                                   <Campo label="Taxa adiantamento">
                                     {d?.taxaAdiantamento != null
-                                      ? formatNumber(d.taxaAdiantamento)
+                                      ? fmtTaxa(d.taxaAdiantamento)
                                       : '—'}
                                   </Campo>
                                   <Campo label="Taxa invoice">
-                                    {d?.taxaInvoice != null ? formatNumber(d.taxaInvoice) : '—'}
+                                    {d?.taxaInvoice != null ? fmtTaxa(d.taxaInvoice) : '—'}
                                   </Campo>
                                   <Campo label="Variação cambial">
                                     {d?.variacaoClassificacao ?? '—'}
@@ -596,6 +617,16 @@ export default function GestaoPermutasPage() {
                                       : '—'}
                                   </Campo>
                                 </dl>
+                                {/* Conta do saldo a permutar — conferência do analista. */}
+                                {saldoNeg != null && saldoBrl != null && taxa != null ? (
+                                  <div className="mt-3 rounded-md border bg-background/60 px-3 py-2 text-xs text-muted-foreground tabular-nums">
+                                    <span className="font-medium text-foreground">Cálculo do saldo:</span>{' '}
+                                    R$ {formatNumber(saldoBrl)} ÷ {fmtTaxa(taxa)} (taxa) ={' '}
+                                    <span className="font-medium text-foreground">
+                                      {formatNumber(saldoNeg)} {moedaCodigo(p.moeda)}
+                                    </span>
+                                  </div>
+                                ) : null}
                               </TableCell>
                             </TableRow>
                           ) : null}
