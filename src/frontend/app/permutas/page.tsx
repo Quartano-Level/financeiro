@@ -527,6 +527,16 @@ export default function GestaoPermutasPage() {
                       const taxa = d?.taxaAdiantamento
                       const saldoNeg =
                         saldoBrl != null && taxa != null && taxa > 0 ? saldoBrl / taxa : null
+                      // Conta da variação cambial (só p/ casados): a classificação
+                      // sai de delta = principalMoeda × (taxaAdto − taxaInvoice).
+                      // O principalMoeda (valor negociado da invoice) é recuperado
+                      // exatamente de delta ÷ Δtaxa — o delta foi calculado assim.
+                      const taxaInv = d?.taxaInvoice
+                      const delta = d?.variacaoDelta
+                      const principalVar =
+                        delta != null && taxa != null && taxaInv != null && taxa !== taxaInv
+                          ? delta / (taxa - taxaInv)
+                          : null
                       return (
                         <React.Fragment key={p.docCod}>
                           <TableRow
@@ -617,13 +627,27 @@ export default function GestaoPermutasPage() {
                                       : '—'}
                                   </Campo>
                                 </dl>
-                                {/* Conta do saldo a permutar — conferência do analista. */}
-                                {saldoNeg != null && saldoBrl != null && taxa != null ? (
+                                {/* Conta da variação cambial — como o analista chega
+                                    em JUROS/DESCONTO (só p/ casados, com as 2 taxas). */}
+                                {d?.variacaoClassificacao != null &&
+                                principalVar != null &&
+                                taxa != null &&
+                                taxaInv != null &&
+                                delta != null ? (
                                   <div className="mt-3 rounded-md border bg-background/60 px-3 py-2 text-xs text-muted-foreground tabular-nums">
-                                    <span className="font-medium text-foreground">Cálculo do saldo:</span>{' '}
-                                    R$ {formatNumber(saldoBrl)} ÷ {fmtTaxa(taxa)} (taxa) ={' '}
                                     <span className="font-medium text-foreground">
-                                      {formatNumber(saldoNeg)} {moedaCodigo(p.moeda)}
+                                      Cálculo da variação cambial:
+                                    </span>{' '}
+                                    {formatNumber(principalVar)} {moedaCodigo(p.moeda)} × (
+                                    {fmtTaxa(taxa)} − {fmtTaxa(taxaInv)}) ={' '}
+                                    <span className="font-medium text-foreground">
+                                      {delta >= 0 ? '+' : '−'}
+                                      {formatNumber(Math.abs(delta))}
+                                    </span>{' '}
+                                    → taxa adto {taxa > taxaInv ? '>' : taxa < taxaInv ? '<' : '='}{' '}
+                                    invoice ⇒{' '}
+                                    <span className="font-medium text-foreground">
+                                      {d.variacaoClassificacao}
                                     </span>
                                   </div>
                                 ) : null}
