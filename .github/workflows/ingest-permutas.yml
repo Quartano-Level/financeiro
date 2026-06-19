@@ -31,7 +31,7 @@ jobs:
       CONEXOS_BASE_URL: ${{ secrets.CONEXOS_BASE_URL }}
       CONEXOS_USERNAME: ${{ secrets.CONEXOS_USERNAME }}
       CONEXOS_PASSWORD: ${{ secrets.CONEXOS_PASSWORD }}
-      CONEXOS_FIL_COD: ${{ secrets.CONEXOS_FIL_COD }}
+      CONEXOS_FIL_COD: ${{ vars.CONEXOS_FIL_COD }}
       environment: production
       client_name: local
     steps:
