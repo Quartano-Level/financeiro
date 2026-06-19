@@ -233,6 +233,7 @@ export default class GestaoPermutasService {
         docCod: i.docCod,
         filCod: i.filCod ?? 0,
         priCod: i.priCod,
+        ...(i.dataEmissao !== undefined ? { dataEmissao: i.dataEmissao.toISOString() } : {}),
         referencia: i.referencia ?? i.docCod,
         exportador: i.exportador ?? '',
         valorMoedaNegociada: i.valorMoedaNegociada ?? null,

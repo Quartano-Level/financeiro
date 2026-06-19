@@ -66,6 +66,8 @@ export interface InvoiceEmAberto {
     filCod: number;
     /** Processo (Conexos `priCod`) — código em comum com o adiantamento. */
     priCod?: string;
+    /** Data de emissão da invoice (ISO). */
+    dataEmissao?: string;
     referencia: string;
     exportador: string;
     valorMoedaNegociada: number | null;

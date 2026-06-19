@@ -696,6 +696,7 @@ export default function GestaoPermutasPage() {
                                   <Campo label="Código">{inv.docCod}</Campo>
                                   <Campo label="Processo">{inv.priCod ?? '—'}</Campo>
                                   <Campo label="Referência">{inv.referencia}</Campo>
+                                  <Campo label="Data de emissão">{fmtData(inv.dataEmissao)}</Campo>
                                   <Campo label="Exportador">{inv.exportador}</Campo>
                                   <Campo label="Filial">{inv.filCod}</Campo>
                                   <Campo label="Valor (face)">
