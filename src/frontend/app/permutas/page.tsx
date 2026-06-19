@@ -5,7 +5,7 @@ import { ArrowLeftRight, Ban, CheckCircle2, ChevronRight, Layers, RefreshCw } fr
 import { toast } from 'sonner'
 import { fetchGestaoPermutas, processarAdiantamento } from '@/lib/api'
 import type {
-  CasamentoAdiantamento,
+  CasamentoSugerido,
   GestaoPermutasResponse,
   InvoiceEmAberto,
   PermutaPendente,
@@ -260,12 +260,9 @@ export default function GestaoPermutasPage() {
   const [expandido, setExpandido] = React.useState<string | null>(null)
   // Invoice expandida (docCod) na aba de casamento sugerido — micro-info da invoice.
   const [invoiceExpandida, setInvoiceExpandida] = React.useState<string | null>(null)
-  // Confirmação de processamento (modal) — null = fechado.
-  const [confirmacao, setConfirmacao] = React.useState<{
-    priCod: string
-    invoice: InvoiceEmAberto
-    adto: CasamentoAdiantamento
-  } | null>(null)
+  // Confirmação de processamento (modal) — o casamento inteiro (invoice + todos
+  // os adiantamentos a abater). null = fechado.
+  const [confirmacao, setConfirmacao] = React.useState<CasamentoSugerido | null>(null)
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -312,13 +309,28 @@ export default function GestaoPermutasPage() {
     [load],
   )
 
-  // Confirma o processamento aberto no modal e dispara o processar de fato.
+  // Processa em LOTE todos os adiantamentos pendentes do casamento confirmado no
+  // modal (1 invoice : N adiantamentos). Os já processados são ignorados.
   const confirmarProcessamento = React.useCallback(async () => {
     if (!confirmacao) return
-    const { adto, invoice } = confirmacao
+    const c = confirmacao
+    const pendentes = c.adiantamentos.filter((a) => a.processamentoStatus !== 'processado')
     setConfirmacao(null)
-    await processar(adto.docCod, adto.docCod, invoice.docCod)
-  }, [confirmacao, processar])
+    setProcessando(c.invoice.docCod)
+    try {
+      for (const adto of pendentes) {
+        await processarAdiantamento(adto.docCod, c.invoice.docCod)
+      }
+      toast.success(`Processo ${c.priCod}: ${pendentes.length} adiantamento(s) processado(s)`)
+      await load()
+    } catch (err) {
+      toast.error(
+        `Falha ao processar o processo ${c.priCod}${err instanceof Error ? `: ${err.message}` : ''}`,
+      )
+    } finally {
+      setProcessando(null)
+    }
+  }, [confirmacao, load])
 
   // Filiais distintas presentes nos pendentes (para o seletor de filial).
   const filiais = React.useMemo(
@@ -933,6 +945,11 @@ export default function GestaoPermutasPage() {
                       )
                       const moedaGrupo = c.adiantamentos[0]?.moeda ?? c.invoice.moeda
                       const sep = g > 0 ? 'border-t-2 border-border' : ''
+                      const pendentesGrupo = c.adiantamentos.filter(
+                        (a) => a.processamentoStatus !== 'processado',
+                      )
+                      const todosProcessados =
+                        c.adiantamentos.length > 0 && pendentesGrupo.length === 0
                       return (
                         <React.Fragment key={c.invoice.docCod}>
                           {/* Header da invoice — clicável, expande a micro-info dela */}
@@ -967,12 +984,28 @@ export default function GestaoPermutasPage() {
                               <Moeda valor={c.invoice.valorMoedaNegociada} moeda={c.invoice.moeda} />
                             </TableCell>
                             <TableCell
-                              colSpan={3}
+                              colSpan={2}
                               className="text-right text-xs text-muted-foreground"
                             >
                               {c.adiantamentos.length} adiantamento
                               {c.adiantamentos.length !== 1 ? 's' : ''} · usa{' '}
                               {formatNumber(totalUsado)} {moedaCodigo(moedaGrupo)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {todosProcessados ? (
+                                <ProcessamentoBadge status="processado" />
+                              ) : c.adiantamentos.length > 0 ? (
+                                <Button
+                                  size="sm"
+                                  disabled={processando === c.invoice.docCod}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setConfirmacao(c)
+                                  }}
+                                >
+                                  {processando === c.invoice.docCod ? 'Processando…' : 'Processar'}
+                                </Button>
+                              ) : null}
                             </TableCell>
                           </TableRow>
 
@@ -1024,23 +1057,9 @@ export default function GestaoPermutasPage() {
                                   <Moeda valor={adto.valorASerUsado} moeda={adto.moeda} />
                                 </TableCell>
                                 <TableCell className="text-right">
-                                  {adto.processamentoStatus === 'processado' ? (
-                                    <ProcessamentoBadge status="processado" />
-                                  ) : (
-                                    <Button
-                                      size="sm"
-                                      disabled={processando === adto.docCod}
-                                      onClick={() =>
-                                        setConfirmacao({
-                                          priCod: c.priCod,
-                                          invoice: c.invoice,
-                                          adto,
-                                        })
-                                      }
-                                    >
-                                      {processando === adto.docCod ? 'Processando…' : 'Processar'}
-                                    </Button>
-                                  )}
+                                  <ProcessamentoBadge
+                                    status={adto.processamentoStatus ?? 'pendente'}
+                                  />
                                 </TableCell>
                               </TableRow>
                             ))
@@ -1063,46 +1082,69 @@ export default function GestaoPermutasPage() {
               if (!open) setConfirmacao(null)
             }}
           >
-            <DialogContent size="sm">
+            <DialogContent size="md">
               <DialogHeader>
                 <DialogTitle>Confirmar processamento</DialogTitle>
-                <DialogDescription>Revise a permuta antes de processar.</DialogDescription>
+                <DialogDescription>
+                  Revise os adiantamentos que vão abater esta invoice antes de processar.
+                </DialogDescription>
               </DialogHeader>
               <DialogBody>
                 {confirmacao ? (
                   <>
                     <dl className="grid grid-cols-2 gap-x-6 gap-y-3">
                       <Campo label="Processo">{confirmacao.priCod}</Campo>
-                      <Campo label="Adiantamento">{confirmacao.adto.docCod}</Campo>
                       <Campo label="Invoice a abater">
-                        <span className="text-muted-foreground">
-                          {confirmacao.invoice.docCod}
-                        </span>{' '}
+                        <span className="text-muted-foreground">{confirmacao.invoice.docCod}</span>{' '}
                         ·{' '}
                         <Moeda
                           valor={confirmacao.invoice.valorMoedaNegociada}
                           moeda={confirmacao.invoice.moeda}
                         />
                       </Campo>
-                      <Campo label="Valor a ser usado">
-                        <Moeda
-                          valor={confirmacao.adto.valorASerUsado}
-                          moeda={confirmacao.adto.moeda}
-                        />
-                      </Campo>
-                      {(() => {
-                        const det = pendenteByDocCod.get(confirmacao.adto.docCod)?.detalhe
-                        return det?.variacaoClassificacao != null &&
-                          det.variacaoResultado != null ? (
-                          <Campo label="Variação cambial">
-                            {det.variacaoClassificacao} · R$ {formatNumber(det.variacaoResultado)}
-                          </Campo>
-                        ) : null
-                      })()}
                     </dl>
-                    <p className="mt-4 text-xs text-muted-foreground">
-                      O adiantamento <strong>{confirmacao.adto.docCod}</strong> vai abater a invoice{' '}
-                      <strong>{confirmacao.invoice.docCod}</strong> no valor acima.
+                    <div className="mt-4">
+                      <div className="mb-1 text-xs font-medium text-muted-foreground">
+                        Adiantamentos a abater
+                      </div>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Adiantamento</TableHead>
+                            <TableHead className="text-right">Valor a ser usado</TableHead>
+                            <TableHead className="text-right">Variação cambial</TableHead>
+                            <TableHead className="text-right">Status</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {confirmacao.adiantamentos.map((adto) => {
+                            const det = pendenteByDocCod.get(adto.docCod)?.detalhe
+                            return (
+                              <TableRow key={adto.docCod}>
+                                <TableCell className="font-medium">{adto.docCod}</TableCell>
+                                <TableCell className="text-right">
+                                  <Moeda valor={adto.valorASerUsado} moeda={adto.moeda} />
+                                </TableCell>
+                                <TableCell className="text-right text-xs">
+                                  {det?.variacaoClassificacao != null &&
+                                  det.variacaoResultado != null
+                                    ? `${det.variacaoClassificacao} · R$ ${formatNumber(det.variacaoResultado)}`
+                                    : '—'}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <ProcessamentoBadge
+                                    status={adto.processamentoStatus ?? 'pendente'}
+                                  />
+                                </TableCell>
+                              </TableRow>
+                            )
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Os adiantamentos pendentes acima vão abater a invoice{' '}
+                      <strong>{confirmacao.invoice.docCod}</strong>. Os já processados são ignorados.
                     </p>
                   </>
                 ) : null}
@@ -1112,7 +1154,13 @@ export default function GestaoPermutasPage() {
                   Cancelar
                 </Button>
                 <Button onClick={() => void confirmarProcessamento()}>
-                  Confirmar e processar
+                  Processar{' '}
+                  {confirmacao
+                    ? confirmacao.adiantamentos.filter(
+                        (a) => a.processamentoStatus !== 'processado',
+                      ).length
+                    : 0}{' '}
+                  adiantamento(s)
                 </Button>
               </DialogFooter>
             </DialogContent>
