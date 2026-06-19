@@ -4,6 +4,7 @@ import type {
     CasamentoSugerido,
     GestaoPermutasResponse,
     InvoiceEmAberto,
+    PermutaDetalhe,
     PermutaPendente,
     StatusElegibilidade,
 } from '../../interface/permutas/Gestao.js';
@@ -11,6 +12,7 @@ import type { ProcessamentoStatus } from '../../interface/permutas/Processamento
 import type {
     AdiantamentoAtivo,
     CasamentoRow,
+    DeclaracaoRow,
     InvoiceRow,
 } from '../../repository/permutas/PermutaRelationalRepository.js';
 import PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
@@ -34,17 +36,28 @@ export default class GestaoPermutasService {
     ) {}
 
     public exporGestao = async (requestId: string): Promise<GestaoPermutasResponse> => {
-        const [adiantamentos, invoices, casamentos, processamentos] = await Promise.all([
-            this.relationalRepository.listAdiantamentosAtivos(),
-            this.relationalRepository.listInvoicesEmAberto(),
-            this.relationalRepository.listCasamentos(),
-            this.processamentoRepository.listProcessamentos(),
-        ]);
+        const [adiantamentos, invoices, casamentos, processamentos, declaracoes] =
+            await Promise.all([
+                this.relationalRepository.listAdiantamentosAtivos(),
+                this.relationalRepository.listInvoicesEmAberto(),
+                this.relationalRepository.listCasamentos(),
+                this.processamentoRepository.listProcessamentos(),
+                this.relationalRepository.listDeclaracoes(),
+            ]);
 
         const statusByDocCod = new Map<string, ProcessamentoStatus>(
             processamentos.map((p) => [p.adiantamentoDocCod, p.status]),
         );
         const invoiceByDocCod = new Map<string, InvoiceRow>(invoices.map((i) => [i.docCod, i]));
+        // Detalhe: declaração por processo (1ª variante DI/DUIMP) + casamento por
+        // adiantamento (taxa/variação só existem para os casos casados).
+        const declaracaoByPriCod = new Map<string, DeclaracaoRow>();
+        for (const d of declaracoes) {
+            if (!declaracaoByPriCod.has(d.priCod)) declaracaoByPriCod.set(d.priCod, d);
+        }
+        const casamentoByAdtoDocCod = new Map<string, CasamentoRow>(
+            casamentos.map((c) => [c.adiantamentoDocCod, c]),
+        );
 
         // Invoices em aberto agrupadas por processo (priCod) — base das candidatas
         // do casamento manual N:M (o analista escolhe UMA do mesmo processo).
@@ -56,7 +69,13 @@ export default class GestaoPermutasService {
         }
 
         const pendentes = adiantamentos.map((a) =>
-            this.toPendente(a, statusByDocCod, invoicesByPriCod),
+            this.toPendente(
+                a,
+                statusByDocCod,
+                invoicesByPriCod,
+                declaracaoByPriCod,
+                casamentoByAdtoDocCod,
+            ),
         );
         const invoicesEmAberto = invoices.map((i) => this.toInvoiceEmAberto(i));
         const casamentosSugeridos = this.toCasamentos(
@@ -103,6 +122,8 @@ export default class GestaoPermutasService {
         a: AdiantamentoAtivo,
         statusByDocCod: Map<string, ProcessamentoStatus>,
         invoicesByPriCod: Map<string, InvoiceRow[]>,
+        declaracaoByPriCod: Map<string, DeclaracaoRow>,
+        casamentoByAdtoDocCod: Map<string, CasamentoRow>,
     ): PermutaPendente => {
         // "Já permutado" é gravado como BLOQUEADA+motivo `ja-permutado` (estado
         // concluído, não erro). Aqui na apresentação é promovido a status próprio,
@@ -122,6 +143,7 @@ export default class GestaoPermutasService {
             status === 'casamento-manual'
                 ? (invoicesByPriCod.get(a.priCod) ?? []).map((i) => this.toInvoiceEmAberto(i))
                 : undefined;
+        const detalhe = this.toDetalhe(a, declaracaoByPriCod, casamentoByAdtoDocCod);
         return {
             docCod: a.docCod,
             filCod: a.filCod ?? 0,
@@ -139,6 +161,65 @@ export default class GestaoPermutasService {
             ...(a.motivoBloqueio !== undefined ? { motivoBloqueio: a.motivoBloqueio } : {}),
             ...(processamentoStatus !== undefined ? { processamentoStatus } : {}),
             ...(candidatas !== undefined ? { candidatas } : {}),
+            detalhe,
+        };
+    };
+
+    /**
+     * Monta as micro-informações do adiantamento (exibidas ao expandir a linha).
+     * `declaracao` vem do processo (priCod); taxa/variação só existem quando há
+     * casamento (elegíveis/casamento) — bloqueados/já-permutados não têm.
+     */
+    private toDetalhe = (
+        a: AdiantamentoAtivo,
+        declaracaoByPriCod: Map<string, DeclaracaoRow>,
+        casamentoByAdtoDocCod: Map<string, CasamentoRow>,
+    ): PermutaDetalhe => {
+        return {
+            priCod: a.priCod,
+            pago: a.pago,
+            ...(a.dataEmissao !== undefined ? { dataEmissao: a.dataEmissao.toISOString() } : {}),
+            ...(a.valorPermutar !== undefined ? { valorPermutar: a.valorPermutar } : {}),
+            ...this.declaracaoDetalhe(declaracaoByPriCod.get(a.priCod)),
+            ...this.variacaoDetalhe(casamentoByAdtoDocCod.get(a.docCod)),
+        };
+    };
+
+    /** Parte do detalhe vinda da declaração do processo (D.I/DUIMP). */
+    private declaracaoDetalhe = (decl?: DeclaracaoRow): Pick<PermutaDetalhe, 'declaracao'> => {
+        if (decl === undefined) return {};
+        return {
+            declaracao: {
+                variante: decl.variante,
+                ...(decl.dataBase !== undefined ? { dataBase: decl.dataBase.toISOString() } : {}),
+            },
+        };
+    };
+
+    /** Parte do detalhe vinda do casamento (taxa/variação) — só p/ casados. */
+    private variacaoDetalhe = (
+        cas?: CasamentoRow,
+    ): Pick<
+        PermutaDetalhe,
+        | 'taxaAdiantamento'
+        | 'taxaInvoice'
+        | 'variacaoClassificacao'
+        | 'variacaoResultado'
+        | 'variacaoDelta'
+    > => {
+        if (cas === undefined) return {};
+        return {
+            ...(cas.taxaAdiantamento !== undefined
+                ? { taxaAdiantamento: cas.taxaAdiantamento }
+                : {}),
+            ...(cas.taxaInvoice !== undefined ? { taxaInvoice: cas.taxaInvoice } : {}),
+            ...(cas.variacaoClassificacao !== undefined
+                ? { variacaoClassificacao: cas.variacaoClassificacao }
+                : {}),
+            ...(cas.variacaoResultado !== undefined
+                ? { variacaoResultado: cas.variacaoResultado }
+                : {}),
+            ...(cas.variacaoDelta !== undefined ? { variacaoDelta: cas.variacaoDelta } : {}),
         };
     };
 

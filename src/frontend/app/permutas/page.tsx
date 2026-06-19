@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { ArrowLeftRight, Ban, CheckCircle2, Layers, RefreshCw } from 'lucide-react'
+import { ArrowLeftRight, Ban, CheckCircle2, ChevronRight, Layers, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { fetchGestaoPermutas, processarAdiantamento } from '@/lib/api'
 import type {
@@ -139,6 +139,20 @@ function Moeda({ valor, moeda }: { valor: number | null; moeda: string }) {
   )
 }
 
+/** Data ISO → dd/mm/aaaa (pt-BR); "—" quando ausente. */
+const fmtData = (iso?: string) =>
+  iso ? new Date(iso).toLocaleDateString('pt-BR') : '—'
+
+/** Campo rótulo/valor do painel de detalhe (expandir linha). */
+function Campo({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-0.5">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="text-sm font-medium tabular-nums">{children}</dd>
+    </div>
+  )
+}
+
 /** Total por moeda negociada (um item = `valorMoedaNegociada` na sua `moeda`). */
 type MoedaTotal = { moeda: string; total: number }
 
@@ -226,6 +240,8 @@ export default function GestaoPermutasPage() {
   const [filtroExportador, setFiltroExportador] = React.useState<string>('')
   // Paginação da tabela de pendentes (50 por página).
   const [pagina, setPagina] = React.useState(1)
+  // Linha expandida (docCod) — mostra as micro-informações do adiantamento.
+  const [expandido, setExpandido] = React.useState<string | null>(null)
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -498,27 +514,94 @@ export default function GestaoPermutasPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pendentesPagina.map((p) => (
-                      <TableRow key={p.docCod}>
-                        <TableCell>{p.filCod}</TableCell>
-                        <TableCell className="font-medium">{p.docCod}</TableCell>
-                        <TableCell>{p.exportador}</TableCell>
-                        <TableCell className="text-right">
-                          <Moeda valor={p.valorMoedaNegociada} moeda={p.moeda} />
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {p.diasEmAberto ?? '—'}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <StatusBadge status={p.status} motivo={p.motivoBloqueio} />
-                            {p.processamentoStatus ? (
-                              <ProcessamentoBadge status={p.processamentoStatus} />
-                            ) : null}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {pendentesPagina.map((p) => {
+                      const aberto = expandido === p.docCod
+                      const d = p.detalhe
+                      return (
+                        <React.Fragment key={p.docCod}>
+                          <TableRow
+                            className="cursor-pointer"
+                            aria-expanded={aberto}
+                            onClick={() =>
+                              setExpandido((cur) => (cur === p.docCod ? null : p.docCod))
+                            }
+                          >
+                            <TableCell>
+                              <span className="inline-flex items-center gap-1.5">
+                                <ChevronRight
+                                  className={cn(
+                                    'size-4 text-muted-foreground transition-transform',
+                                    aberto && 'rotate-90',
+                                  )}
+                                  aria-hidden
+                                />
+                                {p.filCod}
+                              </span>
+                            </TableCell>
+                            <TableCell className="font-medium">{p.docCod}</TableCell>
+                            <TableCell>{p.exportador}</TableCell>
+                            <TableCell className="text-right">
+                              <Moeda valor={p.valorMoedaNegociada} moeda={p.moeda} />
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {p.diasEmAberto ?? '—'}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <StatusBadge status={p.status} motivo={p.motivoBloqueio} />
+                                {p.processamentoStatus ? (
+                                  <ProcessamentoBadge status={p.processamentoStatus} />
+                                ) : null}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                          {aberto ? (
+                            <TableRow className="bg-muted/30 hover:bg-muted/30">
+                              <TableCell colSpan={6} className="py-4">
+                                <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
+                                  <Campo label="Processo">{d?.priCod ?? '—'}</Campo>
+                                  <Campo label="Referência">{p.referencia}</Campo>
+                                  <Campo label="Data de emissão">{fmtData(d?.dataEmissao)}</Campo>
+                                  <Campo label="Pago">{d?.pago ? 'Sim' : 'Não'}</Campo>
+                                  <Campo label="Valor (face)">
+                                    {p.valorBrl != null ? `R$ ${formatNumber(p.valorBrl)}` : '—'}
+                                  </Campo>
+                                  <Campo label="Valor moeda negociada">
+                                    <Moeda valor={p.valorMoedaNegociada} moeda={p.moeda} />
+                                  </Campo>
+                                  <Campo label="Saldo a permutar">
+                                    {d?.valorPermutar != null ? formatNumber(d.valorPermutar) : '—'}
+                                  </Campo>
+                                  <Campo label="D.I / DUIMP">{d?.declaracao?.variante ?? '—'}</Campo>
+                                  <Campo label="Data-base (D.I/DUIMP)">
+                                    {fmtData(d?.declaracao?.dataBase)}
+                                  </Campo>
+                                  <Campo label="Taxa adiantamento">
+                                    {d?.taxaAdiantamento != null
+                                      ? formatNumber(d.taxaAdiantamento)
+                                      : '—'}
+                                  </Campo>
+                                  <Campo label="Taxa invoice">
+                                    {d?.taxaInvoice != null ? formatNumber(d.taxaInvoice) : '—'}
+                                  </Campo>
+                                  <Campo label="Variação cambial">
+                                    {d?.variacaoClassificacao ?? '—'}
+                                    {d?.variacaoResultado != null
+                                      ? ` · ${formatNumber(d.variacaoResultado)}`
+                                      : ''}
+                                  </Campo>
+                                  <Campo label="Motivo">
+                                    {p.motivoBloqueio
+                                      ? (MOTIVO_LABEL[p.motivoBloqueio] ?? p.motivoBloqueio)
+                                      : '—'}
+                                  </Campo>
+                                </dl>
+                              </TableCell>
+                            </TableRow>
+                          ) : null}
+                        </React.Fragment>
+                      )
+                    })}
                   </TableBody>
                 </Table>
                 <div className="flex flex-col gap-2 pt-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">

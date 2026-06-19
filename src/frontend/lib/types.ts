@@ -31,6 +31,24 @@ export type StatusElegibilidade =
 /** Status do analista sobre um adiantamento (botão "Processar"). */
 export type ProcessamentoStatus = 'pendente' | 'processando' | 'processado' | 'erro'
 
+/**
+ * Micro-informações de um adiantamento (exibidas ao expandir a linha, qualquer
+ * status). `declaracao` existe se o processo tem D.I/DUIMP; `taxa*`/`variacao*`
+ * só para casos COM casamento — bloqueados/já-permutados não têm.
+ */
+export interface PermutaDetalhe {
+  priCod: string
+  pago: boolean
+  dataEmissao?: string
+  valorPermutar?: number
+  declaracao?: { variante: 'DI' | 'DUIMP'; dataBase?: string }
+  taxaAdiantamento?: number
+  taxaInvoice?: number
+  variacaoClassificacao?: string
+  variacaoResultado?: number
+  variacaoDelta?: number
+}
+
 /** Adiantamento PROFORMA pendente de permuta (linha da visão geral). */
 export interface PermutaPendente {
   docCod: string
@@ -52,6 +70,8 @@ export interface PermutaPendente {
    * o analista escolhe UMA e processa (ADR-0005).
    */
   candidatas?: InvoiceEmAberto[]
+  /** Micro-informações exibidas ao expandir a linha (qualquer status). */
+  detalhe?: PermutaDetalhe
 }
 
 /** INVOICE finalizada em aberto (lado-crédito do casamento). */

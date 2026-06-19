@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import type {
     AdiantamentoAtivo,
     CasamentoRow,
+    DeclaracaoRow,
     InvoiceRow,
 } from '../../repository/permutas/PermutaRelationalRepository.js';
 import type PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
@@ -74,18 +75,26 @@ const casamentos: CasamentoRow[] = [
         valorASerUsado: 1000,
         moeda: 'USD',
         variacaoClassificacao: 'JUROS',
+        taxaAdiantamento: 5.31,
+        taxaInvoice: 5.19,
     },
+];
+
+const declaracoes: DeclaracaoRow[] = [
+    { priCod: '2048', variante: 'DI', dataBase: new Date('2026-03-15') },
 ];
 
 const buildRelational = (over?: {
     adiantamentos?: AdiantamentoAtivo[];
     invoices?: InvoiceRow[];
     casamentos?: CasamentoRow[];
+    declaracoes?: DeclaracaoRow[];
 }) =>
     ({
         listAdiantamentosAtivos: jest.fn().mockResolvedValue(over?.adiantamentos ?? adiantamentos),
         listInvoicesEmAberto: jest.fn().mockResolvedValue(over?.invoices ?? invoices),
         listCasamentos: jest.fn().mockResolvedValue(over?.casamentos ?? casamentos),
+        listDeclaracoes: jest.fn().mockResolvedValue(over?.declaracoes ?? declaracoes),
     }) as unknown as jest.Mocked<PermutaRelationalRepository>;
 
 const buildProcessamento = (rows: Processamento[] = []) =>
@@ -295,6 +304,31 @@ describe('GestaoPermutasService.exporGestao', () => {
         // Elegível e bloqueada NÃO carregam candidatas.
         expect(res.pendentes.find((p) => p.docCod === 'A1')?.candidatas).toBeUndefined();
         expect(res.pendentes.find((p) => p.docCod === 'A2')?.candidatas).toBeUndefined();
+    });
+
+    it('builds detalhe: priCod/pago + declaracao (DI) + taxa/variacao for matched (A1)', async () => {
+        const service = new GestaoPermutasService(
+            buildRelational(),
+            buildProcessamento(),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+
+        const a1 = res.pendentes.find((p) => p.docCod === 'A1');
+        expect(a1?.detalhe?.priCod).toBe('2048');
+        expect(a1?.detalhe?.pago).toBe(true);
+        expect(a1?.detalhe?.declaracao?.variante).toBe('DI');
+        expect(typeof a1?.detalhe?.declaracao?.dataBase).toBe('string');
+        expect(a1?.detalhe?.taxaAdiantamento).toBe(5.31);
+        expect(a1?.detalhe?.taxaInvoice).toBe(5.19);
+        expect(a1?.detalhe?.variacaoClassificacao).toBe('JUROS');
+
+        // A2 (bloqueada, processo 3000 sem declaração e sem casamento): detalhe
+        // existe mas sem declaracao/taxa.
+        const a2 = res.pendentes.find((p) => p.docCod === 'A2');
+        expect(a2?.detalhe?.priCod).toBe('3000');
+        expect(a2?.detalhe?.declaracao).toBeUndefined();
+        expect(a2?.detalhe?.taxaAdiantamento).toBeUndefined();
     });
 
     it('surfaces processamentoStatus on pendentes and casamento adiantamentos', async () => {

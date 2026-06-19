@@ -463,6 +463,15 @@ export default class PermutaRelationalRepository {
         return rows.map((r) => this.mapInvoiceRow(r));
     };
 
+    public listDeclaracoes = async (): Promise<DeclaracaoRow[]> => {
+        const rows = await this.databaseClient.selectMany(
+            `SELECT pri_cod, variante, data_base
+             FROM permuta_declaracao_importacao
+             WHERE NOT stale`,
+        );
+        return rows.map((r) => this.mapDeclaracaoRow(r));
+    };
+
     public listCasamentos = async (): Promise<CasamentoRow[]> => {
         const rows = await this.databaseClient.selectMany(
             `SELECT invoice_doc_cod, adiantamento_doc_cod, pri_cod, valor_a_ser_usado,
@@ -519,6 +528,12 @@ export default class PermutaRelationalRepository {
         ...(r.moeda != null ? { moeda: String(r.moeda) } : {}),
         ...(r.moeda_negociada != null ? { moedaNegociada: String(r.moeda_negociada) } : {}),
         pago: Boolean(r.pago),
+    });
+
+    private mapDeclaracaoRow = (r: Record<string, unknown>): DeclaracaoRow => ({
+        priCod: String(r.pri_cod),
+        variante: String(r.variante) as DeclaracaoRow['variante'],
+        ...(r.data_base != null ? { dataBase: new Date(String(r.data_base)) } : {}),
     });
 
     private mapCasamentoRow = (r: Record<string, unknown>): CasamentoRow => ({

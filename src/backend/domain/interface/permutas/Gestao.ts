@@ -7,6 +7,35 @@ import type { ProcessamentoStatus } from './Processamento.js';
 
 export type StatusElegibilidade = 'elegivel' | 'bloqueada' | 'casamento-manual' | 'ja-permutado';
 
+/**
+ * Micro-informações de um adiantamento, exibidas ao expandir a linha na tela
+ * (qualquer status). Campos opcionais dependem do que o modelo relacional tem:
+ * `declaracao` existe se o processo tem D.I/DUIMP; `taxa*`/`variacao*` só para
+ * casos COM casamento (permuta_casamento) — bloqueados/já-permutados não têm.
+ */
+export interface PermutaDetalhe {
+    /** Processo (Conexos `priCod`) — chave de reconciliação manual no Conexos. */
+    priCod: string;
+    /** Totalmente pago? (Gate 3). */
+    pago: boolean;
+    /** Data de emissão do adiantamento (ISO). */
+    dataEmissao?: string;
+    /** Saldo a permutar (`mnyTitPermutar`). */
+    valorPermutar?: number;
+    /** D.I/DUIMP do processo (Gate 4) + data-base da variação. */
+    declaracao?: { variante: 'DI' | 'DUIMP'; dataBase?: string };
+    /** Taxa de fechamento do adiantamento (só p/ casados). */
+    taxaAdiantamento?: number;
+    /** Taxa de fechamento da invoice casada (só p/ casados). */
+    taxaInvoice?: number;
+    /** Classificação da variação cambial (JUROS/DESCONTO/NEUTRO) — só p/ casados. */
+    variacaoClassificacao?: string;
+    /** Resultado monetário da variação cambial (só p/ casados). */
+    variacaoResultado?: number;
+    /** Delta de taxa (adto − invoice) — só p/ casados. */
+    variacaoDelta?: number;
+}
+
 export interface PermutaPendente {
     docCod: string;
     filCod: number;
@@ -28,6 +57,8 @@ export interface PermutaPendente {
      * (ADR-0005). O analista escolhe UMA e processa.
      */
     candidatas?: InvoiceEmAberto[];
+    /** Micro-informações exibidas ao expandir a linha (qualquer status). */
+    detalhe?: PermutaDetalhe;
 }
 
 export interface InvoiceEmAberto {
