@@ -347,9 +347,12 @@ export default function GestaoPermutasPage() {
   const abrirResolverManual = React.useCallback((p: PermutaPendente) => {
     setResolverManual(p)
     setInvoiceManual('')
-    // Valor a abater é em R$ (o saldo a permutar do Conexos é nativo em BRL — não
-    // existe em USD). Default = saldo a permutar (formatado pt-BR); teto = o saldo.
-    setValorManual(p.detalhe?.valorPermutar != null ? formatNumber(p.detalhe.valorPermutar) : '')
+    // Valor a abater em USD (principal). O saldo a permutar é nativo em R$ no
+    // Conexos → convertido p/ USD pela taxa. Default = saldo em USD; teto = saldo.
+    const saldoBrl = p.detalhe?.valorPermutar
+    const taxa = p.detalhe?.taxaAdiantamento
+    const saldoUSD = saldoBrl != null && taxa != null && taxa > 0 ? saldoBrl / taxa : undefined
+    setValorManual(saldoUSD != null ? formatNumber(saldoUSD) : '')
   }, [])
 
   // Lança o casamento manual: registra a invoice escolhida + o valor a abater
@@ -358,7 +361,7 @@ export default function GestaoPermutasPage() {
     if (!resolverManual || !invoiceManual) return
     const p = resolverManual
     const obs = `Casamento manual N:M · invoice ${invoiceManual}${
-      valorManual ? ` · valor a abater R$ ${valorManual}` : ''
+      valorManual ? ` · valor a abater ${valorManual} ${moedaCodigo(p.moeda)}` : ''
     }`
     setResolverManual(null)
     await processar(p.docCod, p.docCod, invoiceManual, obs)
@@ -436,14 +439,19 @@ export default function GestaoPermutasPage() {
   const detManual = resolverManual?.detalhe
   const saldoManualBrl = detManual?.valorPermutar
   const taxaManual = detManual?.taxaAdiantamento
-  const valorManualNum = parseBrl(valorManual)
-  const valorManualExcede =
-    saldoManualBrl != null && valorManualNum > saldoManualBrl + 0.005
+  // USD é o principal; o saldo (nativo R$) é convertido p/ USD pela taxa.
+  const saldoManualUSD =
+    saldoManualBrl != null && taxaManual != null && taxaManual > 0
+      ? saldoManualBrl / taxaManual
+      : null
+  const valorManualNum = parseBrl(valorManual) // em USD
+  const valorManualExcede = saldoManualUSD != null && valorManualNum > saldoManualUSD + 0.005
   const valorManualValido =
     Number.isFinite(valorManualNum) && valorManualNum > 0 && !valorManualExcede
-  const valorManualUSD =
+  // R$ equivalente do que será abatido (secundário) = USD × taxa.
+  const valorManualBRL =
     taxaManual != null && taxaManual > 0 && Number.isFinite(valorManualNum) && valorManualNum > 0
-      ? valorManualNum / taxaManual
+      ? valorManualNum * taxaManual
       : null
 
   // Consolidação por MOEDA NEGOCIADA por card: USD como valor principal, demais
@@ -1215,9 +1223,20 @@ export default function GestaoPermutasPage() {
                           : '—'}
                       </Campo>
                       <Campo label="Saldo a permutar">
-                        {resolverManual.detalhe?.valorPermutar != null
-                          ? `R$ ${formatNumber(resolverManual.detalhe.valorPermutar)}`
-                          : '—'}
+                        {saldoManualUSD != null ? (
+                          <>
+                            {formatNumber(saldoManualUSD)} {moedaCodigo(resolverManual.moeda)}
+                            {saldoManualBrl != null ? (
+                              <div className="text-xs font-normal text-muted-foreground">
+                                R$ {formatNumber(saldoManualBrl)}
+                              </div>
+                            ) : null}
+                          </>
+                        ) : saldoManualBrl != null ? (
+                          `R$ ${formatNumber(saldoManualBrl)}`
+                        ) : (
+                          '—'
+                        )}
                       </Campo>
                       <Campo label="D.I / DUIMP">
                         {resolverManual.detalhe?.declaracao?.variante ?? '—'}
@@ -1254,7 +1273,7 @@ export default function GestaoPermutasPage() {
                       </div>
                       <div className="space-y-1">
                         <label htmlFor="manual-valor" className="text-sm font-medium">
-                          Valor a abater (R$)
+                          Valor a abater ({moedaCodigo(resolverManual.moeda)})
                         </label>
                         <Input
                           id="manual-valor"
@@ -1272,15 +1291,19 @@ export default function GestaoPermutasPage() {
                         />
                         <p className="text-xs text-muted-foreground">
                           Saldo a permutar:{' '}
-                          {saldoManualBrl != null ? `R$ ${formatNumber(saldoManualBrl)}` : '—'}
-                          {valorManualUSD != null
-                            ? ` · ≈ ${formatNumber(valorManualUSD)} ${moedaCodigo(resolverManual.moeda)}`
+                          {saldoManualUSD != null
+                            ? `${formatNumber(saldoManualUSD)} ${moedaCodigo(resolverManual.moeda)}`
+                            : '—'}
+                          {saldoManualBrl != null ? ` · R$ ${formatNumber(saldoManualBrl)}` : ''}
+                          {valorManualBRL != null
+                            ? ` · abate ≈ R$ ${formatNumber(valorManualBRL)}`
                             : ''}
                         </p>
                         {valorManualExcede ? (
                           <p className="text-xs text-danger-foreground">
-                            Não pode exceder o saldo a permutar (R${' '}
-                            {formatNumber(saldoManualBrl ?? 0)}).
+                            Não pode exceder o saldo a permutar (
+                            {formatNumber(saldoManualUSD ?? 0)}{' '}
+                            {moedaCodigo(resolverManual.moeda)}).
                           </p>
                         ) : null}
                       </div>
