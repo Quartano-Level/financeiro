@@ -873,15 +873,17 @@ export default function GestaoPermutasPage() {
                                     )}
                                   </Campo>
                                   <Campo label="Saldo a permutar">
-                                    {saldoBrl != null ? (
+                                    {saldoNeg != null ? (
                                       <>
-                                        R$ {formatNumber(saldoBrl)}
-                                        {saldoNeg != null ? (
+                                        {formatNumber(saldoNeg)} {moedaCodigo(p.moeda)}
+                                        {saldoBrl != null ? (
                                           <div className="text-xs font-normal text-muted-foreground">
-                                            ≈ {formatNumber(saldoNeg)} {moedaCodigo(p.moeda)}
+                                            R$ {formatNumber(saldoBrl)}
                                           </div>
                                         ) : null}
                                       </>
+                                    ) : saldoBrl != null ? (
+                                      `R$ ${formatNumber(saldoBrl)}`
                                     ) : (
                                       '—'
                                     )}
