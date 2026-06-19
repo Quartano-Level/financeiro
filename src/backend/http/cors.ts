@@ -22,11 +22,25 @@ export const parseAllowedOrigins = (raw?: string): string[] => {
  *
  * Arch-review card security-3 / F-security-3.
  */
+/**
+ * Casa uma origin contra uma entrada da whitelist. Entradas com `*` viram
+ * match por SUFIXO (ex.: `https://*.vercel.app` casa `https://app.vercel.app` e
+ * `https://app-abc123.vercel.app`) — necessário porque a Vercel gera uma URL
+ * nova por deploy. Sem `*`, é match exato.
+ */
+const originMatches = (origin: string, entry: string): boolean => {
+    if (entry.includes('*')) {
+        const suffix = entry.slice(entry.indexOf('*') + 1);
+        return origin.endsWith(suffix);
+    }
+    return origin === entry;
+};
+
 export const buildCorsOptions = (raw?: string): CorsOptions => {
     const allowed = parseAllowedOrigins(raw);
     return {
         origin: (origin, callback) => {
-            if (!origin || allowed.includes(origin)) {
+            if (!origin || allowed.some((entry) => originMatches(origin, entry))) {
                 callback(null, true);
                 return;
             }

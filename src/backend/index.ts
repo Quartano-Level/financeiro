@@ -14,6 +14,11 @@ import permutasRouter from './routes/permutas.js';
 
 const app = express();
 
+// Atrás do proxy do Render/Vercel/etc. — confia no 1º hop para que o
+// `X-Forwarded-For` (IP real do cliente) seja usado pelo rate-limit e logs em
+// vez do IP do load balancer (corrige ERR_ERL_UNEXPECTED_X_FORWARDED_FOR).
+app.set('trust proxy', 1);
+
 // CORS — whitelist driven by ALLOWED_ORIGINS (comma-separated env var).
 // Replaces the previous `origin: true` which accepted any origin
 // (arch-review card security-3 / F-security-3). `exposedHeaders`
