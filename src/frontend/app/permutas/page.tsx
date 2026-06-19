@@ -340,7 +340,9 @@ export default function GestaoPermutasPage() {
   const abrirResolverManual = React.useCallback((p: PermutaPendente) => {
     setResolverManual(p)
     setInvoiceManual('')
-    setValorManual(p.valorMoedaNegociada != null ? String(p.valorMoedaNegociada) : '')
+    // Valor a abater é em R$ (o saldo a permutar do Conexos é nativo em BRL — não
+    // existe em USD). Default = saldo a permutar; teto = o próprio saldo.
+    setValorManual(p.detalhe?.valorPermutar != null ? String(p.detalhe.valorPermutar) : '')
   }, [])
 
   // Lança o casamento manual: registra a invoice escolhida + o valor a abater
@@ -349,7 +351,7 @@ export default function GestaoPermutasPage() {
     if (!resolverManual || !invoiceManual) return
     const p = resolverManual
     const obs = `Casamento manual N:M · invoice ${invoiceManual}${
-      valorManual ? ` · valor a abater ${valorManual} ${moedaCodigo(p.moeda)}` : ''
+      valorManual ? ` · valor a abater R$ ${valorManual}` : ''
     }`
     setResolverManual(null)
     await processar(p.docCod, p.docCod, invoiceManual, obs)
@@ -421,6 +423,21 @@ export default function GestaoPermutasPage() {
   const casamentosSugeridos = (data?.casamentos ?? []).filter((c) =>
     passaFilial(c.invoice.filCod),
   )
+
+  // Validação do valor a abater (modal manual): em R$, limitado ao saldo a
+  // permutar (BRL nativo do Conexos). USD é só referência (valor ÷ taxa).
+  const detManual = resolverManual?.detalhe
+  const saldoManualBrl = detManual?.valorPermutar
+  const taxaManual = detManual?.taxaAdiantamento
+  const valorManualNum = Number(valorManual)
+  const valorManualExcede =
+    saldoManualBrl != null && valorManualNum > saldoManualBrl + 0.005
+  const valorManualValido =
+    Number.isFinite(valorManualNum) && valorManualNum > 0 && !valorManualExcede
+  const valorManualUSD =
+    taxaManual != null && taxaManual > 0 && Number.isFinite(valorManualNum) && valorManualNum > 0
+      ? valorManualNum / taxaManual
+      : null
 
   // Consolidação por MOEDA NEGOCIADA por card: USD como valor principal, demais
   // moedas (EUR, …) menores embaixo. Soma `valorMoedaNegociada`; itens sem
@@ -1198,6 +1215,9 @@ export default function GestaoPermutasPage() {
                       <Campo label="D.I / DUIMP">
                         {resolverManual.detalhe?.declaracao?.variante ?? '—'}
                       </Campo>
+                      <Campo label="Data D.I / DUIMP">
+                        {fmtData(resolverManual.detalhe?.declaracao?.dataBase)}
+                      </Campo>
                     </dl>
                     <div className="mt-4 space-y-3">
                       <div className="space-y-1">
@@ -1211,7 +1231,8 @@ export default function GestaoPermutasPage() {
                           <SelectContent>
                             {(resolverManual.candidatas ?? []).map((inv) => (
                               <SelectItem key={inv.docCod} value={inv.docCod}>
-                                {inv.docCod} · {inv.referencia} ·{' '}
+                                Processo {resolverManual.detalhe?.priCod ?? '—'} · Invoice{' '}
+                                {inv.docCod} ·{' '}
                                 {inv.valorMoedaNegociada != null
                                   ? `${formatNumber(inv.valorMoedaNegociada)} ${moedaCodigo(inv.moeda)}`
                                   : '—'}
@@ -1219,22 +1240,38 @@ export default function GestaoPermutasPage() {
                             ))}
                           </SelectContent>
                         </Select>
+                        <p className="text-xs text-muted-foreground">
+                          O Processo ({resolverManual.detalhe?.priCod ?? '—'}) é o código em comum
+                          entre o adiantamento e a invoice.
+                        </p>
                       </div>
                       <div className="space-y-1">
                         <label htmlFor="manual-valor" className="text-sm font-medium">
-                          Valor a abater ({moedaCodigo(resolverManual.moeda)})
+                          Valor a abater (R$)
                         </label>
                         <Input
                           id="manual-valor"
                           type="number"
                           inputMode="decimal"
+                          min={0}
+                          max={saldoManualBrl}
                           value={valorManual}
                           onChange={(e) => setValorManual(e.target.value)}
+                          aria-invalid={valorManualExcede}
                         />
                         <p className="text-xs text-muted-foreground">
-                          Padrão = valor negociado do adiantamento. Ajuste se a permuta abater só
-                          parte.
+                          Saldo a permutar:{' '}
+                          {saldoManualBrl != null ? `R$ ${formatNumber(saldoManualBrl)}` : '—'}
+                          {valorManualUSD != null
+                            ? ` · ≈ ${formatNumber(valorManualUSD)} ${moedaCodigo(resolverManual.moeda)}`
+                            : ''}
                         </p>
+                        {valorManualExcede ? (
+                          <p className="text-xs text-danger-foreground">
+                            Não pode exceder o saldo a permutar (R${' '}
+                            {formatNumber(saldoManualBrl ?? 0)}).
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                   </>
@@ -1244,7 +1281,10 @@ export default function GestaoPermutasPage() {
                 <Button variant="outline" onClick={() => setResolverManual(null)}>
                   Cancelar
                 </Button>
-                <Button disabled={!invoiceManual} onClick={() => void lancarManual()}>
+                <Button
+                  disabled={!invoiceManual || !valorManualValido}
+                  onClick={() => void lancarManual()}
+                >
                   Lançar permuta
                 </Button>
               </DialogFooter>
