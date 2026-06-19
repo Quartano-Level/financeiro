@@ -159,6 +159,13 @@ const fmtData = (iso?: string) =>
 const fmtTaxa = (t: number) =>
   t.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
 
+/** Parse de valor digitado em pt-BR ("5.557,42" → 5557.42). Ponto = milhar,
+ * vírgula = decimal. Sem vírgula, aceita o número como veio (ex.: "5000"). */
+const parseBrl = (s: string): number => {
+  const t = s.trim()
+  return t.includes(',') ? Number(t.replace(/\./g, '').replace(',', '.')) : Number(t)
+}
+
 /** Campo rótulo/valor do painel de detalhe (expandir linha). */
 function Campo({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -341,8 +348,8 @@ export default function GestaoPermutasPage() {
     setResolverManual(p)
     setInvoiceManual('')
     // Valor a abater é em R$ (o saldo a permutar do Conexos é nativo em BRL — não
-    // existe em USD). Default = saldo a permutar; teto = o próprio saldo.
-    setValorManual(p.detalhe?.valorPermutar != null ? String(p.detalhe.valorPermutar) : '')
+    // existe em USD). Default = saldo a permutar (formatado pt-BR); teto = o saldo.
+    setValorManual(p.detalhe?.valorPermutar != null ? formatNumber(p.detalhe.valorPermutar) : '')
   }, [])
 
   // Lança o casamento manual: registra a invoice escolhida + o valor a abater
@@ -429,7 +436,7 @@ export default function GestaoPermutasPage() {
   const detManual = resolverManual?.detalhe
   const saldoManualBrl = detManual?.valorPermutar
   const taxaManual = detManual?.taxaAdiantamento
-  const valorManualNum = Number(valorManual)
+  const valorManualNum = parseBrl(valorManual)
   const valorManualExcede =
     saldoManualBrl != null && valorManualNum > saldoManualBrl + 0.005
   const valorManualValido =
@@ -1251,12 +1258,16 @@ export default function GestaoPermutasPage() {
                         </label>
                         <Input
                           id="manual-valor"
-                          type="number"
+                          type="text"
                           inputMode="decimal"
-                          min={0}
-                          max={saldoManualBrl}
                           value={valorManual}
                           onChange={(e) => setValorManual(e.target.value)}
+                          onBlur={() =>
+                            setValorManual((v) => {
+                              const n = parseBrl(v)
+                              return Number.isFinite(n) && v.trim() !== '' ? formatNumber(n) : v
+                            })
+                          }
                           aria-invalid={valorManualExcede}
                         />
                         <p className="text-xs text-muted-foreground">
