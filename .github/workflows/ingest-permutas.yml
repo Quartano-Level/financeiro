@@ -9,7 +9,8 @@ name: Ingestão diária de Permutas
 # (workflow_dispatch) na aba Actions.
 on:
   schedule:
-    - cron: '0 9 * * *' # 09:00 UTC = 06:00 BRT (antes do expediente)
+    # 3x/dia: 06:00, 12:00 e 18:00 BRT (= 09:00, 15:00, 21:00 UTC).
+    - cron: '0 9,15,21 * * *'
   workflow_dispatch: {} # permite rodar manualmente pela aba Actions
 
 # Evita duas ingestões simultâneas (o advisory lock já protege, mas isto é melhor).
