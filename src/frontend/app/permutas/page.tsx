@@ -825,7 +825,18 @@ export default function GestaoPermutasPage() {
                                   <Campo label="Valor moeda negociada">
                                     <Moeda valor={p.valorMoedaNegociada} moeda={p.moeda} />
                                   </Campo>
-                                  <Campo label="Invoice casada">
+                                  <Campo
+                                    label={
+                                      !invCasada && p.candidatas && p.candidatas.length > 0
+                                        ? 'Invoices candidatas (N:M)'
+                                        : 'Invoice casada'
+                                    }
+                                    className={
+                                      !invCasada && p.candidatas && p.candidatas.length > 0
+                                        ? 'sm:col-span-2'
+                                        : undefined
+                                    }
+                                  >
                                     {invCasada ? (
                                       <>
                                         <span className="text-muted-foreground">
@@ -842,6 +853,21 @@ export default function GestaoPermutasPage() {
                                           </div>
                                         ) : null}
                                       </>
+                                    ) : p.candidatas && p.candidatas.length > 0 ? (
+                                      <div className="space-y-0.5">
+                                        {p.candidatas.map((cand) => (
+                                          <div key={cand.docCod}>
+                                            <span className="text-muted-foreground">
+                                              {cand.docCod}
+                                            </span>{' '}
+                                            ·{' '}
+                                            <Moeda
+                                              valor={cand.valorMoedaNegociada}
+                                              moeda={cand.moeda}
+                                            />
+                                          </div>
+                                        ))}
+                                      </div>
                                     ) : (
                                       '—'
                                     )}
