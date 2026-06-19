@@ -78,6 +78,8 @@ export interface PermutaPendente {
 export interface InvoiceEmAberto {
   docCod: string
   filCod: number
+  /** Processo (Conexos priCod) — código em comum com o adiantamento. */
+  priCod?: string
   referencia: string
   exportador: string
   valorMoedaNegociada: number | null

@@ -232,6 +232,7 @@ export default class GestaoPermutasService {
     private toInvoiceEmAberto = (i: InvoiceRow): InvoiceEmAberto => ({
         docCod: i.docCod,
         filCod: i.filCod ?? 0,
+        priCod: i.priCod,
         referencia: i.referencia ?? i.docCod,
         exportador: i.exportador ?? '',
         valorMoedaNegociada: i.valorMoedaNegociada ?? null,

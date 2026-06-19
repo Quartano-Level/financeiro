@@ -263,8 +263,13 @@ export default function GestaoPermutasPage() {
   const [filtroExportador, setFiltroExportador] = React.useState<string>('')
   // Paginação da tabela de pendentes (50 por página).
   const [pagina, setPagina] = React.useState(1)
+  // Vista da tabela principal: adiantamentos pendentes ou invoices em aberto
+  // (dirigida pelos KPIs). 'invoices' é ativada pelo KPI "Invoices em aberto".
+  const [vista, setVista] = React.useState<'adiantamentos' | 'invoices'>('adiantamentos')
   // Linha expandida (docCod) — mostra as micro-informações do adiantamento.
   const [expandido, setExpandido] = React.useState<string | null>(null)
+  // Invoice expandida (docCod) na LISTA de invoices em aberto — micro-info.
+  const [invoiceListExpandida, setInvoiceListExpandida] = React.useState<string | null>(null)
   // Invoice expandida (docCod) na aba de casamento sugerido — micro-info da invoice.
   const [invoiceExpandida, setInvoiceExpandida] = React.useState<string | null>(null)
   // Confirmação de processamento (modal) — o casamento inteiro (invoice + todos
@@ -397,18 +402,29 @@ export default function GestaoPermutasPage() {
       (filtroFilial === 'todas' || String(p.filCod) === filtroFilial) &&
       (expBusca === '' || p.exportador.toLowerCase().includes(expBusca)),
   )
-
-  // Paginação: 50 linhas por página. Volta à 1ª página quando o filtro muda.
-  const PAGE_SIZE = 50
-  const totalPaginas = Math.max(1, Math.ceil(pendentesFiltrados.length / PAGE_SIZE))
-  const paginaAtual = Math.min(pagina, totalPaginas)
-  const pendentesPagina = pendentesFiltrados.slice(
-    (paginaAtual - 1) * PAGE_SIZE,
-    paginaAtual * PAGE_SIZE,
+  // Invoices em aberto (vista 'invoices') — mesmos filtros de filial/exportador.
+  const invoicesFiltradas = (data?.invoicesEmAberto ?? []).filter(
+    (i) =>
+      (filtroFilial === 'todas' || String(i.filCod) === filtroFilial) &&
+      (expBusca === '' || i.exportador.toLowerCase().includes(expBusca)),
   )
+
+  // Paginação: 50 linhas por página. Base muda conforme a vista ativa.
+  const PAGE_SIZE = 50
+  const listaFiltrada = vista === 'invoices' ? invoicesFiltradas : pendentesFiltrados
+  const totalPaginas = Math.max(1, Math.ceil(listaFiltrada.length / PAGE_SIZE))
+  const paginaAtual = Math.min(pagina, totalPaginas)
+  const sliceInicio = (paginaAtual - 1) * PAGE_SIZE
+  const pendentesPagina = pendentesFiltrados.slice(sliceInicio, sliceInicio + PAGE_SIZE)
+  const invoicesPagina = invoicesFiltradas.slice(sliceInicio, sliceInicio + PAGE_SIZE)
   // Trocar filtro/filial volta à 1ª página (nos handlers → evita setState-in-effect).
   const mudarFiltro = (f: FiltroStatus) => {
     setFiltro(f)
+    setVista('adiantamentos')
+    setPagina(1)
+  }
+  const verInvoices = () => {
+    setVista('invoices')
     setPagina(1)
   }
   const mudarFilial = (v: string) => {
@@ -506,7 +522,7 @@ export default function GestaoPermutasPage() {
               value={data.totais.pendentes}
               footer={<KpiFooter totais={moedaTotais.pendentes}>PROFORMA aguardando permuta</KpiFooter>}
               tooltip="Mostrar todos os adiantamentos pendentes"
-              active={filtro === 'todos'}
+              active={vista === 'adiantamentos' && filtro === 'todos'}
               onClick={() => mudarFiltro('todos')}
             />
             <SimpleKPI
@@ -515,7 +531,7 @@ export default function GestaoPermutasPage() {
               value={data.totais.bloqueadas}
               footer={<KpiFooter totais={moedaTotais.bloqueadas}>pendência de gate</KpiFooter>}
               tooltip="Filtrar a tabela pelas bloqueadas"
-              active={filtro === 'bloqueada'}
+              active={vista === 'adiantamentos' && filtro === 'bloqueada'}
               onClick={() => mudarFiltro('bloqueada')}
             />
             <SimpleKPI
@@ -524,7 +540,7 @@ export default function GestaoPermutasPage() {
               value={data.totais.jaPermutado}
               footer={<KpiFooter totais={moedaTotais.jaPermutado}>concluído (permuta anterior)</KpiFooter>}
               tooltip="Filtrar a tabela pelos já permutados"
-              active={filtro === 'ja-permutado'}
+              active={vista === 'adiantamentos' && filtro === 'ja-permutado'}
               onClick={() => mudarFiltro('ja-permutado')}
             />
             <SimpleKPI
@@ -532,6 +548,9 @@ export default function GestaoPermutasPage() {
               label="Invoices em aberto"
               value={data.totais.invoicesEmAberto}
               footer={<KpiFooter totais={moedaTotais.invoicesEmAberto}>finalizadas, a casar</KpiFooter>}
+              tooltip="Ver as invoices em aberto (com detalhes)"
+              active={vista === 'invoices'}
+              onClick={verInvoices}
             />
             <SimpleKPI
               color="success"
@@ -539,7 +558,7 @@ export default function GestaoPermutasPage() {
               value={data.totais.elegiveis}
               footer={<KpiFooter totais={moedaTotais.elegiveis}>passaram os 4 gates</KpiFooter>}
               tooltip="Filtrar a tabela pelos elegíveis"
-              active={filtro === 'elegivel'}
+              active={vista === 'adiantamentos' && filtro === 'elegivel'}
               onClick={() => mudarFiltro('elegivel')}
             />
             <SimpleKPI
@@ -548,7 +567,7 @@ export default function GestaoPermutasPage() {
               value={data.totais.casamentoManual}
               footer={<KpiFooter totais={moedaTotais.casamentoManual}>N:M, falta escolher invoice</KpiFooter>}
               tooltip="Filtrar a tabela pelos casamentos manuais (N:M)"
-              active={filtro === 'casamento-manual'}
+              active={vista === 'adiantamentos' && filtro === 'casamento-manual'}
               onClick={() => mudarFiltro('casamento-manual')}
             />
           </KPIGrid>
@@ -597,27 +616,106 @@ export default function GestaoPermutasPage() {
             </div>
           </div>
 
-          {/* Visão geral — adiantamentos pendentes de permuta */}
+          {/* Visão geral — adiantamentos pendentes OU invoices em aberto (vista) */}
           <Card>
             <CardHeader>
-              <CardTitle>Adiantamentos pendentes de permuta</CardTitle>
+              <CardTitle>
+                {vista === 'invoices'
+                  ? 'Invoices em aberto'
+                  : 'Adiantamentos pendentes de permuta'}
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              {pendentesFiltrados.length === 0 ? (
+              {listaFiltrada.length === 0 ? (
                 <EmptyState
                   title={
-                    filtro === 'todos'
-                      ? 'Nenhum adiantamento pendente'
-                      : `Nenhum adiantamento ${FILTRO_VAZIO_LABEL[filtro]}`
+                    vista === 'invoices'
+                      ? 'Nenhuma invoice em aberto'
+                      : filtro === 'todos'
+                        ? 'Nenhum adiantamento pendente'
+                        : `Nenhum adiantamento ${FILTRO_VAZIO_LABEL[filtro]}`
                   }
                   description={
-                    filtro === 'todos'
-                      ? 'Não há PROFORMA aguardando permuta na última eleição.'
-                      : 'Ajuste o filtro nos cartões acima para ver os demais.'
+                    vista === 'invoices'
+                      ? 'Não há invoices finalizadas em aberto para casar.'
+                      : filtro === 'todos'
+                        ? 'Não há PROFORMA aguardando permuta na última eleição.'
+                        : 'Ajuste o filtro nos cartões acima para ver os demais.'
                   }
                 />
               ) : (
                 <>
+                {vista === 'invoices' ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Filial</TableHead>
+                      <TableHead>Código</TableHead>
+                      <TableHead>Processo</TableHead>
+                      <TableHead>Exportador</TableHead>
+                      <TableHead className="text-right">Valor Moeda Negociada</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {invoicesPagina.map((inv) => {
+                      const aberto = invoiceListExpandida === inv.docCod
+                      return (
+                        <React.Fragment key={inv.docCod}>
+                          <TableRow
+                            className="cursor-pointer"
+                            aria-expanded={aberto}
+                            onClick={() =>
+                              setInvoiceListExpandida((cur) =>
+                                cur === inv.docCod ? null : inv.docCod,
+                              )
+                            }
+                          >
+                            <TableCell>
+                              <span className="inline-flex items-center gap-1.5">
+                                <ChevronRight
+                                  className={cn(
+                                    'size-4 text-muted-foreground transition-transform',
+                                    aberto && 'rotate-90',
+                                  )}
+                                  aria-hidden
+                                />
+                                {inv.filCod}
+                              </span>
+                            </TableCell>
+                            <TableCell className="font-medium">{inv.docCod}</TableCell>
+                            <TableCell>{inv.priCod ?? '—'}</TableCell>
+                            <TableCell>{inv.exportador}</TableCell>
+                            <TableCell className="text-right">
+                              <Moeda valor={inv.valorMoedaNegociada} moeda={inv.moeda} />
+                            </TableCell>
+                          </TableRow>
+                          {aberto ? (
+                            <TableRow className="bg-muted/30 hover:bg-muted/30">
+                              <TableCell colSpan={5} className="py-4">
+                                <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
+                                  <Campo label="Código">{inv.docCod}</Campo>
+                                  <Campo label="Processo">{inv.priCod ?? '—'}</Campo>
+                                  <Campo label="Referência">{inv.referencia}</Campo>
+                                  <Campo label="Exportador">{inv.exportador}</Campo>
+                                  <Campo label="Filial">{inv.filCod}</Campo>
+                                  <Campo label="Valor (face)">
+                                    {inv.valorBrl != null
+                                      ? `R$ ${formatNumber(inv.valorBrl)}`
+                                      : '—'}
+                                  </Campo>
+                                  <Campo label="Valor moeda negociada">
+                                    <Moeda valor={inv.valorMoedaNegociada} moeda={inv.moeda} />
+                                  </Campo>
+                                </dl>
+                              </TableCell>
+                            </TableRow>
+                          ) : null}
+                        </React.Fragment>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+                ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -820,11 +918,12 @@ export default function GestaoPermutasPage() {
                     })}
                   </TableBody>
                 </Table>
+                )}
                 <div className="flex flex-col gap-2 pt-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
                   <span>
                     Mostrando {(paginaAtual - 1) * PAGE_SIZE + 1}–
-                    {Math.min(paginaAtual * PAGE_SIZE, pendentesFiltrados.length)} de{' '}
-                    {pendentesFiltrados.length}
+                    {Math.min(paginaAtual * PAGE_SIZE, listaFiltrada.length)} de{' '}
+                    {listaFiltrada.length}
                   </span>
                   {totalPaginas > 1 ? (
                     <div className="flex items-center gap-2">
