@@ -375,9 +375,20 @@ export default function GestaoPermutasPage() {
   const lancarManual = React.useCallback(async () => {
     if (!resolverManual || !invoiceManual) return
     const p = resolverManual
-    const obs = `Casamento manual N:M · invoice ${invoiceManual}${
-      valorManual ? ` · valor a abater ${valorManual} ${moedaCodigo(p.moeda)}` : ''
-    }`
+    // Variação cambial a partir da taxa da invoice ESCOLHIDA + o valor a abater.
+    const invSel = p.candidatas?.find((i) => i.docCod === invoiceManual)
+    const taxaAdto = p.detalhe?.taxaAdiantamento
+    const taxaInv = invSel?.taxa
+    const valNum = parseBrl(valorManual)
+    const delta =
+      taxaAdto != null && taxaInv != null && Number.isFinite(valNum) && valNum > 0
+        ? valNum * (taxaAdto - taxaInv)
+        : null
+    const cls = delta == null ? '' : delta > 0 ? 'JUROS' : delta < 0 ? 'DESCONTO' : 'NEUTRO'
+    const obs =
+      `Casamento manual N:M · invoice ${invoiceManual}` +
+      (valorManual ? ` · valor a abater ${valorManual} ${moedaCodigo(p.moeda)}` : '') +
+      (cls && delta != null ? ` · ${cls} R$ ${formatNumber(Math.abs(delta))}` : '')
     setResolverManual(null)
     await processar(p.docCod, p.docCod, invoiceManual, obs)
   }, [resolverManual, invoiceManual, valorManual, processar])
@@ -479,6 +490,25 @@ export default function GestaoPermutasPage() {
     taxaManual != null && taxaManual > 0 && Number.isFinite(valorManualNum) && valorManualNum > 0
       ? valorManualNum * taxaManual
       : null
+  // Variação cambial do casamento manual — a partir da taxa da invoice ESCOLHIDA
+  // + o valor a abater (USD). delta = valorAbater × (taxaAdto − taxaInvoice) [R$].
+  const invSelManual = resolverManual?.candidatas?.find((i) => i.docCod === invoiceManual)
+  const taxaInvManual = invSelManual?.taxa
+  const varDeltaManual =
+    taxaManual != null &&
+    taxaInvManual != null &&
+    Number.isFinite(valorManualNum) &&
+    valorManualNum > 0
+      ? valorManualNum * (taxaManual - taxaInvManual)
+      : null
+  const varClassManual =
+    varDeltaManual == null
+      ? null
+      : varDeltaManual > 0
+        ? 'JUROS'
+        : varDeltaManual < 0
+          ? 'DESCONTO'
+          : 'NEUTRO'
 
   // Consolidação por MOEDA NEGOCIADA por card: USD como valor principal, demais
   // moedas (EUR, …) menores embaixo. Soma `valorMoedaNegociada`; itens sem
@@ -1456,6 +1486,46 @@ export default function GestaoPermutasPage() {
                           </p>
                         ) : null}
                       </div>
+
+                      {/* Variação cambial calculada a partir da taxa da invoice ESCOLHIDA
+                          + o valor a abater. Mostra juros/desconto antes de lançar. */}
+                      {varDeltaManual != null && taxaManual != null && taxaInvManual != null ? (
+                        <div className="space-y-0.5 rounded-md border bg-background/60 px-3 py-2 text-xs text-muted-foreground tabular-nums">
+                          <div className="font-medium text-foreground">
+                            Variação cambial (em R$):
+                          </div>
+                          <div>
+                            Adiantamento: {formatNumber(valorManualNum)}{' '}
+                            {moedaCodigo(resolverManual.moeda)} × {fmtTaxa(taxaManual)} ={' '}
+                            <span className="text-foreground">
+                              R$ {formatNumber(valorManualNum * taxaManual)}
+                            </span>
+                          </div>
+                          <div>
+                            Invoice: {formatNumber(valorManualNum)}{' '}
+                            {moedaCodigo(resolverManual.moeda)} × {fmtTaxa(taxaInvManual)} ={' '}
+                            <span className="text-foreground">
+                              R$ {formatNumber(valorManualNum * taxaInvManual)}
+                            </span>
+                          </div>
+                          <div>
+                            Diferença ={' '}
+                            <span className="font-medium text-foreground">
+                              R$ {formatNumber(Math.abs(varDeltaManual))}
+                            </span>{' '}
+                            → <span className="font-medium text-foreground">{varClassManual}</span>{' '}
+                            {varClassManual === 'JUROS'
+                              ? '(passiva)'
+                              : varClassManual === 'DESCONTO'
+                                ? '(ativa)'
+                                : ''}
+                          </div>
+                        </div>
+                      ) : invoiceManual && taxaInvManual == null ? (
+                        <p className="text-xs text-muted-foreground">
+                          Invoice escolhida sem taxa no Conexos — variação não calculada.
+                        </p>
+                      ) : null}
                     </div>
                   </>
                 ) : null}
