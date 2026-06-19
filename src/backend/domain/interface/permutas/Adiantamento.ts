@@ -55,4 +55,11 @@ export default interface Adiantamento {
      * Negociada" da tela Gestão. Opcional — depende do detalhe do título.
      */
     moedaNegociada?: string;
+    /**
+     * Taxa de câmbio negociada do título (`com308` `titFltTaxaMneg`). Travada na
+     * contratação. Exibida no detalhe ("Taxa adiantamento") em qualquer status —
+     * para os casados a taxa também vai no `permuta_casamento` (com a da invoice
+     * + variação). Opcional — depende do detalhe do título.
+     */
+    taxa?: number;
 }

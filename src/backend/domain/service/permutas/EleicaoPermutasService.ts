@@ -582,11 +582,12 @@ export default class EleicaoPermutasService {
                         : {}),
                 };
             }
-        } else if (hydrated.pago === true) {
-            // Não elegível, mas TOTALMENTE PAGO → hidrata valor/moeda negociada
-            // do adiantamento (com308) p/ a coluna "Valor Moeda Negociada".
-            // Não-pagos ficam SEM valor → a tela mostra "-". Erro aqui não trava
-            // a candidata (já classificada): apenas omite o valor.
+        } else {
+            // Não elegível (pago OU não-pago) → hidrata valor/moeda/taxa negociada
+            // do adiantamento (com308) p/ as colunas "Valor Moeda Negociada" e a
+            // taxa do detalhe. O dado existe no Conexos mesmo em não-pago (aba
+            // Variação Cambial do título), então NÃO condicionamos a `pago`. Erro
+            // aqui não trava a candidata (já classificada): apenas omite os campos.
             try {
                 const titAdto = await this.conexosClient.listTitulosAPagar({
                     docCod: adiantamento.docCod,
@@ -594,15 +595,21 @@ export default class EleicaoPermutasService {
                 });
                 const valorMoedaNegociada = somaValorNegociado(titAdto);
                 const moedaNegociada = titAdto[0] ? siglaMoedaNegociada(titAdto[0]) : undefined;
-                if (valorMoedaNegociada !== undefined || moedaNegociada !== undefined) {
+                const taxa = titAdto[0]?.taxa;
+                if (
+                    valorMoedaNegociada !== undefined ||
+                    moedaNegociada !== undefined ||
+                    taxa !== undefined
+                ) {
                     candidata.adiantamento = {
                         ...candidata.adiantamento,
                         ...(valorMoedaNegociada !== undefined ? { valorMoedaNegociada } : {}),
                         ...(moedaNegociada !== undefined ? { moedaNegociada } : {}),
+                        ...(taxa !== undefined ? { taxa } : {}),
                     };
                 }
             } catch {
-                // com308 indisponível para esta linha — segue sem valor ("-").
+                // com308 indisponível para esta linha — segue sem valor/taxa ("-").
             }
         }
 

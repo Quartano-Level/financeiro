@@ -22,6 +22,8 @@ export interface AdiantamentoRow {
     estadoElegibilidade: 'descoberta' | 'elegivel' | 'bloqueada' | 'casamento-manual';
     motivoBloqueio?: string;
     agingDays?: number;
+    /** Taxa de câmbio negociada do título (`com308` `titFltTaxaMneg`). */
+    taxa?: number;
 }
 
 /** Linha de Invoice persistida no modelo relacional (Fase B). */
@@ -220,19 +222,20 @@ export default class PermutaRelationalRepository {
             params[`estado_${i}`] = r.estadoElegibilidade;
             params[`motivo_${i}`] = r.motivoBloqueio ?? null;
             params[`aging_${i}`] = r.agingDays ?? null;
+            params[`taxa_${i}`] = r.taxa ?? null;
             return (
                 `($docCod_${i}, $priCod_${i}, $filCod_${i}, $referencia_${i}, ` +
                 `$exportador_${i}, $dataEmissao_${i}, $valor_${i}, $valorMoedaNegociada_${i}, ` +
                 `$moeda_${i}, $moedaNegociada_${i}, $pago_${i}, $valorPermutar_${i}, ` +
                 `$estado_${i}, $motivo_${i}, ` +
-                `$aging_${i}, $runId, now(), FALSE, now())`
+                `$aging_${i}, $taxa_${i}, $runId, now(), FALSE, now())`
             );
         });
         await tx.insert(
             `INSERT INTO permuta_adiantamento (
                 doc_cod, pri_cod, fil_cod, referencia, exportador, data_emissao,
                 valor, valor_moeda_negociada, moeda, moeda_negociada, pago, valor_permutar,
-                estado_elegibilidade, motivo_bloqueio, aging_days,
+                estado_elegibilidade, motivo_bloqueio, aging_days, taxa,
                 last_ingest_run_id, last_seen_at, stale, updated_at
             ) VALUES ${tuples.join(', ')}
             ON CONFLICT (doc_cod) DO UPDATE SET
@@ -250,6 +253,7 @@ export default class PermutaRelationalRepository {
                 estado_elegibilidade = EXCLUDED.estado_elegibilidade,
                 motivo_bloqueio = EXCLUDED.motivo_bloqueio,
                 aging_days = EXCLUDED.aging_days,
+                taxa = EXCLUDED.taxa,
                 last_ingest_run_id = EXCLUDED.last_ingest_run_id,
                 last_seen_at = EXCLUDED.last_seen_at,
                 stale = FALSE,
@@ -511,6 +515,7 @@ export default class PermutaRelationalRepository {
         ) as AdiantamentoRow['estadoElegibilidade'],
         ...(r.motivo_bloqueio != null ? { motivoBloqueio: String(r.motivo_bloqueio) } : {}),
         ...(r.aging_days != null ? { agingDays: Number(r.aging_days) } : {}),
+        ...(r.taxa != null ? { taxa: Number(r.taxa) } : {}),
         stale: Boolean(r.stale),
     });
 

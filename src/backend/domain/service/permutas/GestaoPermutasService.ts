@@ -175,13 +175,19 @@ export default class GestaoPermutasService {
         declaracaoByPriCod: Map<string, DeclaracaoRow>,
         casamentoByAdtoDocCod: Map<string, CasamentoRow>,
     ): PermutaDetalhe => {
+        const variacao = this.variacaoDetalhe(casamentoByAdtoDocCod.get(a.docCod));
         return {
             priCod: a.priCod,
             pago: a.pago,
             ...(a.dataEmissao !== undefined ? { dataEmissao: a.dataEmissao.toISOString() } : {}),
             ...(a.valorPermutar !== undefined ? { valorPermutar: a.valorPermutar } : {}),
             ...this.declaracaoDetalhe(declaracaoByPriCod.get(a.priCod)),
-            ...this.variacaoDetalhe(casamentoByAdtoDocCod.get(a.docCod)),
+            ...variacao,
+            // Não-casados não têm `permuta_casamento`, mas a taxa do PRÓPRIO título
+            // existe (com308 → coluna `taxa`): usa como fallback p/ "Taxa adiantamento".
+            ...(variacao.taxaAdiantamento === undefined && a.taxa !== undefined
+                ? { taxaAdiantamento: a.taxa }
+                : {}),
         };
     };
 

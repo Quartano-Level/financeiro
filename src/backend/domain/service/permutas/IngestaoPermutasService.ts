@@ -204,6 +204,7 @@ export default class IngestaoPermutasService {
         ...(c.adiantamento.moedaNegociada !== undefined
             ? { moedaNegociada: c.adiantamento.moedaNegociada }
             : {}),
+        ...(c.adiantamento.taxa !== undefined ? { taxa: c.adiantamento.taxa } : {}),
         pago: c.adiantamento.pago,
         ...(c.adiantamento.valorPermutar !== undefined
             ? { valorPermutar: c.adiantamento.valorPermutar }
