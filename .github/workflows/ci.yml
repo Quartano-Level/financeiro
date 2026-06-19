@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 jobs:
   backend:
@@ -71,62 +71,3 @@ jobs:
           git push origin "$TAG"
           gh release create "$TAG" --title "$TAG" --notes "See CHANGELOG.md for details." || \
             echo "::warning::Release creation failed (tag pushed); continuing."
-
-  deploy-backend:
-    name: Deploy Backend (Render)
-    needs: backend
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: src/backend
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: src/backend/package-lock.json
-      - run: npm ci
-
-      # P0-1 — run DB migrations BEFORE the deploy so a fresh environment has
-      # `permuta_eleicao_run`/`schema_migrations` created before serving traffic.
-      # Idempotent (`schema_migrations`); fails the job (and blocks deploy) on
-      # any migration error instead of deploying against an un-migrated schema.
-      - name: Run database migrations
-        env:
-          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
-          ENVIRONMENT: production
-        run: npm run migrate
-
-      - name: Trigger Render deploy hook
-        working-directory: .
-        env:
-          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
-        run: |
-          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
-            echo "::error::RENDER_DEPLOY_HOOK_URL secret is not set"
-            exit 1
-          fi
-          response=$(curl -sS -o /tmp/render.out -w "%{http_code}" -X POST "$RENDER_DEPLOY_HOOK_URL")
-          echo "HTTP $response"
-          cat /tmp/render.out
-          if [ "$response" -lt 200 ] || [ "$response" -ge 300 ]; then
-            exit 1
-          fi
-
-      - name: Smoke test deployed backend (/health)
-        env:
-          # NOTE: the RENDER_BACKEND_URL repo secret must be created for this
-          # step to run. Until then the step is skipped (not failed) so the
-          # deploy job stays green while the secret is provisioned.
-          RENDER_BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
-        run: |
-          if [ -z "$RENDER_BACKEND_URL" ]; then
-            echo "::warning::RENDER_BACKEND_URL secret is not set — skipping smoke test"
-            exit 0
-          fi
-          # Render redeploys asynchronously; retry while the new revision boots.
-          # 12 retries x 10s = up to ~2 min before a broken deploy fails CI.
-          curl --retry 12 --retry-delay 10 --retry-all-errors -f \
-            "${RENDER_BACKEND_URL%/}/health"

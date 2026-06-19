@@ -8,6 +8,13 @@ services:
     runtime: node
     rootDir: src/backend
     plan: starter
+    branch: main
+    # Native auto-deploy on push to `main`. The gate is GitHub branch protection
+    # (CI `Backend`/`Frontend` checks required to merge), so only tested code
+    # reaches `main` and gets deployed. `preDeployCommand` below runs the DB
+    # migrations before traffic switches; a failed build/migration is not
+    # promoted. See .github/workflows/ci.yml (gates only — no deploy job).
+    autoDeploy: true
     buildCommand: npm ci && npm run build
     startCommand: npm start
     # Runs migrations + admin seed before serving traffic on each deploy.
