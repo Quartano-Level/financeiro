@@ -706,6 +706,9 @@ export default function GestaoPermutasPage() {
                                   <Campo label="Valor moeda negociada">
                                     <Moeda valor={inv.valorMoedaNegociada} moeda={inv.moeda} />
                                   </Campo>
+                                  <Campo label="Taxa">
+                                    {inv.taxa != null ? fmtTaxa(inv.taxa) : '—'}
+                                  </Campo>
                                 </dl>
                               </TableCell>
                             </TableRow>

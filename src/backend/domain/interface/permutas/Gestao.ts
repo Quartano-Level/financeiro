@@ -72,6 +72,8 @@ export interface InvoiceEmAberto {
     /** Valor de FACE do documento em BRL (`docMnyValor`) — base da consolidação em reais. */
     valorBrl: number | null;
     moeda: string;
+    /** Taxa de câmbio negociada da invoice (`com308` `titFltTaxaMneg`). */
+    taxa?: number;
 }
 
 export interface CasamentoAdiantamento {

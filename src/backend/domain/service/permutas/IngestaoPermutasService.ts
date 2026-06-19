@@ -258,6 +258,7 @@ export default class IngestaoPermutasService {
                     : {}),
                 ...(inv.moeda !== undefined ? { moeda: inv.moeda } : {}),
                 ...(inv.moedaNegociada !== undefined ? { moedaNegociada: inv.moedaNegociada } : {}),
+                ...(inv.taxa !== undefined ? { taxa: inv.taxa } : {}),
                 pago: inv.pago,
             });
         };

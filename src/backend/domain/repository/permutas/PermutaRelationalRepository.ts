@@ -40,6 +40,8 @@ export interface InvoiceRow {
     /** Sigla da moeda NEGOCIADA (`com308`), distinta de `moeda` (doc). */
     moedaNegociada?: string;
     pago: boolean;
+    /** Taxa de câmbio negociada (`com308` `titFltTaxaMneg`). */
+    taxa?: number;
 }
 
 /** Linha de Declaração de importação (D.I / DUIMP). */
@@ -292,16 +294,17 @@ export default class PermutaRelationalRepository {
             params[`moeda_${i}`] = r.moeda ?? null;
             params[`moedaNegociada_${i}`] = r.moedaNegociada ?? null;
             params[`pago_${i}`] = r.pago;
+            params[`taxa_${i}`] = r.taxa ?? null;
             return (
                 `($docCod_${i}, $priCod_${i}, $filCod_${i}, $referencia_${i}, ` +
                 `$exportador_${i}, $dataEmissao_${i}, $valor_${i}, $valorMoedaNegociada_${i}, ` +
-                `$moeda_${i}, $moedaNegociada_${i}, $pago_${i}, $runId, now(), FALSE, now())`
+                `$moeda_${i}, $moedaNegociada_${i}, $pago_${i}, $taxa_${i}, $runId, now(), FALSE, now())`
             );
         });
         await tx.insert(
             `INSERT INTO permuta_invoice (
                 doc_cod, pri_cod, fil_cod, referencia, exportador, data_emissao,
-                valor, valor_moeda_negociada, moeda, moeda_negociada, pago,
+                valor, valor_moeda_negociada, moeda, moeda_negociada, pago, taxa,
                 last_ingest_run_id, last_seen_at, stale, updated_at
             ) VALUES ${tuples.join(', ')}
             ON CONFLICT (doc_cod) DO UPDATE SET
@@ -315,6 +318,7 @@ export default class PermutaRelationalRepository {
                 moeda = EXCLUDED.moeda,
                 moeda_negociada = EXCLUDED.moeda_negociada,
                 pago = EXCLUDED.pago,
+                taxa = EXCLUDED.taxa,
                 last_ingest_run_id = EXCLUDED.last_ingest_run_id,
                 last_seen_at = EXCLUDED.last_seen_at,
                 stale = FALSE,
@@ -533,6 +537,7 @@ export default class PermutaRelationalRepository {
         ...(r.moeda != null ? { moeda: String(r.moeda) } : {}),
         ...(r.moeda_negociada != null ? { moedaNegociada: String(r.moeda_negociada) } : {}),
         pago: Boolean(r.pago),
+        ...(r.taxa != null ? { taxa: Number(r.taxa) } : {}),
     });
 
     private mapDeclaracaoRow = (r: Record<string, unknown>): DeclaracaoRow => ({

@@ -436,10 +436,12 @@ export default class EleicaoPermutasService {
                     });
                     const valorMoedaNegociada = somaValorNegociado(tit);
                     const moedaNegociada = tit[0] ? siglaMoedaNegociada(tit[0]) : undefined;
+                    const taxa = tit[0]?.taxa;
                     if (valorMoedaNegociada !== undefined) {
                         mapped.valorMoedaNegociada = valorMoedaNegociada;
                     }
                     if (moedaNegociada !== undefined) mapped.moedaNegociada = moedaNegociada;
+                    if (taxa !== undefined) mapped.taxa = taxa;
                 } catch {
                     // com308 indisponível p/ esta invoice — segue sem valor negociado.
                 }

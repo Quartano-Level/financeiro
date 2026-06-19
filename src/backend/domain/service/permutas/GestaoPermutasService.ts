@@ -240,6 +240,7 @@ export default class GestaoPermutasService {
         valorBrl: i.valor ?? null,
         // Rótulo da moeda NEGOCIADA (USD), não a do documento (BRL).
         moeda: i.moedaNegociada ?? i.moeda ?? 'USD',
+        ...(i.taxa !== undefined ? { taxa: i.taxa } : {}),
     });
 
     /**

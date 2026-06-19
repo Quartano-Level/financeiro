@@ -32,4 +32,6 @@ export default interface Invoice {
      * Opcional — depende do detalhe do título.
      */
     moedaNegociada?: string;
+    /** Taxa de câmbio negociada do título (`com308` `titFltTaxaMneg`). */
+    taxa?: number;
 }
