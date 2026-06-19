@@ -5,8 +5,10 @@ import { ArrowLeftRight, Ban, CheckCircle2, ChevronRight, Layers, RefreshCw } fr
 import { toast } from 'sonner'
 import { fetchGestaoPermutas, processarAdiantamento } from '@/lib/api'
 import type {
+  CasamentoAdiantamento,
   GestaoPermutasResponse,
   InvoiceEmAberto,
+  PermutaPendente,
   ProcessamentoStatus,
   StatusElegibilidade,
 } from '@/lib/types'
@@ -35,6 +37,15 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 /** Rótulos legíveis para os motivos de bloqueio do snapshot. */
 const MOTIVO_LABEL: Record<string, string> = {
@@ -247,6 +258,14 @@ export default function GestaoPermutasPage() {
   const [pagina, setPagina] = React.useState(1)
   // Linha expandida (docCod) — mostra as micro-informações do adiantamento.
   const [expandido, setExpandido] = React.useState<string | null>(null)
+  // Invoice expandida (docCod) na aba de casamento sugerido — micro-info da invoice.
+  const [invoiceExpandida, setInvoiceExpandida] = React.useState<string | null>(null)
+  // Confirmação de processamento (modal) — null = fechado.
+  const [confirmacao, setConfirmacao] = React.useState<{
+    priCod: string
+    invoice: InvoiceEmAberto
+    adto: CasamentoAdiantamento
+  } | null>(null)
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -293,6 +312,14 @@ export default function GestaoPermutasPage() {
     [load],
   )
 
+  // Confirma o processamento aberto no modal e dispara o processar de fato.
+  const confirmarProcessamento = React.useCallback(async () => {
+    if (!confirmacao) return
+    const { adto, invoice } = confirmacao
+    setConfirmacao(null)
+    await processar(adto.docCod, adto.docCod, invoice.docCod)
+  }, [confirmacao, processar])
+
   // Filiais distintas presentes nos pendentes (para o seletor de filial).
   const filiais = React.useMemo(
     () => [...new Set((data?.pendentes ?? []).map((p) => p.filCod))].sort((a, b) => a - b),
@@ -306,6 +333,13 @@ export default function GestaoPermutasPage() {
     for (const c of data?.casamentos ?? []) {
       for (const a of c.adiantamentos) m.set(a.docCod, c.invoice)
     }
+    return m
+  }, [data])
+
+  // Pendente por docCod — usado no modal de confirmação p/ puxar a variação.
+  const pendenteByDocCod = React.useMemo(() => {
+    const m = new Map<string, PermutaPendente>()
+    for (const p of data?.pendentes ?? []) m.set(p.docCod, p)
     return m
   }, [data])
 
@@ -883,7 +917,7 @@ export default function GestaoPermutasPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Filial</TableHead>
-                      <TableHead>Processo</TableHead>
+                      <TableHead>Processo / Invoice</TableHead>
                       <TableHead className="text-right">Valor Moeda Negociada</TableHead>
                       <TableHead>Adiantamento</TableHead>
                       <TableHead className="text-right">Valor a ser Usado</TableHead>
@@ -891,100 +925,128 @@ export default function GestaoPermutasPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {casamentosSugeridos.flatMap((c, g) => {
-                      const linhas = c.adiantamentos.length > 0 ? c.adiantamentos : [null]
-                      // Banding por PROCESSO + separador forte entre grupos: cada
-                      // processo é um bloco. `sepTop` (linha grossa) marca o início
-                      // de um novo processo; `innerTop` (linha leve) divide os
-                      // adiantamentos DENTRO de um mesmo processo (N:M).
-                      const groupBg = g % 2 === 1 ? 'bg-muted/40' : 'bg-card'
-                      const sepTop = g > 0 ? 'border-t-2 border-border' : ''
-                      return linhas.map((adto, i) => (
-                        <TableRow
-                          key={`${c.invoice.docCod}-${adto?.docCod ?? 'none'}`}
-                          className={cn('border-b-0 hover:bg-transparent', groupBg)}
-                        >
-                          {i === 0 ? (
-                            <>
-                              <TableCell
-                                rowSpan={linhas.length}
-                                className={cn('align-top', sepTop)}
-                              >
-                                {c.invoice.filCod}
-                              </TableCell>
-                              <TableCell
-                                rowSpan={linhas.length}
-                                className={cn('align-top font-medium', sepTop)}
-                              >
-                                {c.priCod}
-                                <div className="text-xs font-normal text-muted-foreground">
-                                  {c.invoice.exportador}
-                                </div>
-                              </TableCell>
-                              <TableCell
-                                rowSpan={linhas.length}
-                                className={cn('align-top text-right', sepTop)}
-                              >
-                                <Moeda
-                                  valor={c.invoice.valorMoedaNegociada}
-                                  moeda={c.invoice.moeda}
+                    {casamentosSugeridos.map((c, g) => {
+                      const abertaInv = invoiceExpandida === c.invoice.docCod
+                      const totalUsado = c.adiantamentos.reduce(
+                        (s, a) => s + (a.valorASerUsado ?? 0),
+                        0,
+                      )
+                      const moedaGrupo = c.adiantamentos[0]?.moeda ?? c.invoice.moeda
+                      const sep = g > 0 ? 'border-t-2 border-border' : ''
+                      return (
+                        <React.Fragment key={c.invoice.docCod}>
+                          {/* Header da invoice — clicável, expande a micro-info dela */}
+                          <TableRow
+                            className={cn('cursor-pointer bg-muted/20', sep)}
+                            aria-expanded={abertaInv}
+                            onClick={() =>
+                              setInvoiceExpandida((cur) =>
+                                cur === c.invoice.docCod ? null : c.invoice.docCod,
+                              )
+                            }
+                          >
+                            <TableCell>
+                              <span className="inline-flex items-center gap-1.5">
+                                <ChevronRight
+                                  className={cn(
+                                    'size-4 text-muted-foreground transition-transform',
+                                    abertaInv && 'rotate-90',
+                                  )}
+                                  aria-hidden
                                 />
-                              </TableCell>
-                            </>
-                          ) : null}
-                          {adto ? (
-                            <>
-                              <TableCell
-                                className={cn(
-                                  'font-medium',
-                                  i === 0 ? sepTop : 'border-t border-border/40',
-                                )}
-                              >
-                                {adto.docCod}
-                              </TableCell>
-                              <TableCell
-                                className={cn(
-                                  'text-right',
-                                  i === 0 ? sepTop : 'border-t border-border/40',
-                                )}
-                              >
-                                <Moeda valor={adto.valorASerUsado} moeda={adto.moeda} />
-                              </TableCell>
-                              <TableCell
-                                className={cn(
-                                  'text-right',
-                                  i === 0 ? sepTop : 'border-t border-border/40',
-                                )}
-                              >
-                                {adto.processamentoStatus === 'processado' ? (
-                                  <ProcessamentoBadge status="processado" />
-                                ) : (
-                                  <Button
-                                    size="sm"
-                                    disabled={processando === adto.docCod}
-                                    onClick={() =>
-                                      void processar(
-                                        adto.docCod,
-                                        adto.docCod,
-                                        c.invoice.docCod,
-                                      )
-                                    }
-                                  >
-                                    {processando === adto.docCod ? 'Processando…' : 'Processar'}
-                                  </Button>
-                                )}
-                              </TableCell>
-                            </>
-                          ) : (
+                                {c.invoice.filCod}
+                              </span>
+                            </TableCell>
+                            <TableCell className="font-medium">
+                              {c.priCod}
+                              <div className="text-xs font-normal text-muted-foreground">
+                                {c.invoice.exportador}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Moeda valor={c.invoice.valorMoedaNegociada} moeda={c.invoice.moeda} />
+                            </TableCell>
                             <TableCell
                               colSpan={3}
-                              className={cn('text-sm text-muted-foreground', sepTop)}
+                              className="text-right text-xs text-muted-foreground"
                             >
-                              Sem adiantamento sugerido ainda.
+                              {c.adiantamentos.length} adiantamento
+                              {c.adiantamentos.length !== 1 ? 's' : ''} · usa{' '}
+                              {formatNumber(totalUsado)} {moedaCodigo(moedaGrupo)}
                             </TableCell>
+                          </TableRow>
+
+                          {/* Micro-info da invoice (expandido) */}
+                          {abertaInv ? (
+                            <TableRow className="bg-muted/30 hover:bg-muted/30">
+                              <TableCell colSpan={6} className="py-4">
+                                <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
+                                  <Campo label="Invoice (código)">{c.invoice.docCod}</Campo>
+                                  <Campo label="Referência">{c.invoice.referencia}</Campo>
+                                  <Campo label="Exportador">{c.invoice.exportador}</Campo>
+                                  <Campo label="Filial">{c.invoice.filCod}</Campo>
+                                  <Campo label="Processo">{c.priCod}</Campo>
+                                  <Campo label="Valor (face)">
+                                    {c.invoice.valorBrl != null
+                                      ? `R$ ${formatNumber(c.invoice.valorBrl)}`
+                                      : '—'}
+                                  </Campo>
+                                  <Campo label="Valor moeda negociada">
+                                    <Moeda
+                                      valor={c.invoice.valorMoedaNegociada}
+                                      moeda={c.invoice.moeda}
+                                    />
+                                  </Campo>
+                                  <Campo label="Adiantamentos casados">
+                                    {c.adiantamentos.length} · usa {formatNumber(totalUsado)}{' '}
+                                    {moedaCodigo(moedaGrupo)}
+                                  </Campo>
+                                </dl>
+                              </TableCell>
+                            </TableRow>
+                          ) : null}
+
+                          {/* Adiantamentos (filhos da invoice) */}
+                          {c.adiantamentos.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={6} className="text-sm text-muted-foreground">
+                                Sem adiantamento sugerido ainda.
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            c.adiantamentos.map((adto) => (
+                              <TableRow key={adto.docCod}>
+                                <TableCell />
+                                <TableCell />
+                                <TableCell />
+                                <TableCell className="font-medium">{adto.docCod}</TableCell>
+                                <TableCell className="text-right">
+                                  <Moeda valor={adto.valorASerUsado} moeda={adto.moeda} />
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {adto.processamentoStatus === 'processado' ? (
+                                    <ProcessamentoBadge status="processado" />
+                                  ) : (
+                                    <Button
+                                      size="sm"
+                                      disabled={processando === adto.docCod}
+                                      onClick={() =>
+                                        setConfirmacao({
+                                          priCod: c.priCod,
+                                          invoice: c.invoice,
+                                          adto,
+                                        })
+                                      }
+                                    >
+                                      {processando === adto.docCod ? 'Processando…' : 'Processar'}
+                                    </Button>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            ))
                           )}
-                        </TableRow>
-                      ))
+                        </React.Fragment>
+                      )
                     })}
                   </TableBody>
                 </Table>
@@ -993,6 +1055,68 @@ export default function GestaoPermutasPage() {
               </CardContent>
             </Tabs>
           </Card>
+
+          {/* Modal de confirmação do processamento (checkout) */}
+          <Dialog
+            open={confirmacao !== null}
+            onOpenChange={(open) => {
+              if (!open) setConfirmacao(null)
+            }}
+          >
+            <DialogContent size="sm">
+              <DialogHeader>
+                <DialogTitle>Confirmar processamento</DialogTitle>
+                <DialogDescription>Revise a permuta antes de processar.</DialogDescription>
+              </DialogHeader>
+              <DialogBody>
+                {confirmacao ? (
+                  <>
+                    <dl className="grid grid-cols-2 gap-x-6 gap-y-3">
+                      <Campo label="Processo">{confirmacao.priCod}</Campo>
+                      <Campo label="Adiantamento">{confirmacao.adto.docCod}</Campo>
+                      <Campo label="Invoice a abater">
+                        <span className="text-muted-foreground">
+                          {confirmacao.invoice.docCod}
+                        </span>{' '}
+                        ·{' '}
+                        <Moeda
+                          valor={confirmacao.invoice.valorMoedaNegociada}
+                          moeda={confirmacao.invoice.moeda}
+                        />
+                      </Campo>
+                      <Campo label="Valor a ser usado">
+                        <Moeda
+                          valor={confirmacao.adto.valorASerUsado}
+                          moeda={confirmacao.adto.moeda}
+                        />
+                      </Campo>
+                      {(() => {
+                        const det = pendenteByDocCod.get(confirmacao.adto.docCod)?.detalhe
+                        return det?.variacaoClassificacao != null &&
+                          det.variacaoResultado != null ? (
+                          <Campo label="Variação cambial">
+                            {det.variacaoClassificacao} · R$ {formatNumber(det.variacaoResultado)}
+                          </Campo>
+                        ) : null
+                      })()}
+                    </dl>
+                    <p className="mt-4 text-xs text-muted-foreground">
+                      O adiantamento <strong>{confirmacao.adto.docCod}</strong> vai abater a invoice{' '}
+                      <strong>{confirmacao.invoice.docCod}</strong> no valor acima.
+                    </p>
+                  </>
+                ) : null}
+              </DialogBody>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setConfirmacao(null)}>
+                  Cancelar
+                </Button>
+                <Button onClick={() => void confirmarProcessamento()}>
+                  Confirmar e processar
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </>
       )}
     </div>
