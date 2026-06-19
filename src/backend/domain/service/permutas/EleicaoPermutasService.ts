@@ -412,21 +412,46 @@ export default class EleicaoPermutasService {
             docTip: 'INVOICE',
             filCod,
         });
+        // Hidrata valor/moeda negociada (com308) de CADA invoice em aberto — p/ a
+        // tela mostrar o valor da invoice em USD, inclusive nas candidatas N:M (a
+        // variação 1:1 só hidrata a invoice casada). Concorrência limitada
+        // (Conexos MAX_SESSIONS); falha numa linha apenas omite o valor.
+        const hydrated = await this.boundedConcurrency.map(
+            invoices,
+            async (i): Promise<Invoice> => {
+                const mapped: Invoice = {
+                    docCod: i.docCod,
+                    priCod: i.priCod,
+                    dataEmissao: i.dataEmissao,
+                    valor: i.valor,
+                    moeda: i.moeda,
+                    pago: i.pago,
+                    ...(i.exportador !== undefined ? { exportador: i.exportador } : {}),
+                    ...(i.referencia !== undefined ? { referencia: i.referencia } : {}),
+                };
+                try {
+                    const tit = await this.conexosClient.listTitulosAPagar({
+                        docCod: i.docCod,
+                        filCod,
+                    });
+                    const valorMoedaNegociada = somaValorNegociado(tit);
+                    const moedaNegociada = tit[0] ? siglaMoedaNegociada(tit[0]) : undefined;
+                    if (valorMoedaNegociada !== undefined) {
+                        mapped.valorMoedaNegociada = valorMoedaNegociada;
+                    }
+                    if (moedaNegociada !== undefined) mapped.moedaNegociada = moedaNegociada;
+                } catch {
+                    // com308 indisponível p/ esta invoice — segue sem valor negociado.
+                }
+                return mapped;
+            },
+            ADIANTAMENTOS_CONCURRENCY,
+        );
         const byPriCod = new Map<string, Invoice[]>();
-        for (const i of invoices) {
-            const mapped: Invoice = {
-                docCod: i.docCod,
-                priCod: i.priCod,
-                dataEmissao: i.dataEmissao,
-                valor: i.valor,
-                moeda: i.moeda,
-                pago: i.pago,
-                ...(i.exportador !== undefined ? { exportador: i.exportador } : {}),
-                ...(i.referencia !== undefined ? { referencia: i.referencia } : {}),
-            };
-            const list = byPriCod.get(i.priCod) ?? [];
+        for (const mapped of hydrated) {
+            const list = byPriCod.get(mapped.priCod) ?? [];
             list.push(mapped);
-            byPriCod.set(i.priCod, list);
+            byPriCod.set(mapped.priCod, list);
         }
         return byPriCod;
     };
