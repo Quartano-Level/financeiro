@@ -618,7 +618,7 @@ export default function GestaoPermutasPage() {
                                   <Campo label="Variação cambial">
                                     {d?.variacaoClassificacao ?? '—'}
                                     {d?.variacaoResultado != null
-                                      ? ` · ${formatNumber(d.variacaoResultado)}`
+                                      ? ` · R$ ${formatNumber(d.variacaoResultado)}`
                                       : ''}
                                   </Campo>
                                   <Campo label="Motivo">
@@ -627,28 +627,44 @@ export default function GestaoPermutasPage() {
                                       : '—'}
                                   </Campo>
                                 </dl>
-                                {/* Conta da variação cambial — como o analista chega
-                                    em JUROS/DESCONTO (só p/ casados, com as 2 taxas). */}
+                                {/* Conta da variação cambial — converte o valor permutado
+                                    pelas 2 taxas e tira a diferença EM REAIS (igual à
+                                    planilha do analista). Só p/ casados (tem as 2 taxas). */}
                                 {d?.variacaoClassificacao != null &&
                                 principalVar != null &&
                                 taxa != null &&
                                 taxaInv != null &&
                                 delta != null ? (
-                                  <div className="mt-3 rounded-md border bg-background/60 px-3 py-2 text-xs text-muted-foreground tabular-nums">
-                                    <span className="font-medium text-foreground">
-                                      Cálculo da variação cambial:
-                                    </span>{' '}
-                                    {formatNumber(principalVar)} {moedaCodigo(p.moeda)} × (
-                                    {fmtTaxa(taxa)} − {fmtTaxa(taxaInv)}) ={' '}
-                                    <span className="font-medium text-foreground">
-                                      {delta >= 0 ? '+' : '−'}
-                                      {formatNumber(Math.abs(delta))}
-                                    </span>{' '}
-                                    → taxa adto {taxa > taxaInv ? '>' : taxa < taxaInv ? '<' : '='}{' '}
-                                    invoice ⇒{' '}
-                                    <span className="font-medium text-foreground">
-                                      {d.variacaoClassificacao}
-                                    </span>
+                                  <div className="mt-3 space-y-0.5 rounded-md border bg-background/60 px-3 py-2 text-xs text-muted-foreground tabular-nums">
+                                    <div className="font-medium text-foreground">
+                                      Cálculo da variação cambial (em R$):
+                                    </div>
+                                    <div>
+                                      Adiantamento: {formatNumber(principalVar)}{' '}
+                                      {moedaCodigo(p.moeda)} × {fmtTaxa(taxa)} ={' '}
+                                      <span className="text-foreground">
+                                        R$ {formatNumber(principalVar * taxa)}
+                                      </span>
+                                    </div>
+                                    <div>
+                                      Invoice: {formatNumber(principalVar)} {moedaCodigo(p.moeda)} ×{' '}
+                                      {fmtTaxa(taxaInv)} ={' '}
+                                      <span className="text-foreground">
+                                        R$ {formatNumber(principalVar * taxaInv)}
+                                      </span>
+                                    </div>
+                                    <div>
+                                      Diferença ={' '}
+                                      <span className="font-medium text-foreground">
+                                        R$ {formatNumber(Math.abs(delta))}
+                                      </span>{' '}
+                                      →{' '}
+                                      <span className="font-medium text-foreground">
+                                        {d.variacaoClassificacao}
+                                      </span>{' '}
+                                      (variação{' '}
+                                      {d.variacaoClassificacao === 'JUROS' ? 'passiva' : 'ativa'})
+                                    </div>
                                   </div>
                                 ) : null}
                               </TableCell>
