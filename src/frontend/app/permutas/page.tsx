@@ -47,6 +47,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 
+/**
+ * Processamento (baixa/lançamento da permuta) DESABILITADO até existir a
+ * integração de write-back no Conexos. Enquanto `false`, todos os botões de
+ * Processar/Lançar ficam bloqueados e um aviso é exibido. Religar para `true`
+ * quando a publicação dos dados no Conexos estiver pronta.
+ */
+const PROCESSAMENTO_HABILITADO = false
+
 /** Rótulos legíveis para os motivos de bloqueio do snapshot. */
 const MOTIVO_LABEL: Record<string, string> = {
   'nao-pago': 'Não totalmente pago',
@@ -1028,6 +1036,16 @@ export default function GestaoPermutasPage() {
             </CardContent>
           </Card>
 
+          {/* Aviso: processamento bloqueado até o write-back no Conexos. */}
+          {!PROCESSAMENTO_HABILITADO ? (
+            <div className="rounded-lg border border-warning/30 bg-warning-subtle px-4 py-3 text-sm text-warning-foreground">
+              <strong>Processamento temporariamente indisponível.</strong> A baixa/lançamento das
+              permutas está bloqueado até a integração de publicação (write-back) no Conexos. Você
+              pode revisar os casamentos, valores e a variação cambial — o lançamento será
+              habilitado quando a escrita dos dados no Conexos estiver pronta.
+            </div>
+          ) : null}
+
           {/* Casamento — sugerido (auto 1:N) × manual (N:M), alternados por aba */}
           <Card>
             <Tabs defaultValue="sugerido">
@@ -1193,7 +1211,15 @@ export default function GestaoPermutasPage() {
                               ) : c.adiantamentos.length > 0 ? (
                                 <Button
                                   size="sm"
-                                  disabled={processando === c.invoice.docCod}
+                                  disabled={
+                                    !PROCESSAMENTO_HABILITADO ||
+                                    processando === c.invoice.docCod
+                                  }
+                                  title={
+                                    !PROCESSAMENTO_HABILITADO
+                                      ? 'Indisponível — aguardando write-back no Conexos'
+                                      : undefined
+                                  }
                                   onClick={(e) => {
                                     e.stopPropagation()
                                     setConfirmacao(c)
@@ -1349,7 +1375,15 @@ export default function GestaoPermutasPage() {
                 <Button variant="outline" onClick={() => setConfirmacao(null)}>
                   Cancelar
                 </Button>
-                <Button onClick={() => void confirmarProcessamento()}>
+                <Button
+                  disabled={!PROCESSAMENTO_HABILITADO}
+                  title={
+                    !PROCESSAMENTO_HABILITADO
+                      ? 'Indisponível — aguardando write-back no Conexos'
+                      : undefined
+                  }
+                  onClick={() => void confirmarProcessamento()}
+                >
                   Processar{' '}
                   {confirmacao
                     ? confirmacao.adiantamentos.filter(
@@ -1535,7 +1569,12 @@ export default function GestaoPermutasPage() {
                   Cancelar
                 </Button>
                 <Button
-                  disabled={!invoiceManual || !valorManualValido}
+                  disabled={!PROCESSAMENTO_HABILITADO || !invoiceManual || !valorManualValido}
+                  title={
+                    !PROCESSAMENTO_HABILITADO
+                      ? 'Indisponível — aguardando write-back no Conexos'
+                      : undefined
+                  }
                   onClick={() => void lancarManual()}
                 >
                   Lançar permuta
