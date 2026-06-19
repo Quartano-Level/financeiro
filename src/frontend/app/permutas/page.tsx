@@ -1295,10 +1295,16 @@ export default function GestaoPermutasPage() {
                             ? `${formatNumber(saldoManualUSD)} ${moedaCodigo(resolverManual.moeda)}`
                             : '—'}
                           {saldoManualBrl != null ? ` · R$ ${formatNumber(saldoManualBrl)}` : ''}
-                          {valorManualBRL != null
-                            ? ` · abate ≈ R$ ${formatNumber(valorManualBRL)}`
-                            : ''}
                         </p>
+                        {/* "Abate" só quando PARCIAL (< saldo) — no padrão é o saldo inteiro. */}
+                        {valorManualBRL != null &&
+                        saldoManualUSD != null &&
+                        valorManualNum < saldoManualUSD - 0.005 ? (
+                          <p className="text-xs text-muted-foreground">
+                            Você vai abater {formatNumber(valorManualNum)}{' '}
+                            {moedaCodigo(resolverManual.moeda)} ≈ R$ {formatNumber(valorManualBRL)}
+                          </p>
+                        ) : null}
                         {valorManualExcede ? (
                           <p className="text-xs text-danger-foreground">
                             Não pode exceder o saldo a permutar (
