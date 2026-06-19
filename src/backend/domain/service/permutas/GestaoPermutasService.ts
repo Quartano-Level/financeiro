@@ -46,7 +46,18 @@ export default class GestaoPermutasService {
         );
         const invoiceByDocCod = new Map<string, InvoiceRow>(invoices.map((i) => [i.docCod, i]));
 
-        const pendentes = adiantamentos.map((a) => this.toPendente(a, statusByDocCod));
+        // Invoices em aberto agrupadas por processo (priCod) — base das candidatas
+        // do casamento manual N:M (o analista escolhe UMA do mesmo processo).
+        const invoicesByPriCod = new Map<string, InvoiceRow[]>();
+        for (const i of invoices) {
+            const lista = invoicesByPriCod.get(i.priCod) ?? [];
+            lista.push(i);
+            invoicesByPriCod.set(i.priCod, lista);
+        }
+
+        const pendentes = adiantamentos.map((a) =>
+            this.toPendente(a, statusByDocCod, invoicesByPriCod),
+        );
         const invoicesEmAberto = invoices.map((i) => this.toInvoiceEmAberto(i));
         const casamentosSugeridos = this.toCasamentos(
             casamentos,
@@ -58,6 +69,7 @@ export default class GestaoPermutasService {
         const elegiveis = pendentes.filter((p) => p.status === 'elegivel').length;
         const bloqueadas = pendentes.filter((p) => p.status === 'bloqueada').length;
         const casamentoManual = pendentes.filter((p) => p.status === 'casamento-manual').length;
+        const jaPermutado = pendentes.filter((p) => p.status === 'ja-permutado').length;
 
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
@@ -82,6 +94,7 @@ export default class GestaoPermutasService {
                 elegiveis,
                 bloqueadas,
                 casamentoManual,
+                jaPermutado,
             },
         };
     };
@@ -89,20 +102,35 @@ export default class GestaoPermutasService {
     private toPendente = (
         a: AdiantamentoAtivo,
         statusByDocCod: Map<string, ProcessamentoStatus>,
+        invoicesByPriCod: Map<string, InvoiceRow[]>,
     ): PermutaPendente => {
+        // "Já permutado" é gravado como BLOQUEADA+motivo `ja-permutado` (estado
+        // concluído, não erro). Aqui na apresentação é promovido a status próprio,
+        // pra sair do balde de bloqueadas e virar filtro/KPI separado — sem novo
+        // estado no banco (zero migration/reseed).
         const status: StatusElegibilidade =
             a.estadoElegibilidade === 'elegivel'
                 ? 'elegivel'
                 : a.estadoElegibilidade === 'casamento-manual'
                   ? 'casamento-manual'
-                  : 'bloqueada';
+                  : a.motivoBloqueio === 'ja-permutado'
+                    ? 'ja-permutado'
+                    : 'bloqueada';
         const processamentoStatus = statusByDocCod.get(a.docCod);
+        // Casamento manual (N:M): candidatas = invoices em aberto do MESMO processo.
+        const candidatas =
+            status === 'casamento-manual'
+                ? (invoicesByPriCod.get(a.priCod) ?? []).map((i) => this.toInvoiceEmAberto(i))
+                : undefined;
         return {
             docCod: a.docCod,
             filCod: a.filCod ?? 0,
             referencia: a.referencia ?? a.docCod,
             exportador: a.exportador ?? '',
-            valorMoedaNegociada: a.valorMoedaNegociada ?? 0,
+            // `null` quando não buscado (não-pago) → a tela mostra "-".
+            valorMoedaNegociada: a.valorMoedaNegociada ?? null,
+            // Valor de face em BRL (vem do list — presente até em não-pagos).
+            valorBrl: a.valor ?? null,
             // A coluna exibe `valorMoedaNegociada` (moeda ESTRANGEIRA do título):
             // o rótulo deve ser a moeda NEGOCIADA (USD), não a do documento (BRL).
             moeda: a.moedaNegociada ?? a.moeda ?? 'USD',
@@ -110,6 +138,7 @@ export default class GestaoPermutasService {
             status,
             ...(a.motivoBloqueio !== undefined ? { motivoBloqueio: a.motivoBloqueio } : {}),
             ...(processamentoStatus !== undefined ? { processamentoStatus } : {}),
+            ...(candidatas !== undefined ? { candidatas } : {}),
         };
     };
 
@@ -118,7 +147,9 @@ export default class GestaoPermutasService {
         filCod: i.filCod ?? 0,
         referencia: i.referencia ?? i.docCod,
         exportador: i.exportador ?? '',
-        valorMoedaNegociada: i.valorMoedaNegociada ?? 0,
+        valorMoedaNegociada: i.valorMoedaNegociada ?? null,
+        // Valor de face em BRL — base da consolidação em reais.
+        valorBrl: i.valor ?? null,
         // Rótulo da moeda NEGOCIADA (USD), não a do documento (BRL).
         moeda: i.moedaNegociada ?? i.moeda ?? 'USD',
     });
@@ -145,6 +176,9 @@ export default class GestaoPermutasService {
             if (!grupo) {
                 const inv = invoiceByDocCod.get(c.invoiceDocCod);
                 grupo = {
+                    // Processo (priCod) — número em comum invoice×adiantamento,
+                    // chave de reconciliação manual no Conexos.
+                    priCod: c.priCod,
                     invoice: inv
                         ? this.toInvoiceEmAberto(inv)
                         : {
@@ -153,6 +187,7 @@ export default class GestaoPermutasService {
                               referencia: c.invoiceDocCod,
                               exportador: '',
                               valorMoedaNegociada: 0,
+                              valorBrl: null,
                               moeda: c.moeda ?? 'USD',
                           },
                     adiantamentos: [],

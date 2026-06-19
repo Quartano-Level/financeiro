@@ -64,6 +64,21 @@ const advisoryLockKey = (key: string): number => {
 const PAGE_SIZE = 500;
 const MAX_PAGES = 50;
 
+/**
+ * Soma o `valorNegociado` de TODAS as parcelas (títulos com308) de um documento.
+ * Um doc com várias parcelas (ex.: invoice 20707 = 26.006,40 + 234.057,60) ficava
+ * subestimado ~10x quando se pegava só `titulos[0]`. `undefined` se nenhuma parcela
+ * trouxer o valor (mantém o "—" na tela). A taxa segue de `titulos[0]` (parcelas
+ * de um mesmo doc compartilham a taxa negociada).
+ */
+const somaValorNegociado = (
+    titulos: ReadonlyArray<{ valorNegociado?: number }>,
+): number | undefined => {
+    const comValor = titulos.filter((t) => t.valorNegociado !== undefined);
+    if (comValor.length === 0) return undefined;
+    return comValor.reduce((acc, t) => acc + (t.valorNegociado ?? 0), 0);
+};
+
 /** Limites de concorrência do fan-out Conexos (P0-4). Mantêm o paralelismo sob
  * controle para não estourar a sessão do ERP (LOGIN_ERROR_MAX_SESSIONS). */
 const FILIAIS_CONCURRENCY = 5;
@@ -458,7 +473,7 @@ export default class EleicaoPermutasService {
         // Conexos), o `getDetalheTitulos` lança `ConexosError` — NÃO travamos a
         // run inteira nem reprovamos a candidata por mérito (`falha-gate`).
         // Bloqueamos com `DETAIL_INDISPONIVEL` (re-avaliável na próxima run).
-        let detalhe: { valorPermutar?: number; pago?: boolean };
+        let detalhe: { valorPermutar?: number; pago?: boolean; valorPermutado?: number };
         try {
             detalhe = await this.conexosClient.getDetalheTitulos({
                 docCod: adiantamento.docCod,
@@ -486,6 +501,11 @@ export default class EleicaoPermutasService {
             ...(detalhe.valorPermutar !== undefined
                 ? { valorPermutar: detalhe.valorPermutar }
                 : {}),
+            // `valorPermutado` (mnyTitPermuta) distingue "já permutado" de "sem
+            // saldo" na reprovação do Gate 2 (ElegibilidadeService).
+            ...(detalhe.valorPermutado !== undefined
+                ? { valorPermutado: detalhe.valorPermutado }
+                : {}),
             // Gate 3 — `pago` SEMPRE vem do detalhe (mnyTitAberto === 0): o list
             // devolve mnyTitAberto/mnyTitPago NULL em produção, então o `pago` da
             // row do list é inservível. Quando o detalhe não traz `mnyTitAberto`
@@ -509,6 +529,9 @@ export default class EleicaoPermutasService {
             estadoElegibilidade: result.estadoElegibilidade,
             gatesAvaliados: result.gatesAvaliados,
             ...(result.invoiceCasada !== undefined ? { invoiceCasada: result.invoiceCasada } : {}),
+            ...(result.invoicesCandidatas !== undefined
+                ? { invoicesCandidatas: result.invoicesCandidatas }
+                : {}),
             ...(result.declaracaoImportacao !== undefined
                 ? { declaracaoImportacao: result.declaracaoImportacao }
                 : {}),
@@ -559,6 +582,28 @@ export default class EleicaoPermutasService {
                         : {}),
                 };
             }
+        } else if (hydrated.pago === true) {
+            // Não elegível, mas TOTALMENTE PAGO → hidrata valor/moeda negociada
+            // do adiantamento (com308) p/ a coluna "Valor Moeda Negociada".
+            // Não-pagos ficam SEM valor → a tela mostra "-". Erro aqui não trava
+            // a candidata (já classificada): apenas omite o valor.
+            try {
+                const titAdto = await this.conexosClient.listTitulosAPagar({
+                    docCod: adiantamento.docCod,
+                    filCod,
+                });
+                const valorMoedaNegociada = somaValorNegociado(titAdto);
+                const moedaNegociada = titAdto[0] ? siglaMoedaNegociada(titAdto[0]) : undefined;
+                if (valorMoedaNegociada !== undefined || moedaNegociada !== undefined) {
+                    candidata.adiantamento = {
+                        ...candidata.adiantamento,
+                        ...(valorMoedaNegociada !== undefined ? { valorMoedaNegociada } : {}),
+                        ...(moedaNegociada !== undefined ? { moedaNegociada } : {}),
+                    };
+                }
+            } catch {
+                // com308 indisponível para esta linha — segue sem valor ("-").
+            }
         }
 
         return candidata;
@@ -582,8 +627,8 @@ export default class EleicaoPermutasService {
         ]);
         const taxaAdiantamento = titAdto[0]?.taxa;
         const taxaInvoice = titInv[0]?.taxa;
-        const valorMoedaNegociadaAdto = titAdto[0]?.valorNegociado;
-        const valorMoedaNegociadaInvoice = titInv[0]?.valorNegociado;
+        const valorMoedaNegociadaAdto = somaValorNegociado(titAdto);
+        const valorMoedaNegociadaInvoice = somaValorNegociado(titInv);
         // Moeda NEGOCIADA do título (220=USD / "DOLAR DOS EUA"), distinta da
         // moeda do DOCUMENTO (BRL). Rotula `valorMoedaNegociada` na tela Gestão.
         const moedaNegociadaAdto = siglaMoedaNegociada(titAdto[0]);

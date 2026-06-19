@@ -75,10 +75,14 @@ describe('ElegibilidadeService.avaliarElegibilidade (I3: 4 gates + INVOICE casad
         expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.COMPOSTO_NM);
         expect(result.gatesAvaliados).toHaveLength(4);
         expect(result.gatesAvaliados.every((g) => g.passed)).toBe(true);
+        // N:M carrega as invoices candidatas p/ persistir e o analista escolher (ADR-0005).
+        expect(result.invoicesCandidatas?.map((i) => i.docCod)).toEqual(['I1', 'I2']);
     });
 
-    it('valorPermutar = 0 (pago) → BLOQUEADA(sem-saldo-permutar) (Gate 2)', () => {
+    it('valorPermutar = 0 (pago) sem valorPermutado → BLOQUEADA(sem-saldo-permutar) (Gate 2)', () => {
         const result = service.avaliarElegibilidade({
+            // pago, saldo zerado E nunca permutado (valorPermutado ausente) →
+            // genuinamente sem saldo a permutar.
             adiantamento: buildAdiantamento({ valorPermutar: 0 }),
             declaracoes: [di],
             invoices: [buildInvoice()],
@@ -87,6 +91,45 @@ describe('ElegibilidadeService.avaliarElegibilidade (I3: 4 gates + INVOICE casad
         expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.SEM_SALDO_PERMUTAR);
         const gate2 = result.gatesAvaliados.find((g) => g.gate === GATE.VALOR_PERMUTAR);
         expect(gate2?.passed).toBe(false);
+    });
+
+    it('valorPermutar = 0 explícito (valorPermutado=0) → sem-saldo-permutar', () => {
+        const result = service.avaliarElegibilidade({
+            adiantamento: buildAdiantamento({ valorPermutar: 0, valorPermutado: 0 }),
+            declaracoes: [di],
+            invoices: [buildInvoice()],
+        });
+        expect(result.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+        expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.SEM_SALDO_PERMUTAR);
+    });
+
+    it('valorPermutar = 0 (pago) MAS valorPermutado > 0 → BLOQUEADA(ja-permutado) (doc 8266)', () => {
+        const result = service.avaliarElegibilidade({
+            // Print real Conexos doc 8266: pago E saldo já 100% consumido numa
+            // permuta (valorPermutado = mnyTitPermuta = 378636.28) → motivo
+            // distinto de "sem saldo": é um estado concluído, não um erro.
+            adiantamento: buildAdiantamento({ valorPermutar: 0, valorPermutado: 378636.28 }),
+            declaracoes: [di],
+            invoices: [buildInvoice()],
+        });
+        expect(result.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+        expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.JA_PERMUTADO);
+        const gate2 = result.gatesAvaliados.find((g) => g.gate === GATE.VALOR_PERMUTAR);
+        expect(gate2?.passed).toBe(false);
+    });
+
+    it('nao-pago tem prioridade sobre ja-permutado mesmo com valorPermutado > 0', () => {
+        const result = service.avaliarElegibilidade({
+            adiantamento: buildAdiantamento({
+                pago: false,
+                valorPermutar: 0,
+                valorPermutado: 500,
+            }),
+            declaracoes: [di],
+            invoices: [buildInvoice()],
+        });
+        expect(result.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.BLOQUEADA);
+        expect(result.motivoBloqueio).toBe(MOTIVO_BLOQUEIO.NAO_PAGO);
     });
 
     it('not fully paid → BLOQUEADA(nao-pago) (Gate 3, raiz antes do Gate 2)', () => {

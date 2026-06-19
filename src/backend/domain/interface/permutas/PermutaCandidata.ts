@@ -45,6 +45,12 @@ export default interface PermutaCandidata {
     adiantamento: Adiantamento;
     /** Lado-crédito — exatamente 1 invoice FINALIZADA (1:1). */
     invoiceCasada?: Invoice;
+    /**
+     * Invoices candidatas do casamento manual N:M (>1 INVOICE FINALIZADA no
+     * processo) — preenchido só quando `estadoElegibilidade === CASAMENTO_MANUAL`.
+     * Persistidas em `permuta_invoice` para o analista escolher uma na tela (ADR-0005).
+     */
+    invoicesCandidatas?: Invoice[];
     declaracaoImportacao?: DeclaracaoImportacao;
     variacaoCambial?: VariacaoCambial;
     /** ⏸ GATED-P0-4 — `hoje − dataBase` (dias); `undefined` enquanto pendente. */

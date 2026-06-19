@@ -30,6 +30,7 @@ export type ElegibilidadeResult = Pick<
     | 'priCod'
     | 'adiantamento'
     | 'invoiceCasada'
+    | 'invoicesCandidatas'
     | 'declaracaoImportacao'
     | 'estadoElegibilidade'
     | 'motivoBloqueio'
@@ -96,7 +97,7 @@ export default class ElegibilidadeService {
             return {
                 ...base,
                 estadoElegibilidade: ESTADO_ELEGIBILIDADE.BLOQUEADA,
-                motivoBloqueio: this.motivoDoGateFalho(gatesAvaliados),
+                motivoBloqueio: this.motivoDoGateFalho(gatesAvaliados, adiantamento),
             };
         }
 
@@ -116,6 +117,9 @@ export default class ElegibilidadeService {
                     ? ESTADO_ELEGIBILIDADE.CASAMENTO_MANUAL
                     : ESTADO_ELEGIBILIDADE.BLOQUEADA,
                 motivoBloqueio: casamento.motivoBloqueio,
+                // N:M: leva as invoices candidatas do processo p/ persistir e deixar
+                // o analista escolher uma na tela (ADR-0005).
+                ...(isNm ? { invoicesCandidatas: invoices } : {}),
             };
         }
 
@@ -132,13 +136,27 @@ export default class ElegibilidadeService {
     /**
      * Mapeia o gate reprovado para um motivo ESPECÍFICO (em vez do genérico
      * `falha-gate`). Prioridade pela causa-raiz quando mais de um gate falha:
-     *   gate 3 (NÃO PAGO) → gate 2 (SEM SALDO) → gate 4 (D.I + DUIMP) → fallback.
+     *   gate 3 (NÃO PAGO) → gate 2 (SEM SALDO / JÁ PERMUTADO) → gate 4 (D.I +
+     *   DUIMP) → fallback.
+     *
+     * Gate 2 (VALOR_PERMUTAR) reprovado chega aqui só quando o adiantamento já
+     * está pago (gate 3 tem prioridade). Nesse ponto distingue-se a causa do
+     * saldo zerado pelo `valorPermutado` (`mnyTitPermuta` do detalhe): se já
+     * houve permuta (`> 0`) → `JA_PERMUTADO` (estado concluído, não erro);
+     * senão → `SEM_SALDO_PERMUTAR` (nunca teve saldo).
      */
-    private motivoDoGateFalho = (gates: GateResult[]): MotivoBloqueio => {
+    private motivoDoGateFalho = (
+        gates: GateResult[],
+        adiantamento: Adiantamento,
+    ): MotivoBloqueio => {
         const falhou = (gate: GateResult['gate']): boolean =>
             gates.some((g) => g.gate === gate && !g.passed);
         if (falhou(GATE.TOTALMENTE_PAGO)) return MOTIVO_BLOQUEIO.NAO_PAGO;
-        if (falhou(GATE.VALOR_PERMUTAR)) return MOTIVO_BLOQUEIO.SEM_SALDO_PERMUTAR;
+        if (falhou(GATE.VALOR_PERMUTAR)) {
+            return (adiantamento.valorPermutado ?? 0) > 0
+                ? MOTIVO_BLOQUEIO.JA_PERMUTADO
+                : MOTIVO_BLOQUEIO.SEM_SALDO_PERMUTAR;
+        }
         if (falhou(GATE.DI_XOR_DUIMP)) return MOTIVO_BLOQUEIO.DI_DUIMP_AMBOS;
         return MOTIVO_BLOQUEIO.FALHA_GATE;
     };

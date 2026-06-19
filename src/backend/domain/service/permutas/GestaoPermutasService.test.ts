@@ -115,6 +115,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             elegiveis: 1,
             bloqueadas: 1,
             casamentoManual: 1,
+            jaPermutado: 0,
         });
     });
 
@@ -216,12 +217,84 @@ describe('GestaoPermutasService.exporGestao', () => {
         );
         const res = await service.exporGestao('req-1');
 
+        // priCod (processo) — número em comum invoice×adiantamento, exibido na tela.
+        expect(res.casamentos[0].priCod).toBe('2048');
         expect(res.casamentos[0].invoice).toMatchObject({ docCod: 'I1', referencia: 'INV/1' });
         expect(res.casamentos[0].adiantamentos[0]).toMatchObject({
             docCod: 'A1',
             referencia: 'CT/1',
             valorASerUsado: 1000,
         });
+    });
+
+    it('promotes BLOQUEADA+motivo ja-permutado to its OWN status (out of bloqueadas)', async () => {
+        // Doc pago + 100% consumido em permuta anterior: gravado como bloqueada
+        // com motivo `ja-permutado`. Na tela vira status próprio `ja-permutado`,
+        // NÃO conta em bloqueadas (estado concluído, não erro).
+        const jaPermutado: AdiantamentoAtivo = {
+            docCod: '8266',
+            priCod: '5000',
+            filCod: 2,
+            referencia: 'CT/8266',
+            exportador: 'HUAIAN HAOYANG',
+            valorMoedaNegociada: 70570,
+            moeda: 'USD',
+            pago: true,
+            estadoElegibilidade: 'bloqueada',
+            motivoBloqueio: 'ja-permutado',
+            agingDays: 156,
+            stale: false,
+        };
+        const service = new GestaoPermutasService(
+            buildRelational({ adiantamentos: [...adiantamentos, jaPermutado] }),
+            buildProcessamento(),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+
+        expect(res.pendentes.find((p) => p.docCod === '8266')?.status).toBe('ja-permutado');
+        expect(res.totais.jaPermutado).toBe(1);
+        // A2 segue bloqueada; o já-permutado NÃO entra na contagem de bloqueadas.
+        expect(res.totais.bloqueadas).toBe(1);
+    });
+
+    it('attaches candidatas (invoices em aberto do mesmo priCod) ONLY to casamento-manual', async () => {
+        // A3 é N:M (priCod 4000) com 2 invoices em aberto no processo → candidatas.
+        const candidatasInvoices: InvoiceRow[] = [
+            ...invoices,
+            {
+                docCod: 'I3a',
+                priCod: '4000',
+                filCod: 2,
+                referencia: 'INV/3a',
+                exportador: 'JINDAL',
+                valorMoedaNegociada: 1200,
+                moeda: 'USD',
+                pago: false,
+            },
+            {
+                docCod: 'I3b',
+                priCod: '4000',
+                filCod: 2,
+                referencia: 'INV/3b',
+                exportador: 'JINDAL',
+                valorMoedaNegociada: 800,
+                moeda: 'USD',
+                pago: false,
+            },
+        ];
+        const service = new GestaoPermutasService(
+            buildRelational({ invoices: candidatasInvoices }),
+            buildProcessamento(),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+
+        const nm = res.pendentes.find((p) => p.docCod === 'A3');
+        expect(nm?.candidatas?.map((c) => c.docCod)).toEqual(['I3a', 'I3b']);
+        // Elegível e bloqueada NÃO carregam candidatas.
+        expect(res.pendentes.find((p) => p.docCod === 'A1')?.candidatas).toBeUndefined();
+        expect(res.pendentes.find((p) => p.docCod === 'A2')?.candidatas).toBeUndefined();
     });
 
     it('surfaces processamentoStatus on pendentes and casamento adiantamentos', async () => {

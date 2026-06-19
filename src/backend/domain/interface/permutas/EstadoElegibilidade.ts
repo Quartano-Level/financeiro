@@ -35,6 +35,13 @@ export const MOTIVO_BLOQUEIO = {
     NAO_PAGO: 'nao-pago',
     /** Gate 2 reprovado — sem saldo a permutar (mnyTitPermutar = 0), embora pago. */
     SEM_SALDO_PERMUTAR: 'sem-saldo-permutar',
+    /**
+     * Gate 2 reprovado, mas o adiantamento está pago E seu saldo a permutar já
+     * foi 100% consumido numa permuta anterior (`valorPermutado > 0`,
+     * `mnyTitPermuta` do detalhe). Estado CONCLUÍDO, não um erro: distingue-se
+     * de `SEM_SALDO_PERMUTAR` (nunca teve saldo) para não confundir o operador.
+     */
+    JA_PERMUTADO: 'ja-permutado',
     /** Gate 4 anomalia — D.I E DUIMP presentes no mesmo processo (XOR violado). */
     DI_DUIMP_AMBOS: 'di-duimp-ambos',
     /** Fallback — falhou um gate sem motivo específico mapeado (não esperado). */

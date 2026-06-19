@@ -101,6 +101,26 @@ export const gestaoPermutasFixture: GestaoPermutasResponse = {
       diasEmAberto: 12,
       status: 'casamento-manual',
       motivoBloqueio: 'composto-nm',
+      // N:M — o processo CT077/26 tem 2 invoices finalizadas em aberto; o analista
+      // escolhe UMA para casar este adiantamento.
+      candidatas: [
+        {
+          docCod: 'INV-26102A',
+          filCod: 2,
+          referencia: 'CT077/26 3º (A)',
+          exportador: 'JINDAL STAINLESS LIMITED',
+          valorMoedaNegociada: 50000.0,
+          moeda: 'USD',
+        },
+        {
+          docCod: 'INV-26102B',
+          filCod: 2,
+          referencia: 'CT077/26 3º (B)',
+          exportador: 'JINDAL STAINLESS LIMITED',
+          valorMoedaNegociada: 84210.15,
+          moeda: 'USD',
+        },
+      ],
     },
   ],
   invoicesEmAberto: [
@@ -133,6 +153,7 @@ export const gestaoPermutasFixture: GestaoPermutasResponse = {
     {
       // N:M + permuta PARCIAL: a invoice 0017VTC/26 é abatida por 3 adiantamentos,
       // cada um usando só parte do seu saldo (Valor a ser Usado < total).
+      priCod: '512',
       invoice: {
         docCod: 'INV-17VTC',
         filCod: 2,
@@ -148,6 +169,7 @@ export const gestaoPermutasFixture: GestaoPermutasResponse = {
       ],
     },
     {
+      priCod: '498',
       invoice: {
         docCod: 'INV-1INX',
         filCod: 2,
@@ -159,6 +181,7 @@ export const gestaoPermutasFixture: GestaoPermutasResponse = {
       adiantamentos: [],
     },
     {
+      priCod: '503',
       invoice: {
         docCod: 'INV-6DYS',
         filCod: 1,
@@ -176,5 +199,6 @@ export const gestaoPermutasFixture: GestaoPermutasResponse = {
     elegiveis: 5,
     bloqueadas: 1,
     casamentoManual: 1,
+    jaPermutado: 0,
   },
 }

@@ -22,7 +22,11 @@ export interface FiliaisResponse {
  * fed by `lib/permutas-fixture.ts` (real probed data) as a demo safety-net.
  */
 
-export type StatusElegibilidade = 'elegivel' | 'bloqueada' | 'casamento-manual'
+export type StatusElegibilidade =
+  | 'elegivel'
+  | 'bloqueada'
+  | 'casamento-manual'
+  | 'ja-permutado'
 
 /** Status do analista sobre um adiantamento (botão "Processar"). */
 export type ProcessamentoStatus = 'pendente' | 'processando' | 'processado' | 'erro'
@@ -33,13 +37,21 @@ export interface PermutaPendente {
   filCod: number
   referencia: string
   exportador: string
-  valorMoedaNegociada: number
+  valorMoedaNegociada: number | null
+  /** Valor de FACE do documento em BRL (`docMnyValor`) — base da consolidação em reais. */
+  valorBrl?: number | null
   moeda: string
   diasEmAberto: number | null
   status: StatusElegibilidade
   motivoBloqueio?: string
   /** Status do processamento do analista, quando registrado no banco. */
   processamentoStatus?: ProcessamentoStatus
+  /**
+   * Invoices candidatas para o casamento manual (N:M) — invoices em aberto do
+   * mesmo processo (`priCod`). Preenchido só quando `status === 'casamento-manual'`;
+   * o analista escolhe UMA e processa (ADR-0005).
+   */
+  candidatas?: InvoiceEmAberto[]
 }
 
 /** INVOICE finalizada em aberto (lado-crédito do casamento). */
@@ -48,7 +60,9 @@ export interface InvoiceEmAberto {
   filCod: number
   referencia: string
   exportador: string
-  valorMoedaNegociada: number
+  valorMoedaNegociada: number | null
+  /** Valor de FACE do documento em BRL (`docMnyValor`) — base da consolidação em reais. */
+  valorBrl?: number | null
   moeda: string
 }
 
@@ -64,6 +78,12 @@ export interface CasamentoAdiantamento {
 
 /** Uma invoice em aberto e os adiantamentos sugeridos para casá-la (N:M). */
 export interface CasamentoSugerido {
+  /**
+   * Código do PROCESSO (Conexos `priCod`) — o número em comum entre a invoice e
+   * o adiantamento. É a chave que o analista usa pra confirmar a relação batendo
+   * manualmente no Conexos. Exibido na coluna no lugar do código da invoice.
+   */
+  priCod: string
   invoice: InvoiceEmAberto
   adiantamentos: CasamentoAdiantamento[]
 }
@@ -83,5 +103,7 @@ export interface GestaoPermutasResponse {
     bloqueadas: number
     /** N:M que passaram os 4 gates, aguardando escolha de invoice (ADR-0005). */
     casamentoManual: number
+    /** Já permutados (pago + 100% consumido antes) — estado CONCLUÍDO, fora de bloqueadas. */
+    jaPermutado: number
   }
 }

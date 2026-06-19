@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { fetchGestaoPermutas, processarAdiantamento } from '@/lib/api'
 import type {
   GestaoPermutasResponse,
+  PermutaPendente,
   ProcessamentoStatus,
   StatusElegibilidade,
 } from '@/lib/types'
@@ -25,11 +26,21 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Input } from '@/components/ui/input'
 
 /** Rótulos legíveis para os motivos de bloqueio do snapshot. */
 const MOTIVO_LABEL: Record<string, string> = {
   'nao-pago': 'Não totalmente pago',
   'sem-saldo-permutar': 'Sem saldo a permutar',
+  'ja-permutado': 'Já permutado',
   'di-duimp-ambos': 'D.I e DUIMP (anomalia)',
   'data-base-indisponivel': 'Sem D.I / DUIMP',
   'sem-invoice': 'Sem invoice',
@@ -54,6 +65,19 @@ function StatusBadge({ status, motivo }: { status: StatusElegibilidade; motivo?:
         title={MOTIVO_LABEL[motivo ?? ''] ?? 'Casamento manual (N:M)'}
       >
         <Layers aria-hidden /> Casamento manual (N:M)
+      </Badge>
+    )
+  }
+  // "Já permutado": estado CONCLUÍDO (pago + 100% consumido em permuta anterior)
+  // — não é um erro. Status próprio (fora de bloqueadas), badge em tom info com
+  // ícone de check, distinto do vermelho das bloqueadas.
+  if (status === 'ja-permutado') {
+    return (
+      <Badge
+        className="border-transparent bg-info-subtle text-info-foreground"
+        title={MOTIVO_LABEL['ja-permutado']}
+      >
+        <CheckCircle2 aria-hidden /> Já permutado
       </Badge>
     )
   }
@@ -94,12 +118,30 @@ function ProcessamentoBadge({ status }: { status: ProcessamentoStatus }) {
   return <Badge variant="outline">{PROCESSAMENTO_LABEL[status]}</Badge>
 }
 
-/** Valor em moeda negociada (número pt-BR) + código da moeda em tom suave. */
-function Moeda({ valor, moeda }: { valor: number; moeda: string }) {
+/** Valor em moeda negociada (número pt-BR) + código da moeda em tom suave.
+ * `null` (valor não buscado — ex.: adiantamento não totalmente pago) → "—". */
+function Moeda({ valor, moeda }: { valor: number | null; moeda: string }) {
+  if (valor == null) return <span className="text-muted-foreground">—</span>
   return (
     <span className="tabular-nums">
       {formatNumber(valor)} <span className="text-xs text-muted-foreground">{moeda}</span>
     </span>
+  )
+}
+
+/** Total em BRL formatado (pt-BR, sem centavos — são somas grandes). */
+const fmtBrl = (v: number) =>
+  v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
+
+/** Footer de KPI: total consolidado em BRL (quando > 0) + descrição. */
+function KpiFooter({ total, children }: { total: number; children: React.ReactNode }) {
+  return (
+    <>
+      {total > 0 ? (
+        <div className="text-sm font-semibold text-foreground tabular-nums">{fmtBrl(total)}</div>
+      ) : null}
+      <div>{children}</div>
+    </>
   )
 }
 
@@ -111,12 +153,28 @@ const FILTRO_VAZIO_LABEL: Record<StatusElegibilidade, string> = {
   elegivel: 'elegível',
   bloqueada: 'bloqueado',
   'casamento-manual': 'em casamento manual',
+  'ja-permutado': 'já permutado',
 }
+
+/** Opções do seletor de Status (sincroniza com os KPIs via `filtro`). */
+const STATUS_OPCOES: { value: FiltroStatus; label: string }[] = [
+  { value: 'todos', label: 'Todos os status' },
+  { value: 'elegivel', label: 'Elegível' },
+  { value: 'casamento-manual', label: 'Casamento manual (N:M)' },
+  { value: 'ja-permutado', label: 'Já permutado' },
+  { value: 'bloqueada', label: 'Bloqueada' },
+]
 
 export default function GestaoPermutasPage() {
   const [data, setData] = React.useState<GestaoPermutasResponse | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [filtro, setFiltro] = React.useState<FiltroStatus>('todos')
+  // Filtro de filial (busca no Conexos é por filial — facilita conferir lá).
+  const [filtroFilial, setFiltroFilial] = React.useState<string>('todas')
+  // Filtro de exportador (busca por trecho do nome, case-insensitive).
+  const [filtroExportador, setFiltroExportador] = React.useState<string>('')
+  // Paginação da tabela de pendentes (50 por página).
+  const [pagina, setPagina] = React.useState(1)
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -142,6 +200,8 @@ export default function GestaoPermutasPage() {
   }, [])
 
   const [processando, setProcessando] = React.useState<string | null>(null)
+  // Invoice escolhida pelo analista por adiantamento N:M (docCod do adto → docCod da invoice).
+  const [invoiceSel, setInvoiceSel] = React.useState<Record<string, string>>({})
 
   const processar = React.useCallback(
     async (adtoDocCod: string, adtoRef: string, invoiceDocCod: string) => {
@@ -161,10 +221,71 @@ export default function GestaoPermutasPage() {
     [load],
   )
 
-  const pendentesFiltrados =
-    data && filtro !== 'todos'
-      ? data.pendentes.filter((p) => p.status === filtro)
-      : (data?.pendentes ?? [])
+  // Filiais distintas presentes nos pendentes (para o seletor de filial).
+  const filiais = React.useMemo(
+    () => [...new Set((data?.pendentes ?? []).map((p) => p.filCod))].sort((a, b) => a - b),
+    [data],
+  )
+
+  const expBusca = filtroExportador.trim().toLowerCase()
+  const pendentesFiltrados = (data?.pendentes ?? []).filter(
+    (p) =>
+      (filtro === 'todos' || p.status === filtro) &&
+      (filtroFilial === 'todas' || String(p.filCod) === filtroFilial) &&
+      (expBusca === '' || p.exportador.toLowerCase().includes(expBusca)),
+  )
+
+  // Paginação: 50 linhas por página. Volta à 1ª página quando o filtro muda.
+  const PAGE_SIZE = 50
+  const totalPaginas = Math.max(1, Math.ceil(pendentesFiltrados.length / PAGE_SIZE))
+  const paginaAtual = Math.min(pagina, totalPaginas)
+  const pendentesPagina = pendentesFiltrados.slice(
+    (paginaAtual - 1) * PAGE_SIZE,
+    paginaAtual * PAGE_SIZE,
+  )
+  // Trocar filtro/filial volta à 1ª página (nos handlers → evita setState-in-effect).
+  const mudarFiltro = (f: FiltroStatus) => {
+    setFiltro(f)
+    setPagina(1)
+  }
+  const mudarFilial = (v: string) => {
+    setFiltroFilial(v)
+    setPagina(1)
+  }
+  const mudarExportador = (v: string) => {
+    setFiltroExportador(v)
+    setPagina(1)
+  }
+
+  // Filtro de filial reaproveitado nos dois cards de casamento (mesmo seletor do topo).
+  const passaFilial = (filCod: number) =>
+    filtroFilial === 'todas' || String(filCod) === filtroFilial
+
+  // Adiantamentos N:M aguardando o analista escolher a invoice (ADR-0005).
+  const casamentoManual = (data?.pendentes ?? []).filter(
+    (p) => p.status === 'casamento-manual' && passaFilial(p.filCod),
+  )
+
+  // Casamentos automáticos (sugeridos), filtrados por filial da invoice/processo.
+  const casamentosSugeridos = (data?.casamentos ?? []).filter((c) =>
+    passaFilial(c.invoice.filCod),
+  )
+
+  // Consolidação em BRL por card: soma o valor de FACE (`valorBrl`, docMnyValor)
+  // dos itens de cada status. Disponível até em não-pagos (vem do list).
+  const somaBrl = (pred: (p: PermutaPendente) => boolean) =>
+    (data?.pendentes ?? []).reduce((acc, p) => (pred(p) ? acc + (p.valorBrl ?? 0) : acc), 0)
+  const brl = {
+    pendentes: somaBrl(() => true),
+    elegiveis: somaBrl((p) => p.status === 'elegivel'),
+    casamentoManual: somaBrl((p) => p.status === 'casamento-manual'),
+    jaPermutado: somaBrl((p) => p.status === 'ja-permutado'),
+    bloqueadas: somaBrl((p) => p.status === 'bloqueada'),
+    invoicesEmAberto: (data?.invoicesEmAberto ?? []).reduce(
+      (acc, i) => acc + (i.valorBrl ?? 0),
+      0,
+    ),
+  }
 
   return (
     <div className="space-y-6">
@@ -198,50 +319,103 @@ export default function GestaoPermutasPage() {
         <EmptyState title="Não foi possível carregar a gestão de permutas" />
       ) : (
         <>
-          <KPIGrid columns={5}>
+          <KPIGrid columns={6}>
             <SimpleKPI
               color="info"
               label="Adiantamentos pendentes"
               value={data.totais.pendentes}
-              footer="PROFORMA aguardando permuta"
+              footer={<KpiFooter total={brl.pendentes}>PROFORMA aguardando permuta</KpiFooter>}
               tooltip="Mostrar todos os adiantamentos pendentes"
               active={filtro === 'todos'}
-              onClick={() => setFiltro('todos')}
-            />
-            <SimpleKPI
-              color="success"
-              label="Elegíveis"
-              value={data.totais.elegiveis}
-              footer="passaram os 4 gates"
-              tooltip="Filtrar a tabela pelos elegíveis"
-              active={filtro === 'elegivel'}
-              onClick={() => setFiltro('elegivel')}
-            />
-            <SimpleKPI
-              color="warning"
-              label="Casamento manual"
-              value={data.totais.casamentoManual}
-              footer="N:M, falta escolher invoice"
-              tooltip="Filtrar a tabela pelos casamentos manuais (N:M)"
-              active={filtro === 'casamento-manual'}
-              onClick={() => setFiltro('casamento-manual')}
+              onClick={() => mudarFiltro('todos')}
             />
             <SimpleKPI
               color="danger"
               label="Bloqueadas"
               value={data.totais.bloqueadas}
-              footer="pendência de gate"
+              footer={<KpiFooter total={brl.bloqueadas}>pendência de gate</KpiFooter>}
               tooltip="Filtrar a tabela pelas bloqueadas"
               active={filtro === 'bloqueada'}
-              onClick={() => setFiltro('bloqueada')}
+              onClick={() => mudarFiltro('bloqueada')}
+            />
+            <SimpleKPI
+              color="info"
+              label="Já permutado"
+              value={data.totais.jaPermutado}
+              footer={<KpiFooter total={brl.jaPermutado}>concluído (permuta anterior)</KpiFooter>}
+              tooltip="Filtrar a tabela pelos já permutados"
+              active={filtro === 'ja-permutado'}
+              onClick={() => mudarFiltro('ja-permutado')}
             />
             <SimpleKPI
               color="info"
               label="Invoices em aberto"
               value={data.totais.invoicesEmAberto}
-              footer="finalizadas, a casar"
+              footer={<KpiFooter total={brl.invoicesEmAberto}>finalizadas, a casar</KpiFooter>}
+            />
+            <SimpleKPI
+              color="success"
+              label="Elegíveis"
+              value={data.totais.elegiveis}
+              footer={<KpiFooter total={brl.elegiveis}>passaram os 4 gates</KpiFooter>}
+              tooltip="Filtrar a tabela pelos elegíveis"
+              active={filtro === 'elegivel'}
+              onClick={() => mudarFiltro('elegivel')}
+            />
+            <SimpleKPI
+              color="warning"
+              label="Casamento manual"
+              value={data.totais.casamentoManual}
+              footer={<KpiFooter total={brl.casamentoManual}>N:M, falta escolher invoice</KpiFooter>}
+              tooltip="Filtrar a tabela pelos casamentos manuais (N:M)"
+              active={filtro === 'casamento-manual'}
+              onClick={() => mudarFiltro('casamento-manual')}
             />
           </KPIGrid>
+
+          {/* Filtros — filial (busca no Conexos é por filial), status e exportador. */}
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-muted-foreground">Filial</span>
+              <Select value={filtroFilial} onValueChange={mudarFilial}>
+                <SelectTrigger className="w-44" aria-label="Filtrar por filial">
+                  <SelectValue placeholder="Todas as filiais" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todas">Todas as filiais</SelectItem>
+                  {filiais.map((f) => (
+                    <SelectItem key={f} value={String(f)}>
+                      Filial {f}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-muted-foreground">Status</span>
+              <Select value={filtro} onValueChange={(v) => mudarFiltro(v as FiltroStatus)}>
+                <SelectTrigger className="w-56" aria-label="Filtrar por status">
+                  <SelectValue placeholder="Todos os status" />
+                </SelectTrigger>
+                <SelectContent>
+                  {STATUS_OPCOES.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex min-w-[16rem] flex-1 flex-col gap-1">
+              <span className="text-sm font-medium text-muted-foreground">Exportador</span>
+              <Input
+                value={filtroExportador}
+                onChange={(e) => mudarExportador(e.target.value)}
+                placeholder="Buscar exportador…"
+                aria-label="Filtrar por exportador"
+              />
+            </div>
+          </div>
 
           {/* Visão geral — adiantamentos pendentes de permuta */}
           <Card>
@@ -263,11 +437,12 @@ export default function GestaoPermutasPage() {
                   }
                 />
               ) : (
+                <>
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Filial</TableHead>
-                      <TableHead>Referência</TableHead>
+                      <TableHead>Código</TableHead>
                       <TableHead>Exportador</TableHead>
                       <TableHead className="text-right">Valor Moeda Negociada</TableHead>
                       <TableHead className="text-right">Dias em Aberto</TableHead>
@@ -275,10 +450,10 @@ export default function GestaoPermutasPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pendentesFiltrados.map((p) => (
+                    {pendentesPagina.map((p) => (
                       <TableRow key={p.docCod}>
                         <TableCell>{p.filCod}</TableCell>
-                        <TableCell className="font-medium">{p.referencia}</TableCell>
+                        <TableCell className="font-medium">{p.docCod}</TableCell>
                         <TableCell>{p.exportador}</TableCell>
                         <TableCell className="text-right">
                           <Moeda valor={p.valorMoedaNegociada} moeda={p.moeda} />
@@ -298,19 +473,161 @@ export default function GestaoPermutasPage() {
                     ))}
                   </TableBody>
                 </Table>
+                <div className="flex flex-col gap-2 pt-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                  <span>
+                    Mostrando {(paginaAtual - 1) * PAGE_SIZE + 1}–
+                    {Math.min(paginaAtual * PAGE_SIZE, pendentesFiltrados.length)} de{' '}
+                    {pendentesFiltrados.length}
+                  </span>
+                  {totalPaginas > 1 ? (
+                    <div className="flex items-center gap-2">
+                      <span>
+                        Página {paginaAtual} de {totalPaginas}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={paginaAtual <= 1}
+                        onClick={() => setPagina((p) => Math.max(1, p - 1))}
+                      >
+                        Anterior
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={paginaAtual >= totalPaginas}
+                        onClick={() => setPagina((p) => Math.min(totalPaginas, p + 1))}
+                      >
+                        Próxima
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+                </>
               )}
             </CardContent>
           </Card>
 
-          {/* Casamento sugerido — invoice em aberto ↔ adiantamentos (N:M, parcial) */}
+          {/* Casamento — sugerido (auto 1:N) × manual (N:M), alternados por aba */}
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ArrowLeftRight className="size-4" aria-hidden /> Casamento sugerido
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {data.casamentos.length === 0 ? (
+            <Tabs defaultValue="sugerido">
+              <CardHeader>
+                <TabsList>
+                  <TabsTrigger value="sugerido">
+                    <ArrowLeftRight className="size-4" aria-hidden /> Casamento sugerido (
+                    {casamentosSugeridos.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="manual">
+                    <Layers className="size-4" aria-hidden /> Casamento manual N:M (
+                    {casamentoManual.length})
+                  </TabsTrigger>
+                </TabsList>
+              </CardHeader>
+              <CardContent>
+                <TabsContent value="manual" className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    Escolha qual <strong>invoice (fatura)</strong> do mesmo processo este{' '}
+                    <strong>adiantamento (PROFORMA já pago)</strong> vai abater. O processo tem
+                    vários adiantamentos e várias invoices, então o casamento 1:1 automático não se
+                    aplica — você decide a ligação.
+                  </p>
+                  {casamentoManual.length === 0 ? (
+                    <EmptyState
+                      title="Nenhum casamento manual"
+                      description="Não há adiantamentos N:M aguardando escolha de invoice."
+                    />
+                  ) : (
+                    <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Filial</TableHead>
+                      <TableHead>Código</TableHead>
+                      <TableHead>Exportador</TableHead>
+                      <TableHead className="text-right">Valor Moeda Negociada</TableHead>
+                      <TableHead>Invoice a casar</TableHead>
+                      <TableHead className="text-right">Ação</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {casamentoManual.map((p) => {
+                      const candidatas = p.candidatas ?? []
+                      const selecionada = invoiceSel[p.docCod]
+                      return (
+                        <TableRow key={p.docCod}>
+                          <TableCell>{p.filCod}</TableCell>
+                          <TableCell className="font-medium">{p.docCod}</TableCell>
+                          <TableCell>{p.exportador}</TableCell>
+                          <TableCell className="text-right">
+                            <Moeda valor={p.valorMoedaNegociada} moeda={p.moeda} />
+                            {p.valorBrl != null ? (
+                              <div className="text-xs text-muted-foreground tabular-nums">
+                                ≈ R$ {formatNumber(p.valorBrl)}
+                              </div>
+                            ) : null}
+                          </TableCell>
+                          <TableCell>
+                            {p.processamentoStatus === 'processado' ? (
+                              <span className="text-sm text-muted-foreground">—</span>
+                            ) : candidatas.length === 0 ? (
+                              <span className="text-sm text-muted-foreground">
+                                Sem invoices candidatas no processo
+                              </span>
+                            ) : (
+                              <Select
+                                value={selecionada ?? ''}
+                                onValueChange={(v) =>
+                                  setInvoiceSel((prev) => ({ ...prev, [p.docCod]: v }))
+                                }
+                              >
+                                <SelectTrigger className="min-w-[16rem]">
+                                  <SelectValue placeholder="Escolher invoice…" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {candidatas.map((inv) => (
+                                    <SelectItem key={inv.docCod} value={inv.docCod}>
+                                      {inv.docCod} · {inv.referencia} ·{' '}
+                                      {inv.valorMoedaNegociada != null
+                                        ? `${formatNumber(inv.valorMoedaNegociada)} ${inv.moeda}`
+                                        : inv.valorBrl != null
+                                          ? `R$ ${formatNumber(inv.valorBrl)}`
+                                          : '—'}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {p.processamentoStatus === 'processado' ? (
+                              <ProcessamentoBadge status="processado" />
+                            ) : (
+                              <Button
+                                size="sm"
+                                disabled={!selecionada || processando === p.docCod}
+                                onClick={() =>
+                                  selecionada &&
+                                  void processar(p.docCod, p.docCod, selecionada)
+                                }
+                              >
+                                {processando === p.docCod ? 'Processando…' : 'Processar'}
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                    </Table>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="sugerido" className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    Casamento automático: processos com <strong>exatamente 1 invoice</strong>. Cada
+                    adiantamento abate essa invoice (1:1); se o processo tiver vários adiantamentos,
+                    todos aparecem agrupados sob a mesma invoice (1 invoice : N adiantamentos).
+                  </p>
+                  {casamentosSugeridos.length === 0 ? (
                 <EmptyState
                   title="Nenhum casamento sugerido"
                   description="Não há invoices em aberto casáveis na última eleição."
@@ -320,7 +637,7 @@ export default function GestaoPermutasPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Filial</TableHead>
-                      <TableHead>Invoice em aberto</TableHead>
+                      <TableHead>Processo</TableHead>
                       <TableHead className="text-right">Valor Moeda Negociada</TableHead>
                       <TableHead>Adiantamento</TableHead>
                       <TableHead className="text-right">Valor a ser Usado</TableHead>
@@ -328,12 +645,14 @@ export default function GestaoPermutasPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data.casamentos.flatMap((c, g) => {
+                    {casamentosSugeridos.flatMap((c, g) => {
                       const linhas = c.adiantamentos.length > 0 ? c.adiantamentos : [null]
-                      // Banding por GRUPO (invoice): cada grupo é um bloco de cor
-                      // uniforme — evita o hover pintar a célula esticada (rowSpan)
-                      // e as bordas só-do-lado-direito que davam aspecto "bugado".
+                      // Banding por PROCESSO + separador forte entre grupos: cada
+                      // processo é um bloco. `sepTop` (linha grossa) marca o início
+                      // de um novo processo; `innerTop` (linha leve) divide os
+                      // adiantamentos DENTRO de um mesmo processo (N:M).
                       const groupBg = g % 2 === 1 ? 'bg-muted/40' : 'bg-card'
+                      const sepTop = g > 0 ? 'border-t-2 border-border' : ''
                       return linhas.map((adto, i) => (
                         <TableRow
                           key={`${c.invoice.docCod}-${adto?.docCod ?? 'none'}`}
@@ -341,21 +660,24 @@ export default function GestaoPermutasPage() {
                         >
                           {i === 0 ? (
                             <>
-                              <TableCell rowSpan={linhas.length} className="align-top">
+                              <TableCell
+                                rowSpan={linhas.length}
+                                className={cn('align-top', sepTop)}
+                              >
                                 {c.invoice.filCod}
                               </TableCell>
                               <TableCell
                                 rowSpan={linhas.length}
-                                className="align-top font-medium"
+                                className={cn('align-top font-medium', sepTop)}
                               >
-                                {c.invoice.referencia}
+                                {c.priCod}
                                 <div className="text-xs font-normal text-muted-foreground">
                                   {c.invoice.exportador}
                                 </div>
                               </TableCell>
                               <TableCell
                                 rowSpan={linhas.length}
-                                className="align-top text-right"
+                                className={cn('align-top text-right', sepTop)}
                               >
                                 <Moeda
                                   valor={c.invoice.valorMoedaNegociada}
@@ -369,15 +691,15 @@ export default function GestaoPermutasPage() {
                               <TableCell
                                 className={cn(
                                   'font-medium',
-                                  i > 0 && 'border-t border-border/40',
+                                  i === 0 ? sepTop : 'border-t border-border/40',
                                 )}
                               >
-                                {adto.referencia}
+                                {adto.docCod}
                               </TableCell>
                               <TableCell
                                 className={cn(
                                   'text-right',
-                                  i > 0 && 'border-t border-border/40',
+                                  i === 0 ? sepTop : 'border-t border-border/40',
                                 )}
                               >
                                 <Moeda valor={adto.valorASerUsado} moeda={adto.moeda} />
@@ -385,7 +707,7 @@ export default function GestaoPermutasPage() {
                               <TableCell
                                 className={cn(
                                   'text-right',
-                                  i > 0 && 'border-t border-border/40',
+                                  i === 0 ? sepTop : 'border-t border-border/40',
                                 )}
                               >
                                 {adto.processamentoStatus === 'processado' ? (
@@ -397,7 +719,7 @@ export default function GestaoPermutasPage() {
                                     onClick={() =>
                                       void processar(
                                         adto.docCod,
-                                        adto.referencia,
+                                        adto.docCod,
                                         c.invoice.docCod,
                                       )
                                     }
@@ -408,7 +730,10 @@ export default function GestaoPermutasPage() {
                               </TableCell>
                             </>
                           ) : (
-                            <TableCell colSpan={3} className="text-sm text-muted-foreground">
+                            <TableCell
+                              colSpan={3}
+                              className={cn('text-sm text-muted-foreground', sepTop)}
+                            >
                               Sem adiantamento sugerido ainda.
                             </TableCell>
                           )}
@@ -417,8 +742,10 @@ export default function GestaoPermutasPage() {
                     })}
                   </TableBody>
                 </Table>
-              )}
-            </CardContent>
+                  )}
+                </TabsContent>
+              </CardContent>
+            </Tabs>
           </Card>
         </>
       )}
@@ -429,8 +756,8 @@ export default function GestaoPermutasPage() {
 function LoadingSkeleton() {
   return (
     <div className="space-y-6">
-      <KPIGrid columns={5}>
-        {Array.from({ length: 5 }).map((_, i) => (
+      <KPIGrid columns={6}>
+        {Array.from({ length: 6 }).map((_, i) => (
           <Skeleton key={i} className="h-24" />
         ))}
       </KPIGrid>

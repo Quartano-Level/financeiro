@@ -25,6 +25,15 @@ export default interface Adiantamento {
     pago: boolean;
     /** Saldo a permutar (detail `getDetalheTitulos`). Gate 2 (`> 0`). */
     valorPermutar?: number;
+    /**
+     * Valor já permutado (detail `getDetalheTitulos` → `mnyTitPermuta`,
+     * "Valor Permutado" do RESUMO DOS TÍTULOS), em BRL. Distingue um
+     * adiantamento pago SEM saldo a permutar PORQUE já foi 100% permutado
+     * (`valorPermutado > 0` ⇒ motivo `JA_PERMUTADO`) de um que simplesmente
+     * nunca teve saldo (`0`/ausente ⇒ `SEM_SALDO_PERMUTAR`). Opcional —
+     * depende do detalhe do título.
+     */
+    valorPermutado?: number;
     /** Nome do exportador/destino do pagamento (`com298.dpeNomPessoa`). */
     exportador?: string;
     /**

@@ -234,16 +234,20 @@ export default class IngestaoPermutasService {
         }
     };
 
-    /** Invoices casadas, deduplicadas por `docCod` (uma invoice pode reaparecer). */
+    /**
+     * Invoices a persistir, deduplicadas por `docCod` (uma invoice pode reaparecer):
+     *   - `invoiceCasada` dos elegíveis (1:1);
+     *   - `invoicesCandidatas` dos N:M (casamento-manual) — para o analista escolher
+     *     uma na tela (read-time agrupa por `priCod`). ADR-0005.
+     */
     private toInvoiceRows = (candidatas: PermutaCandidata[]): InvoiceRow[] => {
         const byDocCod = new Map<string, InvoiceRow>();
-        for (const c of candidatas) {
-            const inv = c.invoiceCasada;
-            if (!inv) continue;
+        const add = (inv: PermutaCandidata['invoiceCasada'], filCod: number) => {
+            if (!inv) return;
             byDocCod.set(inv.docCod, {
                 docCod: inv.docCod,
                 priCod: inv.priCod,
-                ...(c.adiantamento.filCod != null ? { filCod: c.adiantamento.filCod } : {}),
+                ...(filCod != null ? { filCod } : {}),
                 ...(inv.referencia !== undefined ? { referencia: inv.referencia } : {}),
                 ...(inv.exportador !== undefined ? { exportador: inv.exportador } : {}),
                 ...(inv.dataEmissao !== undefined ? { dataEmissao: inv.dataEmissao } : {}),
@@ -255,6 +259,10 @@ export default class IngestaoPermutasService {
                 ...(inv.moedaNegociada !== undefined ? { moedaNegociada: inv.moedaNegociada } : {}),
                 pago: inv.pago,
             });
+        };
+        for (const c of candidatas) {
+            add(c.invoiceCasada, c.adiantamento.filCod);
+            for (const inv of c.invoicesCandidatas ?? []) add(inv, c.adiantamento.filCod);
         }
         return [...byDocCod.values()];
     };

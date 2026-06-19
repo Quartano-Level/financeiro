@@ -871,13 +871,17 @@ export default class ConexosClient {
      * Gate 3 `pago`). One call per PROFORMA candidate. Caller is expected to
      * cache by `docCod` per execution to avoid redundant calls.
      *
-     * @returns `{ valorPermutar?, pago? }` — both fields independently optional
-     *          (a finite number / boolean when derivable; `undefined` otherwise).
+     * @returns `{ valorPermutar?, pago?, valorPermutado? }` — fields independently
+     *          optional (a finite number / boolean when derivable; `undefined`
+     *          otherwise). `valorPermutado` (mnyTitPermuta — "Valor Permutado")
+     *          lets the caller distinguish a paid title with no permuta balance
+     *          BECAUSE it was already permuted (valorPermutado > 0) from one that
+     *          simply never had a balance (valorPermutado 0/undefined).
      */
     public getDetalheTitulos = async (params: {
         docCod: string;
         filCod: number;
-    }): Promise<{ valorPermutar?: number; pago?: boolean }> => {
+    }): Promise<{ valorPermutar?: number; pago?: boolean; valorPermutado?: number }> => {
         const { docCod, filCod } = params;
         try {
             // P0-3 — wrapped in the same RetryExecutor as every other Conexos
@@ -928,19 +932,23 @@ export default class ConexosClient {
 
     /**
      * Maps a com298 detail payload (or the 400-quirk `responseData`) into the
-     * aggregate `{ valorPermutar?, pago? }`. `pago` is derived from
-     * `mnyTitAberto` per the paid rule (=== 0 ⇒ true; > 0 ⇒ false; absent/
+     * aggregate `{ valorPermutar?, pago?, valorPermutado? }`. `pago` is derived
+     * from `mnyTitAberto` per the paid rule (=== 0 ⇒ true; > 0 ⇒ false; absent/
      * non-numeric ⇒ undefined — conservative, never inferred as paid).
+     * `valorPermutado` is the literal `mnyTitPermuta` ("Valor Permutado" in the
+     * RESUMO DOS TÍTULOS — probe real 2026-06-18 doc 8266: pago 100% permutado).
      */
     private mapDetalheTitulos = (
         detail: Record<string, unknown>,
-    ): { valorPermutar?: number; pago?: boolean } => {
+    ): { valorPermutar?: number; pago?: boolean; valorPermutado?: number } => {
         const valorPermutar = this.parseOptionalNumber(detail.mnyTitPermutar);
+        const valorPermutado = this.parseOptionalNumber(detail.mnyTitPermuta);
         const mnyTitAberto = this.parseOptionalNumber(detail.mnyTitAberto);
         const pago = mnyTitAberto === undefined ? undefined : mnyTitAberto === 0;
         return {
             ...(valorPermutar !== undefined ? { valorPermutar } : {}),
             ...(pago !== undefined ? { pago } : {}),
+            ...(valorPermutado !== undefined ? { valorPermutado } : {}),
         };
     };
 

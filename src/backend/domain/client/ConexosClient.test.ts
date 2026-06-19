@@ -1277,6 +1277,41 @@ describe('ConexosClient', () => {
             expect(legacy.getGeneric).toHaveBeenCalledTimes(2);
         });
 
+        it('returns valorPermutado from mnyTitPermuta (doc 8266 — pago E 100% já permutado)', async () => {
+            const legacy = buildLegacy();
+            // Print real Conexos doc 8266: RESUMO DOS TÍTULOS com Valor Pago =
+            // Valor Permutado = 378636.28, Valor em Aberto = 0, Valor à
+            // Permutar = 0. Pago E já 100% permutado → mnyTitPermutar=0 mas
+            // mnyTitPermuta>0 ⇒ caller deve resolver "já permutado".
+            legacy.getGeneric.mockResolvedValue({
+                mnyTitValor: 378636.28,
+                mnyTitPago: 378636.28,
+                mnyTitAberto: 0,
+                mnyTitPermutar: 0,
+                mnyTitPermuta: 378636.28,
+            });
+            const client = new ConexosClient(legacy);
+
+            const detail = await client.getDetalheTitulos({ docCod: '8266', filCod: 2 });
+
+            expect(detail.valorPermutar).toBe(0);
+            expect(detail.pago).toBe(true);
+            expect(detail.valorPermutado).toBe(378636.28);
+        });
+
+        it('returns valorPermutado=undefined when mnyTitPermuta is absent', async () => {
+            const legacy = buildLegacy();
+            legacy.getGeneric.mockResolvedValue({
+                mnyTitAberto: 0,
+                mnyTitPermutar: 0,
+            });
+            const client = new ConexosClient(legacy);
+
+            const detail = await client.getDetalheTitulos({ docCod: 'D2', filCod: 2 });
+
+            expect(detail.valorPermutado).toBeUndefined();
+        });
+
         it('treats the 400-VALIDATION-with-responseData quirk as a valid response (no throw)', async () => {
             const legacy = buildLegacy();
             legacy.getGeneric.mockRejectedValue({
