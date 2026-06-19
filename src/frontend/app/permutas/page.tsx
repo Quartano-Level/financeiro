@@ -6,7 +6,6 @@ import { toast } from 'sonner'
 import { fetchGestaoPermutas, processarAdiantamento } from '@/lib/api'
 import type {
   GestaoPermutasResponse,
-  PermutaPendente,
   ProcessamentoStatus,
   StatusElegibilidade,
 } from '@/lib/types'
@@ -118,27 +117,79 @@ function ProcessamentoBadge({ status }: { status: ProcessamentoStatus }) {
   return <Badge variant="outline">{PROCESSAMENTO_LABEL[status]}</Badge>
 }
 
+/** Normaliza o nome de moeda do Conexos (`moedaNome`) para um código curto
+ * (ISO quando há). O backend já manda USD/BRL; os demais chegam como nome longo
+ * (ex.: "EURO/COM.EUROPEIA") — encurtamos aqui para a UI. */
+const MOEDA_ALIAS: Record<string, string> = {
+  'DOLAR DOS EUA': 'USD',
+  'EURO/COM.EUROPEIA': 'EUR',
+  'RENMINBI HONG KONG': 'CNH',
+}
+const moedaCodigo = (moeda: string) => MOEDA_ALIAS[moeda] ?? moeda
+
 /** Valor em moeda negociada (número pt-BR) + código da moeda em tom suave.
  * `null` (valor não buscado — ex.: adiantamento não totalmente pago) → "—". */
 function Moeda({ valor, moeda }: { valor: number | null; moeda: string }) {
   if (valor == null) return <span className="text-muted-foreground">—</span>
   return (
     <span className="tabular-nums">
-      {formatNumber(valor)} <span className="text-xs text-muted-foreground">{moeda}</span>
+      {formatNumber(valor)}{' '}
+      <span className="text-xs text-muted-foreground">{moedaCodigo(moeda)}</span>
     </span>
   )
 }
 
-/** Total em BRL formatado (pt-BR, sem centavos — são somas grandes). */
-const fmtBrl = (v: number) =>
-  v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
+/** Total por moeda negociada (um item = `valorMoedaNegociada` na sua `moeda`). */
+type MoedaTotal = { moeda: string; total: number }
 
-/** Footer de KPI: total consolidado em BRL (quando > 0) + descrição. */
-function KpiFooter({ total, children }: { total: number; children: React.ReactNode }) {
+/** Agrupa `valorMoedaNegociada` por `moeda` (nulls — itens sem detalhe, ex.:
+ * não-pagos — são ignorados). Ordena USD na frente (moeda principal das
+ * permutas) e as demais por valor decrescente. */
+const somaPorMoeda = (
+  items: { valorMoedaNegociada: number | null; moeda: string }[],
+): MoedaTotal[] => {
+  const map = new Map<string, number>()
+  for (const it of items) {
+    if (it.valorMoedaNegociada == null) continue
+    const moeda = moedaCodigo(it.moeda)
+    map.set(moeda, (map.get(moeda) ?? 0) + it.valorMoedaNegociada)
+  }
+  return [...map.entries()]
+    .map(([moeda, total]) => ({ moeda, total }))
+    .sort((a, b) => (a.moeda === 'USD' ? -1 : b.moeda === 'USD' ? 1 : b.total - a.total))
+}
+
+/** Formata um total na sua moeda (US$ / € / …); fallback para "1.234 XXX" se a
+ * moeda não for um código ISO reconhecido pelo Intl. */
+const fmtMoeda = (valor: number, moeda: string) => {
+  try {
+    return valor.toLocaleString('pt-BR', {
+      style: 'currency',
+      currency: moeda,
+      maximumFractionDigits: 0,
+    })
+  } catch {
+    return `${formatNumber(valor)} ${moeda}`
+  }
+}
+
+/** Footer de KPI: valor principal na moeda negociada (USD na frente, fonte
+ * maior) + as demais moedas menores embaixo (ex.: EUR) + descrição. */
+function KpiFooter({ totais, children }: { totais: MoedaTotal[]; children: React.ReactNode }) {
+  const [principal, ...resto] = totais
   return (
     <>
-      {total > 0 ? (
-        <div className="text-sm font-semibold text-foreground tabular-nums">{fmtBrl(total)}</div>
+      {principal ? (
+        <div className="text-sm font-semibold text-foreground tabular-nums">
+          {fmtMoeda(principal.total, principal.moeda)}
+        </div>
+      ) : null}
+      {resto.length > 0 ? (
+        <div className="flex flex-wrap gap-x-2 text-xs text-muted-foreground tabular-nums">
+          {resto.map((t) => (
+            <span key={t.moeda}>{fmtMoeda(t.total, t.moeda)}</span>
+          ))}
+        </div>
       ) : null}
       <div>{children}</div>
     </>
@@ -271,20 +322,17 @@ export default function GestaoPermutasPage() {
     passaFilial(c.invoice.filCod),
   )
 
-  // Consolidação em BRL por card: soma o valor de FACE (`valorBrl`, docMnyValor)
-  // dos itens de cada status. Disponível até em não-pagos (vem do list).
-  const somaBrl = (pred: (p: PermutaPendente) => boolean) =>
-    (data?.pendentes ?? []).reduce((acc, p) => (pred(p) ? acc + (p.valorBrl ?? 0) : acc), 0)
-  const brl = {
-    pendentes: somaBrl(() => true),
-    elegiveis: somaBrl((p) => p.status === 'elegivel'),
-    casamentoManual: somaBrl((p) => p.status === 'casamento-manual'),
-    jaPermutado: somaBrl((p) => p.status === 'ja-permutado'),
-    bloqueadas: somaBrl((p) => p.status === 'bloqueada'),
-    invoicesEmAberto: (data?.invoicesEmAberto ?? []).reduce(
-      (acc, i) => acc + (i.valorBrl ?? 0),
-      0,
-    ),
+  // Consolidação por MOEDA NEGOCIADA por card: USD como valor principal, demais
+  // moedas (EUR, …) menores embaixo. Soma `valorMoedaNegociada`; itens sem
+  // detalhe de moeda (ex.: não-pagos → null) não entram na soma.
+  const pend = data?.pendentes ?? []
+  const moedaTotais = {
+    pendentes: somaPorMoeda(pend),
+    elegiveis: somaPorMoeda(pend.filter((p) => p.status === 'elegivel')),
+    casamentoManual: somaPorMoeda(pend.filter((p) => p.status === 'casamento-manual')),
+    jaPermutado: somaPorMoeda(pend.filter((p) => p.status === 'ja-permutado')),
+    bloqueadas: somaPorMoeda(pend.filter((p) => p.status === 'bloqueada')),
+    invoicesEmAberto: somaPorMoeda(data?.invoicesEmAberto ?? []),
   }
 
   return (
@@ -324,7 +372,7 @@ export default function GestaoPermutasPage() {
               color="info"
               label="Adiantamentos pendentes"
               value={data.totais.pendentes}
-              footer={<KpiFooter total={brl.pendentes}>PROFORMA aguardando permuta</KpiFooter>}
+              footer={<KpiFooter totais={moedaTotais.pendentes}>PROFORMA aguardando permuta</KpiFooter>}
               tooltip="Mostrar todos os adiantamentos pendentes"
               active={filtro === 'todos'}
               onClick={() => mudarFiltro('todos')}
@@ -333,7 +381,7 @@ export default function GestaoPermutasPage() {
               color="danger"
               label="Bloqueadas"
               value={data.totais.bloqueadas}
-              footer={<KpiFooter total={brl.bloqueadas}>pendência de gate</KpiFooter>}
+              footer={<KpiFooter totais={moedaTotais.bloqueadas}>pendência de gate</KpiFooter>}
               tooltip="Filtrar a tabela pelas bloqueadas"
               active={filtro === 'bloqueada'}
               onClick={() => mudarFiltro('bloqueada')}
@@ -342,7 +390,7 @@ export default function GestaoPermutasPage() {
               color="info"
               label="Já permutado"
               value={data.totais.jaPermutado}
-              footer={<KpiFooter total={brl.jaPermutado}>concluído (permuta anterior)</KpiFooter>}
+              footer={<KpiFooter totais={moedaTotais.jaPermutado}>concluído (permuta anterior)</KpiFooter>}
               tooltip="Filtrar a tabela pelos já permutados"
               active={filtro === 'ja-permutado'}
               onClick={() => mudarFiltro('ja-permutado')}
@@ -351,13 +399,13 @@ export default function GestaoPermutasPage() {
               color="info"
               label="Invoices em aberto"
               value={data.totais.invoicesEmAberto}
-              footer={<KpiFooter total={brl.invoicesEmAberto}>finalizadas, a casar</KpiFooter>}
+              footer={<KpiFooter totais={moedaTotais.invoicesEmAberto}>finalizadas, a casar</KpiFooter>}
             />
             <SimpleKPI
               color="success"
               label="Elegíveis"
               value={data.totais.elegiveis}
-              footer={<KpiFooter total={brl.elegiveis}>passaram os 4 gates</KpiFooter>}
+              footer={<KpiFooter totais={moedaTotais.elegiveis}>passaram os 4 gates</KpiFooter>}
               tooltip="Filtrar a tabela pelos elegíveis"
               active={filtro === 'elegivel'}
               onClick={() => mudarFiltro('elegivel')}
@@ -366,7 +414,7 @@ export default function GestaoPermutasPage() {
               color="warning"
               label="Casamento manual"
               value={data.totais.casamentoManual}
-              footer={<KpiFooter total={brl.casamentoManual}>N:M, falta escolher invoice</KpiFooter>}
+              footer={<KpiFooter totais={moedaTotais.casamentoManual}>N:M, falta escolher invoice</KpiFooter>}
               tooltip="Filtrar a tabela pelos casamentos manuais (N:M)"
               active={filtro === 'casamento-manual'}
               onClick={() => mudarFiltro('casamento-manual')}
@@ -587,7 +635,7 @@ export default function GestaoPermutasPage() {
                                     <SelectItem key={inv.docCod} value={inv.docCod}>
                                       {inv.docCod} · {inv.referencia} ·{' '}
                                       {inv.valorMoedaNegociada != null
-                                        ? `${formatNumber(inv.valorMoedaNegociada)} ${inv.moeda}`
+                                        ? `${formatNumber(inv.valorMoedaNegociada)} ${moedaCodigo(inv.moeda)}`
                                         : inv.valorBrl != null
                                           ? `R$ ${formatNumber(inv.valorBrl)}`
                                           : '—'}
