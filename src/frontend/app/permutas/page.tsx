@@ -166,12 +166,22 @@ const parseBrl = (s: string): number => {
   return t.includes(',') ? Number(t.replace(/\./g, '').replace(',', '.')) : Number(t)
 }
 
-/** Campo rótulo/valor do painel de detalhe (expandir linha). */
-function Campo({ label, children }: { label: string; children: React.ReactNode }) {
+/** Campo rótulo/valor do painel de detalhe (expandir linha). `min-w-0` deixa o
+ * item do grid encolher e o texto quebrar (evita overflow invadir a coluna ao
+ * lado, ex.: nome longo de exportador). `className` permite col-span. */
+function Campo({
+  label,
+  className,
+  children,
+}: {
+  label: string
+  className?: string
+  children: React.ReactNode
+}) {
   return (
-    <div className="space-y-0.5">
+    <div className={cn('min-w-0 space-y-0.5', className)}>
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="text-sm font-medium tabular-nums">{children}</dd>
+      <dd className="text-sm font-medium tabular-nums break-words">{children}</dd>
     </div>
   )
 }
@@ -697,7 +707,9 @@ export default function GestaoPermutasPage() {
                                   <Campo label="Processo">{inv.priCod ?? '—'}</Campo>
                                   <Campo label="Referência">{inv.referencia}</Campo>
                                   <Campo label="Data de emissão">{fmtData(inv.dataEmissao)}</Campo>
-                                  <Campo label="Exportador">{inv.exportador}</Campo>
+                                  <Campo label="Exportador" className="sm:col-span-2">
+                                    {inv.exportador}
+                                  </Campo>
                                   <Campo label="Filial">{inv.filCod}</Campo>
                                   <Campo label="Valor (face)">
                                     {inv.valorBrl != null
