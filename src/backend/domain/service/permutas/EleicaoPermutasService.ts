@@ -580,9 +580,14 @@ export default class EleicaoPermutasService {
                 filCod,
             );
             if (enriched.variacao !== undefined) candidata.variacaoCambial = enriched.variacao;
+            // Taxa do adiantamento (do mesmo título lido na variação) — gravada
+            // também na LINHA do adiantamento p/ uniformizar com os não-elegíveis
+            // (antes só ia para o casamento `taxa_adiantamento`).
+            const taxaAdto = enriched.variacao?.taxaAdiantamento;
             if (
                 enriched.valorMoedaNegociadaAdto !== undefined ||
-                enriched.moedaNegociadaAdto !== undefined
+                enriched.moedaNegociadaAdto !== undefined ||
+                taxaAdto !== undefined
             ) {
                 candidata.adiantamento = {
                     ...candidata.adiantamento,
@@ -592,6 +597,7 @@ export default class EleicaoPermutasService {
                     ...(enriched.moedaNegociadaAdto !== undefined
                         ? { moedaNegociada: enriched.moedaNegociadaAdto }
                         : {}),
+                    ...(taxaAdto !== undefined ? { taxa: taxaAdto } : {}),
                 };
             }
             if (
