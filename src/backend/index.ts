@@ -8,6 +8,7 @@ import { buildCorsOptions } from './http/cors.js';
 import { errorMiddleware } from './http/errorMiddleware.js';
 import { globalLimiter, heavyRouteLimiter } from './http/rateLimit.js';
 import { requestIdMiddleware } from './middleware/requestId.js';
+import authRouter from './routes/auth.js';
 import conexosRouter from './routes/conexos.js';
 import permutasRouter from './routes/permutas.js';
 
@@ -56,10 +57,16 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 const APP_VERSION = process.env.npm_package_version ?? 'unknown';
 app.get('/health', (_req, res) => res.json({ status: 'ok', version: APP_VERSION }));
 
-// Supabase JWT validation — applied after CORS/rate-limit, before every API
-// route. Unauthenticated requests are rejected with HTTP 401. Validated env
-// (Zod) at boundary; `DEV_AUTH_BYPASS=true` skips it for local development.
-// Arch-review cards security-1 (Microsoft/Azure AD auth) / security-7.
+// Login route — PUBLIC, mounted BEFORE the auth middleware so unauthenticated
+// users can obtain a token. `POST /auth/login` validates username/password
+// against `app_user` and returns a self-signed HS256 JWT.
+app.use('/auth', authRouter);
+
+// JWT validation — applied after CORS/rate-limit, before every API route below.
+// Unauthenticated requests are rejected with HTTP 401. Validated env (Zod) at
+// boundary; `DEV_AUTH_BYPASS=true` skips it for local development. Tokens are
+// the app's own HS256 JWTs (signed by AuthService with AUTH_JWT_SECRET).
+// Arch-review cards security-1 / security-7.
 app.use(buildAuthMiddleware(loadAuthEnv()));
 
 // Stricter limiter on the Conexos-backed routes — their fan-out to the

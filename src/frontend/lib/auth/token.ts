@@ -1,34 +1,32 @@
 'use client'
 
 import { isDevAuthBypass } from './env'
-import { getSupabaseClient } from '../supabase'
+
+/** localStorage key holding the backend-issued JWT. */
+export const TOKEN_STORAGE_KEY = 'auth_token'
+/** localStorage key holding the signed-in username (for the header menu). */
+export const USERNAME_STORAGE_KEY = 'auth_username'
 
 /**
- * Returns the current Supabase access token, or `undefined` when there is no
- * session (or when dev-bypass is on — no token exists then). Used by the API
+ * Returns the current access token from `localStorage`, or `undefined` when
+ * there is none (or on the server, or when dev-bypass is on). Synchronous —
+ * the token lives in `localStorage` (no async session lookup). Used by the API
  * client to attach `Authorization: Bearer <token>` to backend requests.
- *
- * Arch-review cards security-1 / security-7.
  */
-export const getAccessToken = async (): Promise<string | undefined> => {
+export const getAccessToken = (): string | undefined => {
   if (isDevAuthBypass()) return undefined
-  try {
-    const supabase = getSupabaseClient()
-    const { data } = await supabase.auth.getSession()
-    return data.session?.access_token
-  } catch {
-    // Supabase not configured — treat as no token.
-    return undefined
-  }
+  if (typeof window === 'undefined') return undefined
+  return window.localStorage.getItem(TOKEN_STORAGE_KEY) ?? undefined
 }
 
 /**
  * Builds request headers with the bearer token attached when available.
- * Merges any caller-supplied headers (caller values take precedence).
+ * Kept `async` so callers (`lib/api.ts`) need no change. Merges any
+ * caller-supplied headers (caller values take precedence).
  */
 export const withAuthHeaders = async (
   base: Record<string, string> = {},
 ): Promise<Record<string, string>> => {
-  const token = await getAccessToken()
+  const token = getAccessToken()
   return token ? { Authorization: `Bearer ${token}`, ...base } : { ...base }
 }

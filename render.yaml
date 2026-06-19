@@ -1,0 +1,42 @@
+# Render Blueprint — Columbia Financeiro backend (Express, src/backend).
+# Deploy: Render reads this file from the repo root. Frontend is on Vercel and
+# the database on Supabase (see DEPLOY.md). Secret envs use sync:false so they
+# are set manually in the Render dashboard (never committed).
+services:
+  - type: web
+    name: financeiro-backend
+    runtime: node
+    rootDir: src/backend
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    # Runs migrations + admin seed before serving traffic on each deploy.
+    preDeployCommand: npm run migrate && npm run seed:admin
+    healthCheckPath: /health
+    envVars:
+      # Non-secret, fixed defaults.
+      - key: environment
+        value: production
+      - key: client_name
+        value: local
+      - key: DEV_AUTH_BYPASS
+        value: 'false'
+      - key: CONEXOS_BASE_URL
+        value: https://columbiatrading.conexos.cloud/api
+      # Secrets / per-deploy values — set in the Render dashboard.
+      - key: databaseConnectionString
+        sync: false
+      - key: AUTH_JWT_SECRET
+        sync: false
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: CONEXOS_USERNAME
+        sync: false
+      - key: CONEXOS_PASSWORD
+        sync: false
+      - key: CONEXOS_FIL_COD
+        sync: false

@@ -8,6 +8,19 @@ describe('loadAuthEnv', () => {
         expect(env).toEqual({ supabaseUrl: URL, jwtSecret: undefined, devBypass: false });
     });
 
+    it('parses AUTH_JWT_SECRET (app login HS256) with bypass off', () => {
+        const env = loadAuthEnv({ AUTH_JWT_SECRET: 'app-secret' } as NodeJS.ProcessEnv);
+        expect(env).toEqual({ supabaseUrl: undefined, jwtSecret: 'app-secret', devBypass: false });
+    });
+
+    it('prefers AUTH_JWT_SECRET over SUPABASE_JWT_SECRET', () => {
+        const env = loadAuthEnv({
+            AUTH_JWT_SECRET: 'app-secret',
+            SUPABASE_JWT_SECRET: 'legacy',
+        } as NodeJS.ProcessEnv);
+        expect(env.jwtSecret).toBe('app-secret');
+    });
+
     it('parses a legacy HS256 secret with bypass off', () => {
         const env = loadAuthEnv({ SUPABASE_JWT_SECRET: 'shhh' } as NodeJS.ProcessEnv);
         expect(env).toEqual({ supabaseUrl: undefined, jwtSecret: 'shhh', devBypass: false });

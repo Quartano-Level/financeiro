@@ -1,50 +1,63 @@
 /**
  * Tests for the access-token helper that powers `Authorization: Bearer`
- * injection. Supabase is mocked — no network calls.
+ * injection. The token now lives in `localStorage` (no Supabase) — a simple
+ * in-memory mock stands in for the browser store.
  */
 
-const getSessionMock = jest.fn()
+import { TOKEN_STORAGE_KEY } from '@/lib/auth/token'
 
-jest.mock('@/lib/supabase', () => ({
-  getSupabaseClient: () => ({
-    auth: { getSession: getSessionMock },
-  }),
-}))
+const store: Record<string, string> = {}
+
+const localStorageMock = {
+  getItem: (key: string): string | null => (key in store ? store[key] : null),
+  setItem: (key: string, value: string): void => {
+    store[key] = value
+  },
+  removeItem: (key: string): void => {
+    delete store[key]
+  },
+  clear: (): void => {
+    for (const key of Object.keys(store)) delete store[key]
+  },
+}
 
 describe('auth/token', () => {
   const ORIGINAL_ENV = process.env
 
   beforeEach(() => {
     jest.resetModules()
-    getSessionMock.mockReset()
+    localStorageMock.clear()
     process.env = { ...ORIGINAL_ENV }
+    Object.defineProperty(window, 'localStorage', {
+      value: localStorageMock,
+      configurable: true,
+    })
   })
 
   afterAll(() => {
     process.env = ORIGINAL_ENV
   })
 
-  it('returns the access token from the active session', async () => {
-    getSessionMock.mockResolvedValue({ data: { session: { access_token: 'tok-123' } } })
+  it('returns the access token from localStorage', async () => {
+    localStorageMock.setItem(TOKEN_STORAGE_KEY, 'tok-123')
     const { getAccessToken } = await import('@/lib/auth/token')
-    await expect(getAccessToken()).resolves.toBe('tok-123')
+    expect(getAccessToken()).toBe('tok-123')
   })
 
-  it('returns undefined when there is no session', async () => {
-    getSessionMock.mockResolvedValue({ data: { session: null } })
+  it('returns undefined when there is no token', async () => {
     const { getAccessToken } = await import('@/lib/auth/token')
-    await expect(getAccessToken()).resolves.toBeUndefined()
+    expect(getAccessToken()).toBeUndefined()
   })
 
-  it('returns undefined (no Supabase call) when dev-bypass is on', async () => {
+  it('returns undefined (ignores the stored token) when dev-bypass is on', async () => {
+    localStorageMock.setItem(TOKEN_STORAGE_KEY, 'tok-123')
     process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS = 'true'
     const { getAccessToken } = await import('@/lib/auth/token')
-    await expect(getAccessToken()).resolves.toBeUndefined()
-    expect(getSessionMock).not.toHaveBeenCalled()
+    expect(getAccessToken()).toBeUndefined()
   })
 
   it('withAuthHeaders attaches the Authorization header when a token exists', async () => {
-    getSessionMock.mockResolvedValue({ data: { session: { access_token: 'tok-abc' } } })
+    localStorageMock.setItem(TOKEN_STORAGE_KEY, 'tok-abc')
     const { withAuthHeaders } = await import('@/lib/auth/token')
     await expect(withAuthHeaders({ 'Content-Type': 'application/json' })).resolves.toEqual({
       Authorization: 'Bearer tok-abc',
@@ -53,7 +66,6 @@ describe('auth/token', () => {
   })
 
   it('withAuthHeaders omits the Authorization header when there is no token', async () => {
-    getSessionMock.mockResolvedValue({ data: { session: null } })
     const { withAuthHeaders } = await import('@/lib/auth/token')
     await expect(withAuthHeaders({ Accept: 'application/json' })).resolves.toEqual({
       Accept: 'application/json',

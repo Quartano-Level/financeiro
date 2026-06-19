@@ -1,6 +1,6 @@
 /**
- * Tests that RouteGate leaves public routes (/login, /auth/callback)
- * ungated and wraps every other route in the AuthGuard.
+ * Tests that RouteGate leaves the public route (/login) ungated and wraps
+ * every other route in the AuthGuard.
  */
 import { render, screen } from '@testing-library/react'
 
@@ -29,16 +29,6 @@ describe('RouteGate', () => {
     )
     expect(screen.queryByTestId('auth-guard')).not.toBeInTheDocument()
     expect(screen.getByText('page')).toBeInTheDocument()
-  })
-
-  it('does not gate the /auth/callback route', () => {
-    pathnameMock.mockReturnValue('/auth/callback')
-    render(
-      <RouteGate>
-        <div>page</div>
-      </RouteGate>,
-    )
-    expect(screen.queryByTestId('auth-guard')).not.toBeInTheDocument()
   })
 
   it('gates a protected route through the AuthGuard', () => {

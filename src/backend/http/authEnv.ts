@@ -30,6 +30,10 @@ import { z } from 'zod';
 const RawAuthEnvSchema = z.object({
     SUPABASE_URL: z.string().url().optional(),
     SUPABASE_JWT_SECRET: z.string().min(1).optional(),
+    // HS256 secret for the app's own login JWTs (simple username/password auth,
+    // no Supabase). Preferred over SUPABASE_JWT_SECRET when both are set. The
+    // AuthService signs with it; the middleware verifies HS256 tokens with it.
+    AUTH_JWT_SECRET: z.string().min(1).optional(),
     DEV_AUTH_BYPASS: z
         .enum(['true', 'false'])
         .optional()
@@ -68,9 +72,15 @@ export const loadAuthEnv = (env: NodeJS.ProcessEnv = process.env): AuthEnv => {
     const parsed = RawAuthEnvSchema.parse({
         SUPABASE_URL: env.SUPABASE_URL,
         SUPABASE_JWT_SECRET: env.SUPABASE_JWT_SECRET,
+        AUTH_JWT_SECRET: env.AUTH_JWT_SECRET,
         DEV_AUTH_BYPASS: env.DEV_AUTH_BYPASS,
         environment: env.environment,
     });
+
+    // The app signs its own login tokens with AUTH_JWT_SECRET (simple
+    // username/password auth). It is the HS256 secret used to BOTH sign and
+    // verify those tokens; SUPABASE_JWT_SECRET is the legacy fallback.
+    const jwtSecret = parsed.AUTH_JWT_SECRET ?? parsed.SUPABASE_JWT_SECRET;
 
     // Fail-fast: DEV_AUTH_BYPASS disables JWT validation entirely, so it must
     // never reach a deployed environment. Crossing the bypass flag with the
@@ -88,16 +98,16 @@ export const loadAuthEnv = (env: NodeJS.ProcessEnv = process.env): AuthEnv => {
         );
     }
 
-    if (!parsed.DEV_AUTH_BYPASS && !parsed.SUPABASE_URL && !parsed.SUPABASE_JWT_SECRET) {
+    if (!parsed.DEV_AUTH_BYPASS && !parsed.SUPABASE_URL && !jwtSecret) {
         throw new Error(
-            'SUPABASE_URL (preferred, JWKS/ES256) or SUPABASE_JWT_SECRET (legacy HS256) ' +
-                'is required unless DEV_AUTH_BYPASS=true.',
+            'AUTH_JWT_SECRET (app login HS256) or SUPABASE_URL (JWKS/ES256) or ' +
+                'SUPABASE_JWT_SECRET (legacy HS256) is required unless DEV_AUTH_BYPASS=true.',
         );
     }
 
     return {
         supabaseUrl: parsed.SUPABASE_URL,
-        jwtSecret: parsed.SUPABASE_JWT_SECRET,
+        jwtSecret,
         devBypass: parsed.DEV_AUTH_BYPASS,
     };
 };

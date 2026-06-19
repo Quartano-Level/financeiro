@@ -58,6 +58,7 @@ export async function fetchGestaoPermutas(): Promise<GestaoPermutasResponse> {
         bloqueadas: (json.pendentes ?? []).filter((p) => p.status === 'bloqueada').length,
         casamentoManual: (json.pendentes ?? []).filter((p) => p.status === 'casamento-manual')
           .length,
+        jaPermutado: (json.pendentes ?? []).filter((p) => p.status === 'ja-permutado').length,
       },
     }
   } catch {

@@ -14,6 +14,14 @@ export default class EnvironmentVars {
     public supabaseUrl?: string;
     public supabaseServiceRoleKey?: string;
 
+    /**
+     * HS256 secret used to SIGN the app's own login JWTs (read from
+     * `AUTH_JWT_SECRET`). The auth middleware validates these tokens with the
+     * same secret (`SUPABASE_JWT_SECRET`/`AUTH_JWT_SECRET`). Optional so local
+     * dev (DEV_AUTH_BYPASS) can boot before it is provisioned.
+     */
+    public authJwtSecret?: string;
+
     public environment: string;
     public clientName: string;
     public awsRegion: string;
@@ -27,6 +35,7 @@ export default class EnvironmentVars {
         conexosUsnCod,
         supabaseUrl,
         supabaseServiceRoleKey,
+        authJwtSecret,
         environment,
         clientName,
         awsRegion,
@@ -39,6 +48,7 @@ export default class EnvironmentVars {
         conexosUsnCod: string;
         supabaseUrl?: string;
         supabaseServiceRoleKey?: string;
+        authJwtSecret?: string;
         environment: string;
         clientName: string;
         awsRegion: string;
@@ -51,6 +61,7 @@ export default class EnvironmentVars {
         this.conexosUsnCod = conexosUsnCod;
         this.supabaseUrl = supabaseUrl;
         this.supabaseServiceRoleKey = supabaseServiceRoleKey;
+        this.authJwtSecret = authJwtSecret;
         this.environment = environment;
         this.clientName = clientName;
         this.awsRegion = awsRegion;
