@@ -640,7 +640,15 @@ export default class EleicaoPermutasService {
         // moeda do DOCUMENTO (BRL). Rotula `valorMoedaNegociada` na tela Gestão.
         const moedaNegociadaAdto = siglaMoedaNegociada(titAdto[0]);
         const moedaNegociadaInvoice = siglaMoedaNegociada(titInv[0]);
-        const principalMoeda = valorMoedaNegociadaInvoice ?? valorMoedaNegociadaAdto;
+        // A variação cambial deste casamento incide sobre o valor PERMUTADO por
+        // ESTE adiantamento — não sobre o total da invoice. A permuta abate o
+        // adiantamento contra a invoice (limitado ao MENOR dos dois): usar o
+        // total da invoice super-dimensiona o juros/desconto quando o
+        // adiantamento cobre só parte da invoice (ex.: adto 1.100 × invoice 2.200).
+        const principalMoeda =
+            valorMoedaNegociadaAdto !== undefined && valorMoedaNegociadaInvoice !== undefined
+                ? Math.min(valorMoedaNegociadaAdto, valorMoedaNegociadaInvoice)
+                : (valorMoedaNegociadaAdto ?? valorMoedaNegociadaInvoice);
         const enriched: {
             variacao?: PermutaCandidata['variacaoCambial'];
             valorMoedaNegociadaAdto?: number;
