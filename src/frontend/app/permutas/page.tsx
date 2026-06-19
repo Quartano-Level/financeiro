@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { fetchGestaoPermutas, processarAdiantamento } from '@/lib/api'
 import type {
   GestaoPermutasResponse,
+  InvoiceEmAberto,
   ProcessamentoStatus,
   StatusElegibilidade,
 } from '@/lib/types'
@@ -298,6 +299,16 @@ export default function GestaoPermutasPage() {
     [data],
   )
 
+  // Invoice casada de cada adiantamento (a partir dos casamentos automáticos) —
+  // usado no detalhe p/ o analista ver a cobertura (adto × invoice).
+  const invoiceByAdto = React.useMemo(() => {
+    const m = new Map<string, InvoiceEmAberto>()
+    for (const c of data?.casamentos ?? []) {
+      for (const a of c.adiantamentos) m.set(a.docCod, c.invoice)
+    }
+    return m
+  }, [data])
+
   const expBusca = filtroExportador.trim().toLowerCase()
   const pendentesFiltrados = (data?.pendentes ?? []).filter(
     (p) =>
@@ -537,6 +548,16 @@ export default function GestaoPermutasPage() {
                         delta != null && taxa != null && taxaInv != null && taxa !== taxaInv
                           ? delta / (taxa - taxaInv)
                           : null
+                      // Invoice casada + cobertura (adto / invoice) — quando parcial,
+                      // mostra que o adiantamento não supre a invoice inteira.
+                      const invCasada = invoiceByAdto.get(p.docCod)
+                      const cobertura =
+                        invCasada?.valorMoedaNegociada != null &&
+                        invCasada.valorMoedaNegociada > 0 &&
+                        p.valorMoedaNegociada != null &&
+                        p.valorMoedaNegociada < invCasada.valorMoedaNegociada
+                          ? (p.valorMoedaNegociada / invCasada.valorMoedaNegociada) * 100
+                          : null
                       return (
                         <React.Fragment key={p.docCod}>
                           <TableRow
@@ -588,6 +609,27 @@ export default function GestaoPermutasPage() {
                                   </Campo>
                                   <Campo label="Valor moeda negociada">
                                     <Moeda valor={p.valorMoedaNegociada} moeda={p.moeda} />
+                                  </Campo>
+                                  <Campo label="Invoice casada">
+                                    {invCasada ? (
+                                      <>
+                                        <span className="text-muted-foreground">
+                                          {invCasada.docCod}
+                                        </span>{' '}
+                                        ·{' '}
+                                        <Moeda
+                                          valor={invCasada.valorMoedaNegociada}
+                                          moeda={invCasada.moeda}
+                                        />
+                                        {cobertura != null ? (
+                                          <div className="text-xs font-normal text-warning-foreground">
+                                            parcial — adto cobre {formatNumber(cobertura)}%
+                                          </div>
+                                        ) : null}
+                                      </>
+                                    ) : (
+                                      '—'
+                                    )}
                                   </Campo>
                                   <Campo label="Saldo a permutar">
                                     {saldoBrl != null ? (
