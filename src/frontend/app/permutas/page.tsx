@@ -663,11 +663,13 @@ export default function GestaoPermutasPage() {
                                       ? ` · R$ ${formatNumber(d.variacaoResultado)}`
                                       : ''}
                                   </Campo>
-                                  <Campo label="Motivo">
-                                    {p.motivoBloqueio
-                                      ? (MOTIVO_LABEL[p.motivoBloqueio] ?? p.motivoBloqueio)
-                                      : '—'}
-                                  </Campo>
+                                  {/* Motivo só aparece quando há bloqueio — elegíveis
+                                      não têm motivo (evita o "—" inútil). */}
+                                  {p.motivoBloqueio ? (
+                                    <Campo label="Motivo">
+                                      {MOTIVO_LABEL[p.motivoBloqueio] ?? p.motivoBloqueio}
+                                    </Campo>
+                                  ) : null}
                                 </dl>
                                 {/* Conta da variação cambial — converte o valor permutado
                                     pelas 2 taxas e tira a diferença EM REAIS (igual à
