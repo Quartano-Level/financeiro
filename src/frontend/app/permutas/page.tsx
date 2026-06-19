@@ -288,14 +288,17 @@ export default function GestaoPermutasPage() {
   }, [])
 
   const [processando, setProcessando] = React.useState<string | null>(null)
-  // Invoice escolhida pelo analista por adiantamento N:M (docCod do adto → docCod da invoice).
-  const [invoiceSel, setInvoiceSel] = React.useState<Record<string, string>>({})
+  // Resolução do casamento manual N:M (modal): adiantamento em questão + invoice
+  // escolhida + valor a abater. null = modal fechado.
+  const [resolverManual, setResolverManual] = React.useState<PermutaPendente | null>(null)
+  const [invoiceManual, setInvoiceManual] = React.useState<string>('')
+  const [valorManual, setValorManual] = React.useState<string>('')
 
   const processar = React.useCallback(
-    async (adtoDocCod: string, adtoRef: string, invoiceDocCod: string) => {
+    async (adtoDocCod: string, adtoRef: string, invoiceDocCod: string, observacao?: string) => {
       setProcessando(adtoDocCod)
       try {
-        await processarAdiantamento(adtoDocCod, invoiceDocCod)
+        await processarAdiantamento(adtoDocCod, invoiceDocCod, observacao)
         toast.success(`Adiantamento ${adtoRef} processado`)
         await load()
       } catch (err) {
@@ -331,6 +334,26 @@ export default function GestaoPermutasPage() {
       setProcessando(null)
     }
   }, [confirmacao, load])
+
+  // Abre o modal de resolução manual já preenchendo o valor a abater com o valor
+  // negociado do adiantamento (editável pelo analista).
+  const abrirResolverManual = React.useCallback((p: PermutaPendente) => {
+    setResolverManual(p)
+    setInvoiceManual('')
+    setValorManual(p.valorMoedaNegociada != null ? String(p.valorMoedaNegociada) : '')
+  }, [])
+
+  // Lança o casamento manual: registra a invoice escolhida + o valor a abater
+  // (na observação) e processa o adiantamento.
+  const lancarManual = React.useCallback(async () => {
+    if (!resolverManual || !invoiceManual) return
+    const p = resolverManual
+    const obs = `Casamento manual N:M · invoice ${invoiceManual}${
+      valorManual ? ` · valor a abater ${valorManual} ${moedaCodigo(p.moeda)}` : ''
+    }`
+    setResolverManual(null)
+    await processar(p.docCod, p.docCod, invoiceManual, obs)
+  }, [resolverManual, invoiceManual, valorManual, processar])
 
   // Filiais distintas presentes nos pendentes (para o seletor de filial).
   const filiais = React.useMemo(
@@ -836,14 +859,12 @@ export default function GestaoPermutasPage() {
                       <TableHead>Código</TableHead>
                       <TableHead>Exportador</TableHead>
                       <TableHead className="text-right">Valor Moeda Negociada</TableHead>
-                      <TableHead>Invoice a casar</TableHead>
                       <TableHead className="text-right">Ação</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {casamentoManual.map((p) => {
                       const candidatas = p.candidatas ?? []
-                      const selecionada = invoiceSel[p.docCod]
                       return (
                         <TableRow key={p.docCod}>
                           <TableCell>{p.filCod}</TableCell>
@@ -857,51 +878,21 @@ export default function GestaoPermutasPage() {
                               </div>
                             ) : null}
                           </TableCell>
-                          <TableCell>
-                            {p.processamentoStatus === 'processado' ? (
-                              <span className="text-sm text-muted-foreground">—</span>
-                            ) : candidatas.length === 0 ? (
-                              <span className="text-sm text-muted-foreground">
-                                Sem invoices candidatas no processo
-                              </span>
-                            ) : (
-                              <Select
-                                value={selecionada ?? ''}
-                                onValueChange={(v) =>
-                                  setInvoiceSel((prev) => ({ ...prev, [p.docCod]: v }))
-                                }
-                              >
-                                <SelectTrigger className="min-w-[16rem]">
-                                  <SelectValue placeholder="Escolher invoice…" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {candidatas.map((inv) => (
-                                    <SelectItem key={inv.docCod} value={inv.docCod}>
-                                      {inv.docCod} · {inv.referencia} ·{' '}
-                                      {inv.valorMoedaNegociada != null
-                                        ? `${formatNumber(inv.valorMoedaNegociada)} ${moedaCodigo(inv.moeda)}`
-                                        : inv.valorBrl != null
-                                          ? `R$ ${formatNumber(inv.valorBrl)}`
-                                          : '—'}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            )}
-                          </TableCell>
                           <TableCell className="text-right">
                             {p.processamentoStatus === 'processado' ? (
                               <ProcessamentoBadge status="processado" />
+                            ) : candidatas.length === 0 ? (
+                              <span className="text-xs text-muted-foreground">
+                                Sem invoices candidatas
+                              </span>
                             ) : (
                               <Button
                                 size="sm"
-                                disabled={!selecionada || processando === p.docCod}
-                                onClick={() =>
-                                  selecionada &&
-                                  void processar(p.docCod, p.docCod, selecionada)
-                                }
+                                variant="outline"
+                                disabled={processando === p.docCod}
+                                onClick={() => abrirResolverManual(p)}
                               >
-                                {processando === p.docCod ? 'Processando…' : 'Processar'}
+                                {processando === p.docCod ? 'Processando…' : 'Resolver'}
                               </Button>
                             )}
                           </TableCell>
@@ -1161,6 +1152,100 @@ export default function GestaoPermutasPage() {
                       ).length
                     : 0}{' '}
                   adiantamento(s)
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Modal de resolução do casamento manual N:M */}
+          <Dialog
+            open={resolverManual !== null}
+            onOpenChange={(open) => {
+              if (!open) setResolverManual(null)
+            }}
+          >
+            <DialogContent size="md">
+              <DialogHeader>
+                <DialogTitle>
+                  Resolver casamento manual — Adiantamento {resolverManual?.docCod}
+                </DialogTitle>
+                <DialogDescription>
+                  Escolha a invoice do mesmo processo e o valor a abater, e lance a permuta.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogBody>
+                {resolverManual ? (
+                  <>
+                    <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
+                      <Campo label="Processo">{resolverManual.detalhe?.priCod ?? '—'}</Campo>
+                      <Campo label="Exportador">{resolverManual.exportador}</Campo>
+                      <Campo label="Valor moeda negociada">
+                        <Moeda
+                          valor={resolverManual.valorMoedaNegociada}
+                          moeda={resolverManual.moeda}
+                        />
+                      </Campo>
+                      <Campo label="Taxa adiantamento">
+                        {resolverManual.detalhe?.taxaAdiantamento != null
+                          ? fmtTaxa(resolverManual.detalhe.taxaAdiantamento)
+                          : '—'}
+                      </Campo>
+                      <Campo label="Saldo a permutar">
+                        {resolverManual.detalhe?.valorPermutar != null
+                          ? `R$ ${formatNumber(resolverManual.detalhe.valorPermutar)}`
+                          : '—'}
+                      </Campo>
+                      <Campo label="D.I / DUIMP">
+                        {resolverManual.detalhe?.declaracao?.variante ?? '—'}
+                      </Campo>
+                    </dl>
+                    <div className="mt-4 space-y-3">
+                      <div className="space-y-1">
+                        <label htmlFor="manual-invoice" className="text-sm font-medium">
+                          Invoice a casar
+                        </label>
+                        <Select value={invoiceManual} onValueChange={setInvoiceManual}>
+                          <SelectTrigger id="manual-invoice">
+                            <SelectValue placeholder="Escolher invoice…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(resolverManual.candidatas ?? []).map((inv) => (
+                              <SelectItem key={inv.docCod} value={inv.docCod}>
+                                {inv.docCod} · {inv.referencia} ·{' '}
+                                {inv.valorMoedaNegociada != null
+                                  ? `${formatNumber(inv.valorMoedaNegociada)} ${moedaCodigo(inv.moeda)}`
+                                  : '—'}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <label htmlFor="manual-valor" className="text-sm font-medium">
+                          Valor a abater ({moedaCodigo(resolverManual.moeda)})
+                        </label>
+                        <Input
+                          id="manual-valor"
+                          type="number"
+                          inputMode="decimal"
+                          value={valorManual}
+                          onChange={(e) => setValorManual(e.target.value)}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Padrão = valor negociado do adiantamento. Ajuste se a permuta abater só
+                          parte.
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+              </DialogBody>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setResolverManual(null)}>
+                  Cancelar
+                </Button>
+                <Button disabled={!invoiceManual} onClick={() => void lancarManual()}>
+                  Lançar permuta
                 </Button>
               </DialogFooter>
             </DialogContent>

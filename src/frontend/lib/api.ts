@@ -75,13 +75,17 @@ export async function fetchGestaoPermutas(): Promise<GestaoPermutasResponse> {
 export async function processarAdiantamento(
   docCod: string,
   invoiceDocCod?: string,
+  observacao?: string,
 ): Promise<void> {
   const res = await fetch(
     `${API}/permutas/adiantamentos/${encodeURIComponent(docCod)}/processar`,
     {
       method: 'POST',
       headers: await withAuthHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify(invoiceDocCod ? { invoiceDocCod } : {}),
+      body: JSON.stringify({
+        ...(invoiceDocCod ? { invoiceDocCod } : {}),
+        ...(observacao ? { observacao } : {}),
+      }),
     },
   )
   if (!res.ok) {
