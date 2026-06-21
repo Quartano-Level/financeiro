@@ -2,10 +2,15 @@
 name: Invoice
 type: entity
 ontology_version: "0.2"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - src/backend/domain/client/ConexosClient.ts
+  - src/backend/domain/service/permutas/EleicaoPermutasService.ts
+  - src/backend/domain/service/permutas/AlocacaoPermutasService.ts
+  - src/backend/domain/repository/permutas/PermutaRelationalRepository.ts
+  - src/backend/migrations/0009_invoice_taxa.sql
 properties:
   - docCod
   - priCod
@@ -17,7 +22,8 @@ properties:
 relationships:
   - "Invoice N—1 Adiantamento (mesmo priCod; casamento via casarInvoice)"
   - "Invoice 1—1 PermutaCandidata (lado-crédito da candidata, quando casada)"
-last_review: 2026-06-17
+  - "Invoice 1—N Permuta (lado-crédito da alocação; pode ser cross-process, ADR-0008)"
+last_review: 2026-06-21
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente I (adiantamento ↔ invoice)"
   - "docs-contexto/03_ontologia_financeiro.md §2 Frente I"

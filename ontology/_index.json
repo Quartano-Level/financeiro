@@ -1,12 +1,12 @@
 {
   "_meta": {
-    "generated": "2026-06-18",
-    "version": "0.2.2",
-    "note": "Financeiro ontology — first domain modelling (Frente I Permutas, Fatia 1, READ-ONLY) via /feature-new permutas-painel-elegiveis (ADR-0004 + addenda). Entities/actions/rules below are modelled but NOT YET implemented in code (no src/ changes in this feature — ontology-only proposal). Implementation files map will be filled by TaskScoper/AutoLoopRunner. v0.2.2: network probe (dev tenant Columbia, 2026-06-18, filCod=2, 410 real adiantamentos) RESOLVED P0-3 (filter wire key = docVldTipoAdto=1 / FinDocCab) and P0-4 (data-base wire fields cdiDtaCi imp019 / dioDtaDesembaraco imp223; XOR confirmed; aging populates). NO P0 gaps remain. NEW gap gate-3-pago-via-detail (P1): TOTALMENTE PAGO status null in com298/list — likely detail endpoint. See ontology/_inbox/permutas-painel-elegiveis-interview.md.",
+    "generated": "2026-06-21",
+    "version": "0.2.8",
+    "note": "Financeiro ontology — Frente I (Permutas). SYNC 2026-06-21 (commit df90fa6, deployed): the 5 permuta features of this session (ADR-0006 ingestão manual; pagamento parcial; ADR-0007 cliente-filtro + permuta-manual; ADR-0008 alocação N:M cross-process; ADR-0009 tipos de permuta/abas) are now IMPLEMENTED in src/ and mapped below. Previous stamp (v0.2.2, 2026-06-18) said 'no src/ implementation' — that is now stale: Fatia 1 read/elegibilidade + the manual N:M allocation are live. NEW entities: Permuta (consumada/alocação — partial: alocação implementada, write-back fin010 = Fase 3 = planned) and ClienteFiltro (implemented). NEW state PERMUTA_MANUAL in the elegibilidade state-machine; derived tipoPermuta (presentation, not a state). Risco arquitetural #1 (write-back fin010 / ação reconciliarPermuta) remains PLANNED (Fase 3). Open gap gate-3-pago-via-detail RESOLVED in impl (detail endpoint getDetalheTitulos reads mnyTitValor/mnyTitAberto).",
     "upstream": "../../produtizacao/nf-projects",
     "status_legend": {
-      "implemented": "code in src/ implements the entity/action under the target architecture",
-      "partial": "code exists but does not yet meet the target architecture (DDD, tsyringe, Lambda)",
+      "implemented": "code in src/ implements the entity/action (runs in the current Express/Render stack; DDD service/repo chain)",
+      "partial": "core implemented, but a material part of the entity/action is not yet implemented (e.g. Permuta: alocação live, write-back fin010 pending)",
       "planned": "no code yet",
       "planned-migration": "ontology imported from upstream; local code does not implement it (yet) — track in migration-debt"
     }
@@ -14,66 +14,136 @@
   "entities": {
     "Adiantamento": {
       "file": "entities/adiantamento.md",
-      "status": "planned",
-      "impl_files": [],
-      "resolved_by": ["P0-3 (filter wire key docVldTipoAdto=1 / FinDocCab; probe 2026-06-18)"],
-      "open_gap": ["gate-3-pago-via-detail (P1): TOTALMENTE PAGO null in com298/list"],
-      "read_scaffold": ["src/backend/domain/client/ConexosClient.ts (listFinanceiroAPagar, getMnyTitPermutar)"]
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/client/ConexosClient.ts",
+        "src/backend/domain/client/permutas/conexosPermutasConstants.ts",
+        "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
+        "src/backend/domain/repository/permutas/PermutaRelationalRepository.ts",
+        "src/backend/migrations/0010_adiantamento_pagamento_parcial.sql",
+        "src/backend/migrations/0011_adiantamento_importador.sql"
+      ],
+      "resolved_by": ["P0-3 (filter wire key docVldTipoAdto=1 / FinDocCab; probe 2026-06-18)", "gate-3-pago-via-detail (valorTotal/valorAberto via getDetalheTitulos; migration 0010)"],
+      "note": "Gate 3 (TOTALMENTE PAGO) + progresso de pagamento (% pago/falta) resolvidos pelo endpoint de detalhe (mnyTitValor/mnyTitAberto). pesCod/importador hidratados via imp021 (migration 0011) p/ roteamento cliente-filtro."
     },
     "Invoice": {
       "file": "entities/invoice.md",
-      "status": "planned",
-      "impl_files": [],
-      "read_scaffold": ["src/backend/domain/client/ConexosClient.ts (listFinanceiroAPagar)"]
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/client/ConexosClient.ts",
+        "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
+        "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
+        "src/backend/domain/repository/permutas/PermutaRelationalRepository.ts",
+        "src/backend/migrations/0009_invoice_taxa.sql"
+      ]
     },
     "DeclaracaoImportacao": {
       "file": "entities/declaracao-importacao.md",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/client/ConexosClient.ts",
+        "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
+        "src/backend/domain/service/permutas/AlocacaoPermutasService.ts"
+      ],
       "resolved_by": ["P0-4 (dataBase wire fields cdiDtaCi imp019 / dioDtaDesembaraco imp223; probe 2026-06-18; XOR confirmed in real data)"],
-      "note": "Re-introduz reads imp019/imp223 podados no ADR-0003 (escopo data-base/existência). data-base wire fields confirmed; aging populates."
+      "note": "Gate 4 (D.I XOR DUIMP) na permuta automática; na alocação cross-process a invoice escolhida DEVE ter D.I (data-base/variação vem dela). Adto cliente-filtro dispensa Gate 4 (ADR-0007)."
     },
     "VariacaoCambial": {
       "file": "entities/variacao-cambial.md",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/permutas/VariacaoCambialPermutaService.ts",
+        "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
+        "src/backend/domain/client/ConexosClient.ts",
+        "src/backend/migrations/0008_adiantamento_taxa.sql",
+        "src/backend/migrations/0009_invoice_taxa.sql"
+      ],
       "resolved_by": ["P0-1", "P1-2"],
-      "build_probe": ["com308 doc-source for taxaAdiantamento/taxaInvoice/principalMoeda"],
-      "read_scaffold": ["src/backend/domain/client/ConexosClient.ts (listTitulosAPagar)"]
+      "note": "Classificação juros/desconto por comparação de TAXA. Na alocação (Permuta): delta = valorAlocado × (taxaAdto − taxaInvoice), data-base = D.I da invoice (ADR-0008)."
     },
     "PermutaCandidata": {
       "file": "entities/permuta-candidata.md",
-      "status": "planned",
-      "impl_files": [],
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
+        "src/backend/domain/service/permutas/GestaoPermutasService.ts",
+        "src/backend/domain/service/permutas/IngestaoPermutasService.ts",
+        "src/backend/domain/repository/permutas/PermutaRelationalRepository.ts",
+        "src/backend/domain/repository/permutas/PermutaSnapshotRepository.ts",
+        "src/backend/domain/interface/permutas/PermutaCandidata.ts",
+        "src/backend/migrations/0012_estado_permuta_manual.sql",
+        "src/frontend/app/permutas/page.tsx"
+      ],
       "resolved_by": ["P0-6", "P0-8", "P0-5", "P0-4 (aging column read; probe 2026-06-18)"],
-      "open_gap": ["gate-3-pago-via-detail (P1)"],
-      "note": "Permuta consumada (fin010) é Fatia 2 — fora de escopo. Shape 1:1; N:M → backlog (composto-nm)."
+      "note": "Estados: descoberta|elegivel|casamento-manual|permuta-manual|bloqueada (migration 0012). Classificação derivada tipoPermuta (simples/multiplas/cross-over/cross-process, ADR-0009) calculada em GestaoPermutasService — não persiste."
+    },
+    "Permuta": {
+      "file": "entities/permuta.md",
+      "status": "partial",
+      "impl_files": [
+        "src/backend/migrations/0014_permuta_alocacao.sql",
+        "src/backend/domain/repository/permutas/PermutaAlocacaoRepository.ts",
+        "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
+        "src/backend/domain/service/permutas/GestaoPermutasService.ts",
+        "src/backend/domain/errors/AlocacaoSaldoError.ts",
+        "src/backend/routes/permutas.ts",
+        "src/frontend/app/permutas/page.tsx"
+      ],
+      "open_gap": ["write-back-fin010 (Fase 3): a baixa efetiva no ERP (ação reconciliarPermuta) não existe — risco arquitetural #1"],
+      "note": "A Permuta consumada nasce como ALOCAÇÃO rascunho (permuta_alocacao, sobrevive à re-ingestão), READ-ONLY no ERP (ADR-0008). Invariantes de saldo (Σ por adto ≤ saldo a permutar; Σ por invoice ≤ valor em aberto), mesma filial, mesma moeda, invoice com D.I. partial: alocação implementada, write-back fin010 = Fase 3 = planned."
+    },
+    "ClienteFiltro": {
+      "file": "entities/cliente-filtro.md",
+      "status": "implemented",
+      "impl_files": [
+        "src/backend/migrations/0013_cliente_filtro.sql",
+        "src/backend/migrations/0011_adiantamento_importador.sql",
+        "src/backend/domain/repository/permutas/ClienteFiltroRepository.ts",
+        "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
+        "src/backend/routes/permutas.ts",
+        "src/frontend/app/permutas/clientes-filtro/page.tsx"
+      ],
+      "note": "Entidade de CONFIGURAÇÃO: estrutura (regra de roteamento por importador) na ontologia; valores (quais importadores) são config do cliente (cliente_filtro). Roteia adtos pago+saldo para permuta-manual (ADR-0007)."
     }
   },
   "actions": {
-    "elegerAdiantamentos": { "file": "actions/eleger-adiantamentos.md", "entity": "Adiantamento", "status": "planned", "impl_files": [], "resolved_by": ["P0-3 (docVldTipoAdto=1; probe 2026-06-18)", "P0-7"] },
-    "avaliarElegibilidade": { "file": "actions/avaliar-elegibilidade.md", "entity": "PermutaCandidata", "status": "planned", "impl_files": [], "resolved_by": ["P0-4 (Gate 4 dataBase via cdiDtaCi/dioDtaDesembaraco; probe 2026-06-18)"], "open_gap": ["gate-3-pago-via-detail (P1): Gate 3 source null in com298/list"] },
-    "casarInvoice": { "file": "actions/casar-invoice.md", "entity": "Invoice", "status": "planned", "impl_files": [], "resolved_by": ["P0-6", "P0-5"] },
-    "calcularVariacaoCambial": { "file": "actions/calcular-variacao-cambial.md", "entity": "VariacaoCambial", "status": "planned", "impl_files": [], "resolved_by": ["P0-1"], "build_probe": ["com308 doc-source for rate/principal"] },
-    "exporNoPainel": { "file": "actions/expor-no-painel.md", "entity": "PermutaCandidata", "status": "planned", "impl_files": [], "resolved_by": ["P0-8", "P0-4 (aging column populates; probe 2026-06-18)"] }
+    "elegerAdiantamentos": { "file": "actions/eleger-adiantamentos.md", "entity": "Adiantamento", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts", "src/backend/domain/service/permutas/IngestaoPermutasService.ts"], "resolved_by": ["P0-3 (docVldTipoAdto=1; probe 2026-06-18)", "P0-7"], "note": "Override de roteamento cliente-filtro → permuta-manual (ADR-0007). Trigger manual POST /permutas/ingestao + cron (ADR-0006)." },
+    "avaliarElegibilidade": { "file": "actions/avaliar-elegibilidade.md", "entity": "PermutaCandidata", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts"], "resolved_by": ["P0-4 (Gate 4 dataBase via cdiDtaCi/dioDtaDesembaraco; probe 2026-06-18)", "gate-3-pago-via-detail (resolvido via getDetalheTitulos)"] },
+    "casarInvoice": { "file": "actions/casar-invoice.md", "entity": "Invoice", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts"], "resolved_by": ["P0-6", "P0-5"] },
+    "calcularVariacaoCambial": { "file": "actions/calcular-variacao-cambial.md", "entity": "VariacaoCambial", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/VariacaoCambialPermutaService.ts", "src/backend/domain/service/permutas/AlocacaoPermutasService.ts"], "resolved_by": ["P0-1"] },
+    "exporNoPainel": { "file": "actions/expor-no-painel.md", "entity": "PermutaCandidata", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/GestaoPermutasService.ts", "src/frontend/app/permutas/page.tsx"], "resolved_by": ["P0-8", "P0-4 (aging column populates; probe 2026-06-18)"] },
+    "alocarPermuta": { "file": null, "entity": "Permuta", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/AlocacaoPermutasService.ts", "src/backend/domain/repository/permutas/PermutaAlocacaoRepository.ts"], "note": "Implementada (alocação N:M cross-process, ADR-0008). Documentada na entity Permuta; arquivo de ação dedicado a criar numa próxima curadoria se necessário." },
+    "buscarInvoiceCrossProcess": { "file": null, "entity": "Permuta", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/AlocacaoPermutasService.ts"], "note": "buscarInvoices(priCod, filCod) — busca LIVE escopada à filial, valida D.I, mesma moeda (ADR-0008/0009)." },
+    "reconciliarPermuta": { "file": null, "entity": "Permuta", "status": "planned", "impl_files": [], "open_gap": ["write-back-fin010 (Fase 3)"], "note": "Baixa efetiva no ERP (fin010) — risco arquitetural #1. NÃO implementada." }
   },
   "business_rules": {
-    "elegibilidade-permuta": { "file": "business-rules/elegibilidade-permuta.md", "invariant": "I3", "has_canonical_test": false, "resolved_by": ["P0-6", "P0-5"], "open_gap": ["gate-3-pago-via-detail (P1)"] },
-    "di-xor-duimp": { "file": "business-rules/di-xor-duimp.md", "invariant": "I2", "has_canonical_test": false, "resolved_by": ["P0-4 (dataBase read + XOR confirmed in real data; probe 2026-06-18)"] },
-    "classificacao-juros-desconto": { "file": "business-rules/classificacao-juros-desconto.md", "status": "draft", "has_canonical_test": false, "resolved_by": ["P0-1", "P1-2"], "build_probe": ["doc-source of rate/principal"] },
-    "aging-anchor": { "file": "business-rules/aging-anchor.md", "status": "draft", "has_canonical_test": false, "resolved_by": ["P0-8", "P0-4 (dataBase read; probe 2026-06-18)"] }
+    "elegibilidade-permuta": { "file": "business-rules/elegibilidade-permuta.md", "invariant": "I3", "status": "implemented", "has_canonical_test": false, "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts"], "resolved_by": ["P0-6", "P0-5", "gate-3-pago-via-detail"] },
+    "di-xor-duimp": { "file": "business-rules/di-xor-duimp.md", "invariant": "I2", "status": "implemented", "has_canonical_test": false, "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts"], "resolved_by": ["P0-4 (dataBase read + XOR confirmed in real data; probe 2026-06-18)"] },
+    "classificacao-juros-desconto": { "file": "business-rules/classificacao-juros-desconto.md", "status": "implemented", "has_canonical_test": false, "impl_files": ["src/backend/domain/service/permutas/VariacaoCambialPermutaService.ts"], "resolved_by": ["P0-1", "P1-2"] },
+    "aging-anchor": { "file": "business-rules/aging-anchor.md", "status": "implemented", "has_canonical_test": false, "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts"], "resolved_by": ["P0-8", "P0-4 (dataBase read; probe 2026-06-18)"] }
   },
   "state_machines": {
-    "elegibilidade-permuta-candidata": { "file": "state-machines/elegibilidade-permuta-candidata.md", "entity": "PermutaCandidata", "status": "planned" }
+    "elegibilidade-permuta-candidata": {
+      "file": "state-machines/elegibilidade-permuta-candidata.md",
+      "entity": "PermutaCandidata",
+      "status": "partial",
+      "impl_files": [
+        "src/backend/migrations/0005_estado_casamento_manual.sql",
+        "src/backend/migrations/0012_estado_permuta_manual.sql",
+        "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
+        "src/backend/domain/service/permutas/GestaoPermutasService.ts"
+      ],
+      "note": "States descoberta|elegivel|casamento-manual|permuta-manual|bloqueada implementados (T1-T4). EXECUTADA (baixa fin010) = Fase 3 = planned → partial."
+    }
   },
   "integrations": {
     "conexos": {
       "file": "integrations/conexos.md",
       "direction": "read-only",
-      "status": "partial",
-      "impl_files": ["src/backend/domain/client/ConexosClient.ts"],
-      "resolved_by": ["P0-3 (docVldTipoAdto=1; probe 2026-06-18)", "P0-4 (cdiDtaCi / dioDtaDesembaraco; probe 2026-06-18)", "P0-7"],
-      "open_gap": ["gate-3-pago-via-detail (P1): TOTALMENTE PAGO null in com298/list"]
+      "status": "implemented",
+      "impl_files": ["src/backend/domain/client/ConexosClient.ts", "src/backend/domain/client/permutas/conexosPermutasConstants.ts", "src/backend/domain/client/permutas/conexosPermutasSchemas.ts"],
+      "resolved_by": ["P0-3 (docVldTipoAdto=1; probe 2026-06-18)", "P0-4 (cdiDtaCi / dioDtaDesembaraco; probe 2026-06-18)", "P0-7", "gate-3-pago-via-detail (getDetalheTitulos)"],
+      "note": "READ-ONLY (I4) — leitura de adtos/invoices/D.I + detalhe (mnyTitValor/mnyTitAberto) + busca live cross-process (com308, imp019/imp223). Write-back fin010 (escrita) = Fase 3 = planned."
     }
   },
   "ui_flows": {},

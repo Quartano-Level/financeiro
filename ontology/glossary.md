@@ -14,6 +14,11 @@ Termos transversais da plataforma (tenant, filial/`filCod`, ERP Conexos) vivem e
 | **Invoice / Fatura** | Fatura definitiva do exportador. Lado "crédito" da permuta. |
 | **Caso 1:1 (direto)** | Uma proforma casa exatamente com uma invoice em um processo — permuta automática, sem intervenção. |
 | **Caso N:M (composto)** | Múltiplas proformas/invoices a alocar — exige aprovação e alocação de valores pelo analista. |
+| **Alocação** | Link adto↔invoice com **valor parcial** em moeda negociada (entidade `Permuta`, tabela `permuta_alocacao`). Rascunho editável; sobrevive à re-ingestão. A baixa no ERP (`fin010`) é a Fase 3. |
+| **Casamento manual** | N:M **no mesmo processo** que passou nos 4 gates: falta o analista alocar a(s) invoice(s) (ADR-0005). Tipos `multiplas` (1 adto→N inv) e `cross-over` (N adtos↔M inv). |
+| **Permuta manual / cross-process** | Adto de **cliente-filtro** (pago + saldo, sem D.I no processo): a invoice vem de **outro processo**, escolhida manualmente (ADR-0007). Tipo `cross-process`. |
+| **Cliente filtro** | Importador cadastrado cujos adiantamentos a pipeline roteia para `permuta-manual` em vez de `bloqueada` (entidade `ClienteFiltro`, ADR-0007). Lista mantida pelo analista (config do cliente). |
+| **tipoPermuta** | Rótulo **derivado** (apresentação/abas), não persistido: `simples` / `multiplas` / `cross-over` / `cross-process` (ADR-0009). |
 | **Backlog elegível** | Pendências com adiantamento pago + INVOICE disponível, prontas para permuta, com idade (aging). |
 | **Pendência bloqueada** | Caso que depende de terceiros (ex.: INVOICE ainda não emitida) — reportado, não contado como falha. |
 

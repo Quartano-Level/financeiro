@@ -3,6 +3,33 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.2.8 — sync ontologia ↔ código deployado (2026-06-21, commit df90fa6)
+
+Curadoria de sincronização (a ontologia havia ficado defasada das 5 features de permutas mergeadas
+na `main`/deployadas). Sem novas decisões de domínio — materializa o que os ADRs 0006-0009 já
+decidiram e alinha o metadado ao `src/`.
+
+- **Nova entidade `Permuta`** (`entities/permuta.md`) — a Permuta consumada / **alocação** (era
+  backlog "Fatia 2" no `permuta-candidata.md`). Hoje = ALOCAÇÃO rascunho (`permuta_alocacao`),
+  READ-ONLY no ERP. `implementation_status: partial` (alocação implementada; baixa `fin010` /
+  ação `reconciliarPermuta` = **Fase 3 = planned**, risco arquitetural #1). ADR-0008.
+- **Nova entidade `ClienteFiltro`** (`entities/cliente-filtro.md`) — config de roteamento por
+  importador (`cliente_filtro`) que roteia adtos pago+saldo para `permuta-manual`.
+  `implementation_status: implemented`. Estrutura na ontologia; valores = config do cliente. ADR-0007.
+- **State-machine** `elegibilidade-permuta-candidata` ganhou o estado **`PERMUTA_MANUAL`** (T4,
+  cliente-filtro: pago+saldo, D.I dispensada, cross-process) + a classificação **derivada
+  `tipoPermuta`** (simples/multiplas/cross-over/cross-process, ADR-0009). Status `partial`
+  (EXECUTADA/baixa fin010 = Fase 3).
+- **Sync de status/impl_files**: as entidades/ações/regras da Fatia 1 (Adiantamento, Invoice,
+  DeclaracaoImportacao, VariacaoCambial, PermutaCandidata; 5 ações; 4 business-rules; integração
+  Conexos) passaram de `planned` → `implemented` com `impl_files` reais. `_index.json`/
+  `_coverage.json` re-carimbados v0.2.2 → **v0.2.7** (cobertura entidades 93%, ações 88%).
+- Gap **gate-3-pago-via-detail** RESOLVIDO na impl (status TOTALMENTE PAGO + progresso de pagamento
+  via `getDetalheTitulos`: `mnyTitValor`/`mnyTitAberto`, migration 0010). Adiantamento ganhou as
+  propriedades `valorTotal`/`valorAberto`/`pesCod`/`importador`.
+- Interview/tasks da Fatia 1 (já mergeada) **arquivados** em `_inbox/archive/` (não disparam mais
+  o gate de PR de `entity_changed`).
+
 ## v0.2.7 (2026-06-21) — tipos de permuta em abas + topo resumo (ADR-0009)
 
 Refinamento de apresentação (sem novo estado no banco). Classificação DERIVADA `tipoPermuta`

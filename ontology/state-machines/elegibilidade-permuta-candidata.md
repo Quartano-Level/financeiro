@@ -3,12 +3,16 @@ name: elegibilidade-permuta-candidata
 type: state-machine
 entity: PermutaCandidata
 ontology_version: "0.2"
-implementation_status: planned
+implementation_status: partial
 status: draft
 owners: [yuri]
-related_files: []
-last_review: 2026-06-18
-states: [DESCOBERTA, ELEGIVEL, CASAMENTO_MANUAL, BLOQUEADA]
+related_files:
+  - src/backend/migrations/0005_estado_casamento_manual.sql
+  - src/backend/migrations/0012_estado_permuta_manual.sql
+  - src/backend/domain/service/permutas/EleicaoPermutasService.ts
+  - src/backend/domain/service/permutas/GestaoPermutasService.ts
+last_review: 2026-06-21
+states: [DESCOBERTA, ELEGIVEL, CASAMENTO_MANUAL, PERMUTA_MANUAL, BLOQUEADA]
 out_of_scope_states: [EXECUTADA]
 ---
 
@@ -24,8 +28,9 @@ out_of_scope_states: [EXECUTADA]
 |-----------|-------|-------------|
 | `DESCOBERTA` | `'descoberta'` | Adiantamento eleito; ainda não avaliado. |
 | `ELEGIVEL` | `'elegivel'` | Passou nos 4 gates **E** tem exatamente 1 INVOICE casada (I3) — auto 1:1. |
-| `CASAMENTO_MANUAL` | `'casamento-manual'` | Passou nos **4 gates**, mas o casamento é **N:M** (>1 INVOICE FINALIZADA): falta **só o analista escolher a invoice**. **Não é reprovação** (≠ BLOQUEADA). Escopo: motivos `composto-nm` / `multiplas-invoices` (ADR-0005). Mantém o motivo informativo. |
-| `BLOQUEADA` | `'bloqueada'` | Falhou ≥1 gate, sem INVOICE casada (0), ou data-base indisponível. Reportada **com motivo** (taxonomia abaixo), não é falha. **N:M deixou de cair aqui** (→ `CASAMENTO_MANUAL`, ADR-0005). |
+| `CASAMENTO_MANUAL` | `'casamento-manual'` | Passou nos **4 gates**, mas o casamento é **N:M** (>1 INVOICE FINALIZADA) **no mesmo processo**: falta **só o analista escolher/alocar a invoice**. **Não é reprovação** (≠ BLOQUEADA). Escopo: motivos `composto-nm` / `multiplas-invoices` (ADR-0005). Mantém o motivo informativo. |
+| `PERMUTA_MANUAL` | `'permuta-manual'` | Adto de **cliente-filtro** (importador cadastrado, `ClienteFiltro`/ADR-0007) **pago e com saldo a permutar**, pronto para **permuta manual CROSS-PROCESS** (a invoice vem de OUTRO processo, escolhida pelo analista). **Gate 4 (D.I) NÃO é exigido** — a D.I/data-base virá da invoice escolhida. Motivo informativo: `cliente-filtro`. **Não é reprovação** (≠ BLOQUEADA). |
+| `BLOQUEADA` | `'bloqueada'` | Falhou ≥1 gate, sem INVOICE casada (0), ou data-base indisponível. Reportada **com motivo** (taxonomia abaixo), não é falha. **N:M deixou de cair aqui** (→ `CASAMENTO_MANUAL`, ADR-0005); adto de cliente-filtro pago+saldo também sai daqui (→ `PERMUTA_MANUAL`, ADR-0007). |
 
 ## Taxonomia de motivos do estado `BLOQUEADA` (P0-5/P0-6/P0-8 — RESOLVIDO)
 
@@ -40,6 +45,12 @@ Toda candidata `bloqueada` carrega um **motivo** (`PermutaCandidata.motivoBloque
 | Data-base indisponível | `'data-base-indisponivel'` | `avaliarElegibilidade` (Gate 4) | Gate 4 sem D.I **nem** DUIMP — sem âncora de data-base. |
 | Detalhe indisponível | `'detail-indisponivel'` | `elegerAdiantamentos` (Gate 2, `getMnyTitPermutar`) | **Blip transiente** do Conexos — a leitura do DETALHE da PROFORMA (`getMnyTitPermutar`) falhou após retries e lançou `ConexosError`. **NÃO é reprovação legítima** (`falha-gate`): a candidata pode ser elegível; ficou bloqueada porque não conseguimos ler o valor a permutar. Re-avaliável na próxima run (idempotente). Introduzido em P0-3. |
 
+### Motivo informativo do estado `PERMUTA_MANUAL` (ADR-0007)
+
+| Motivo | Valor | Origem | Significado |
+|--------|-------|--------|-------------|
+| Cliente-filtro | `'cliente-filtro'` | `EleicaoPermutasService` (override de roteamento) | O importador (`pesCod`) do adto está no cadastro `ClienteFiltro` **ativo**, e o adto está **pago + com saldo a permutar**. Roteado para permuta manual cross-process em vez de `BLOQUEADA`. A invoice (de outro processo) é escolhida na alocação (`Permuta`/ADR-0008). |
+
 > Nota: `composto-nm` e `multiplas-invoices` pertencem à mesma família (mais de 1 invoice).
 > Use `multiplas-invoices` se quiser distinguir do composto N:M de proformas; senão `composto-nm`
 > cobre o caso geral de N:M. **ADR-0005 (Yuri, 2026-06-18):** N:M deixou de ser `BLOQUEADA` e
@@ -47,10 +58,11 @@ Toda candidata `bloqueada` carrega um **motivo** (`PermutaCandidata.motivoBloque
 > analista (a baixa/escrita final é Fatia 2). Os motivos `composto-nm`/`multiplas-invoices` viram
 > **informativos** (qual sabor de N:M), não bloqueio.
 
-> **`EXECUTADA` está FORA DE ESCOPO.** A transição para uma `Permuta` consumada (baixa na
-> `fin010`) pertence à **Fatia 2** e **não** é modelada aqui — incluí-la exigiria o caminho
-> de escrita no ERP, que não existe/não foi validado (ADR-0002/0003 O3). Listada apenas como
-> `out_of_scope_states` para sinalizar a continuidade.
+> **`EXECUTADA` está FORA DE ESCOPO.** A entidade `Permuta` consumada **já existe** como
+> **alocação** rascunho (`permuta_alocacao`, ADR-0008) — ver `entities/permuta.md`. O que
+> permanece fora de escopo é a **baixa efetiva na `fin010`** (ação `reconciliarPermuta`,
+> write-back no ERP), que é a **Fase 3** — caminho de escrita não validado (risco #1,
+> ADR-0002/0003 O3). `EXECUTADA` fica em `out_of_scope_states` até a Fase 3.
 
 ## Transições
 
@@ -58,30 +70,54 @@ Toda candidata `bloqueada` carrega um **motivo** (`PermutaCandidata.motivoBloque
 |---|-----------|----------------|-------|----------|
 | T1 | `DESCOBERTA → ELEGIVEL` | `avaliarElegibilidade` + `casarInvoice` | 4 gates satisfeitos **E** exatamente 1 INVOICE casada (I3) — auto 1:1. Gate 4 valida XOR + data-base (`cdiDtaCi`/`dioDtaDesembaraco`; P0-4 RESOLVIDO, probe 2026-06-18). | 2026-06-18 |
 | T2 | `DESCOBERTA → BLOQUEADA` | `avaliarElegibilidade` / `casarInvoice` | Qualquer gate falho (`falha-gate`), 0 invoice (`sem-invoice`), sem D.I nem DUIMP (`data-base-indisponivel`), ou detalhe da PROFORMA indisponível após retries (`detail-indisponivel`, P0-3 — blip transiente, não reprovação). Anota `motivoBloqueio`. **N:M NÃO entra mais aqui (→ T3).** | 2026-06-18 |
-| T3 | `DESCOBERTA → CASAMENTO_MANUAL` | `avaliarElegibilidade` + `casarInvoice` | **4 gates satisfeitos** mas casamento **N:M** (>1 INVOICE FINALIZADA → `composto-nm` / `multiplas-invoices`). Falta só o analista escolher a invoice; a baixa é Fatia 2. Anota `motivoBloqueio` informativo. **ADR-0005.** | 2026-06-18 |
+| T3 | `DESCOBERTA → CASAMENTO_MANUAL` | `avaliarElegibilidade` + `casarInvoice` | **4 gates satisfeitos** mas casamento **N:M** (>1 INVOICE FINALIZADA → `composto-nm` / `multiplas-invoices`) **no mesmo processo**. Falta só o analista alocar a invoice; a baixa é Fase 3. Anota `motivoBloqueio` informativo. **ADR-0005.** | 2026-06-18 |
+| T4 | `DESCOBERTA → PERMUTA_MANUAL` | `elegerAdiantamentos` (override `ClienteFiltro`) | Importador do adto está no cadastro `ClienteFiltro` ativo **E** adto `pago && saldoPermutar > 0` (seria `BLOQUEADA`, mas é cliente-filtro). Gate 4 (D.I) dispensado — a invoice cross-process traz a data-base. Motivo informativo `cliente-filtro`. **ADR-0007.** | 2026-06-20 |
 
 ```
-            elegerAdiantamentos
-                    │
-                    ▼
-              ┌───────────┐
-              │ DESCOBERTA│
-              └─────┬─────┘
-        ┌───────────┼────────────────────┐
-   T1 ✓ │      T3 ◐ │               T2 ✗ │
- (4 gates +  (4 gates,           (gate falho /
-  1 INVOICE)  N:M >1 INVOICE)     0 INVOICE /
-        │           │             anomalia XOR /
-        ▼           ▼             data-base ind.)
-   ┌─────────┐ ┌──────────────────┐   ▼
-   │ ELEGIVEL│ │ CASAMENTO_MANUAL │ ┌──────────┐
-   └─────────┘ └──────────────────┘ │ BLOQUEADA│
-        ┊             ┊             └──────────┘
-        ┊             ┊  (escolha da invoice +
-        ┊             ┊   baixa = Fatia 2)
-        ▼             ▼
-   [ EXECUTADA → Permuta consumada / fin010 — FORA DE ESCOPO ]
+                  elegerAdiantamentos
+                          │
+                          ▼
+                    ┌───────────┐
+                    │ DESCOBERTA│
+                    └─────┬─────┘
+     ┌──────────┬────────┼──────────────┬─────────────┐
+T1 ✓ │     T3 ◐ │   T4 ◓ │         T2 ✗ │             │
+(4 gates  (4 gates,  (cliente-filtro   (gate falho /  │
+ + 1 INV)  N:M >1 INV  pago + saldo,    0 INVOICE /    │
+   │       mesmo proc)  D.I dispensada,  XOR /         │
+   │           │        cross-process)   data-base)    │
+   ▼           ▼            ▼                ▼          │
+┌─────────┐ ┌──────────────────┐ ┌────────────────┐ ┌──────────┐
+│ ELEGIVEL│ │ CASAMENTO_MANUAL │ │ PERMUTA_MANUAL │ │ BLOQUEADA│
+└─────────┘ └──────────────────┘ └────────────────┘ └──────────┘
+   ┊             ┊                     ┊
+   ┊             └──────── alocação N:M (Permuta) ───────┘
+   ┊                  (distribui saldo em invoices,
+   ┊                   ADR-0008/0009 — Fase 2)
+   ▼                       ┊
+[ EXECUTADA → baixa fin010 (ação reconciliarPermuta) — Fase 3, FORA DE ESCOPO ]
 ```
+
+> **CASAMENTO_MANUAL** e **PERMUTA_MANUAL** convergem na **alocação** (entidade `Permuta`,
+> `permuta_alocacao`): desde o adendo de **ADR-0009** ambos usam o mesmo mecanismo de
+> distribuir o saldo de 1 adiantamento em VÁRIAS invoices (parcial). Diferença: casamento-manual
+> busca **o próprio processo** (mesma filial); permuta-manual busca **outro processo**.
+
+## Classificação derivada `tipoPermuta` (apresentação — ADR-0009)
+
+`tipoPermuta` **NÃO é um estado** (não persiste no banco, sem migration). É um rótulo
+**derivado** calculado em `GestaoPermutasService` a partir do estado + cardinalidade do
+processo, só para as **abas** da área de trabalho:
+
+| Rótulo | Deriva de | Cardinalidade |
+|--------|-----------|---------------|
+| `simples` | `ELEGIVEL` | 1:1 (auto-casável). |
+| `multiplas` | `CASAMENTO_MANUAL` com **1** adto no `priCod` | 1 adto → N invoices (mesmo processo). |
+| `cross-over` | `CASAMENTO_MANUAL` com **>1** adto no `priCod` | N adtos ↔ M invoices (mesmo processo). |
+| `cross-process` | `PERMUTA_MANUAL` | invoice em OUTRO processo (cliente-filtro). |
+
+Regra de corte (casamento-manual): `nº de adtos casamento-manual no priCod > 1 → cross-over,
+senão multiplas`. Por ser derivado, mudar a regra é ajuste de derivação — sem reseed.
 
 ## Notas
 

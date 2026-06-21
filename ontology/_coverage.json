@@ -1,63 +1,67 @@
 {
   "_meta": {
-    "generated": "2026-06-18",
-    "version": "0.2.2",
-    "note": "Coverage of ontology entities/actions by implemented code. First domain modelling (Frente I Permutas, Fatia 1) — ALL artifacts are 'planned' (ontology-only proposal; no src/ implementation in this feature). Coverage percentages are 0 by design until TaskScoper/AutoLoopRunner implement. v0.2.2: network probe (dev tenant Columbia, 2026-06-18, filCod=2, 410 real adiantamentos) RESOLVED P0-3 (filter wire key = docVldTipoAdto=1 / FinDocCab; old placeholder adiantamento#EQ:'S' was a BUG → HTTP 500) and P0-4 (data-base wire fields = cdiDtaCi imp019 / dioDtaDesembaraco imp223; XOR confirmed in real data; aging column now populates). NO P0 gaps remain. NEW gap gate-3-pago-via-detail (P1): TOTALMENTE PAGO status comes null in com298/list — likely in detail endpoint. v0.2.1: Yuri answered P0 gaps — P0-1/P0-5/P0-6/P0-7/P0-8/P1-2 RESOLVED, both stubs promoted to draft. Updated by the OntologyCurator after each accepted feature.",
+    "generated": "2026-06-21",
+    "version": "0.2.8",
+    "note": "Coverage of ontology entities/actions by implemented code. SYNC 2026-06-21 (commit df90fa6, deployed): the 5 permuta features of this session are live in src/. Previous stamp (v0.2.2) carried ALL artifacts as 'planned' with 0% coverage ('ontology-only proposal') — that is now STALE. Fatia 1 (read/elegibilidade/variação/aging/painel) + the manual N:M allocation (Permuta) are implemented. The ONLY remaining 'planned' work in Frente I is the write-back to fin010 (ação reconciliarPermuta, Fase 3 — risco arquitetural #1): the Permuta entity is 'partial' and reconciliarPermuta is 'planned'. NEW entities Permuta (partial) + ClienteFiltro (implemented); NEW state PERMUTA_MANUAL; derived tipoPermuta (presentation). Gap gate-3-pago-via-detail RESOLVED in impl (getDetalheTitulos).",
     "upstream": "../../produtizacao/nf-projects",
-    "last_feature": "permutas-painel-elegiveis (2026-06-18 probe): P0-3 + P0-4 RESOLVED with empirical network evidence (410 real adiantamentos, filCod=2). New gap gate-3-pago-via-detail (P1). ADR-0004 + addendum + 2026-06-18 probe addendum."
+    "last_feature": "permutas-multiplas (df90fa6, deployed 2026-06-20/21): ADR-0006 ingestão manual + pagamento parcial + ADR-0007 cliente-filtro/permuta-manual + ADR-0008 alocação N:M cross-process + ADR-0009 tipos de permuta (abas). Ontology synced to match deployed code."
   },
   "summary": {
-    "entities_total": 5,
+    "entities_total": 7,
     "entities_imported": 0,
-    "entities_custom": 5,
+    "entities_custom": 7,
     "entities_core": 0,
-    "entities_implemented": 0,
-    "entities_partial": 0,
-    "entities_planned": 5,
+    "entities_implemented": 6,
+    "entities_partial": 1,
+    "entities_planned": 0,
     "entities_planned_migration": 0,
-    "entities_coverage_pct": 0,
-    "actions_total": 5,
-    "actions_implemented": 0,
-    "actions_coverage_pct": 0,
+    "entities_coverage_pct": 93,
+    "actions_total": 8,
+    "actions_implemented": 7,
+    "actions_partial": 0,
+    "actions_planned": 1,
+    "actions_coverage_pct": 88,
     "business_rules_total": 4,
+    "business_rules_implemented": 4,
     "business_rules_with_tests": 0,
     "state_machines_total": 1,
+    "state_machines_partial": 1,
     "integrations_total": 1,
+    "integrations_implemented": 1,
     "ui_flows_total": 0,
     "workflows_total": 0
   },
   "by_entity": {
-    "Adiantamento": { "status": "planned", "actions": ["elegerAdiantamentos"], "impl_pct": 0, "resolved_by": ["P0-3 (filter wire key docVldTipoAdto=1 / FinDocCab; probe 2026-06-18)"], "open_gap": ["gate-3-pago-via-detail (P1): TOTALMENTE PAGO null in com298/list"] },
-    "Invoice": { "status": "planned", "actions": ["casarInvoice"], "impl_pct": 0 },
-    "DeclaracaoImportacao": { "status": "planned", "actions": ["avaliarElegibilidade"], "impl_pct": 0, "resolved_by": ["P0-4 (dataBase wire fields cdiDtaCi imp019 / dioDtaDesembaraco imp223; probe 2026-06-18; XOR confirmed in real data; aging populates)"] },
-    "VariacaoCambial": { "status": "planned", "actions": ["calcularVariacaoCambial"], "impl_pct": 0, "resolved_by": ["P0-1"], "build_probe": ["confirm com308 doc-source for taxaAdiantamento/taxaInvoice/principalMoeda"] },
-    "PermutaCandidata": { "status": "planned", "actions": ["avaliarElegibilidade", "exporNoPainel"], "impl_pct": 0, "resolved_by": ["P0-6", "P0-8", "P0-4 (aging column read)"], "open_gap": ["gate-3-pago-via-detail (P1)"] }
+    "Adiantamento": { "status": "implemented", "actions": ["elegerAdiantamentos"], "impl_pct": 100, "resolved_by": ["P0-3 (docVldTipoAdto=1)", "gate-3-pago-via-detail (valorTotal/valorAberto via getDetalheTitulos)"] },
+    "Invoice": { "status": "implemented", "actions": ["casarInvoice", "buscarInvoiceCrossProcess"], "impl_pct": 100 },
+    "DeclaracaoImportacao": { "status": "implemented", "actions": ["avaliarElegibilidade"], "impl_pct": 100, "resolved_by": ["P0-4 (dataBase wire fields cdiDtaCi imp019 / dioDtaDesembaraco imp223; XOR confirmed)"] },
+    "VariacaoCambial": { "status": "implemented", "actions": ["calcularVariacaoCambial"], "impl_pct": 100, "resolved_by": ["P0-1", "P1-2"] },
+    "PermutaCandidata": { "status": "implemented", "actions": ["avaliarElegibilidade", "exporNoPainel"], "impl_pct": 100, "resolved_by": ["P0-6", "P0-8", "P0-5", "P0-4 (aging column read)"], "note": "5 estados (incl. permuta-manual); tipoPermuta derivado (ADR-0009)." },
+    "Permuta": { "status": "partial", "actions": ["alocarPermuta", "buscarInvoiceCrossProcess", "reconciliarPermuta"], "impl_pct": 70, "open_gap": ["write-back-fin010 (Fase 3): ação reconciliarPermuta não implementada — risco arquitetural #1"], "note": "Alocação rascunho (permuta_alocacao) implementada e READ-ONLY no ERP; baixa fin010 = Fase 3 = planned." },
+    "ClienteFiltro": { "status": "implemented", "actions": [], "impl_pct": 100, "note": "Config entity (roteamento por importador → permuta-manual, ADR-0007). Valores = config do cliente." }
   },
   "by_business_rule": {
-    "elegibilidade-permuta": { "invariant": "I3", "has_test": false, "resolved_by": ["P0-6", "P0-5"], "open_gap": ["gate-3-pago-via-detail (P1): Gate 3 source"] },
-    "di-xor-duimp": { "invariant": "I2", "has_test": false, "resolved_by": ["P0-4 (dataBase read + XOR confirmed in real data; probe 2026-06-18)"] },
-    "classificacao-juros-desconto": { "status": "draft", "has_test": false, "resolved_by": ["P0-1", "P1-2"], "build_probe": ["doc-source of rate/principal"] },
-    "aging-anchor": { "status": "draft", "has_test": false, "resolved_by": ["P0-8", "P0-4 (dataBase wire-field read; probe 2026-06-18)"] }
+    "elegibilidade-permuta": { "invariant": "I3", "status": "implemented", "has_test": false, "resolved_by": ["P0-6", "P0-5", "gate-3-pago-via-detail"] },
+    "di-xor-duimp": { "invariant": "I2", "status": "implemented", "has_test": false, "resolved_by": ["P0-4 (dataBase read + XOR confirmed in real data)"] },
+    "classificacao-juros-desconto": { "status": "implemented", "has_test": false, "resolved_by": ["P0-1", "P1-2"] },
+    "aging-anchor": { "status": "implemented", "has_test": false, "resolved_by": ["P0-8", "P0-4 (dataBase wire-field read)"] }
   },
   "health_flags": {
     "p0_inbox_open": 0,
     "p0_inbox_topics": [],
-    "open_gaps_p1": [
-      "gate-3-pago-via-detail — confirmar a fonte wire do status TOTALMENTE PAGO (Gate 3): com298/list traz mnyTitAberto/mnyTitPago=null nos 410 reais → isPago=false p/ todos; fonte provável = endpoint de detalhe. Bloqueante p/ a eleição produzir ALGUMA candidata elegível (probe 2026-06-18)"
-    ],
+    "open_gaps_p1": [],
     "p0_inbox_resolved": [
       "P0-1 — regra/fórmula juros vs desconto = comparação de TAXA de câmbio (131=juros/130=desconto)",
-      "P0-3 — eleição = listFinanceiroAPagar(PROFORMA) + filtro docVldTipoAdto=1 (FinDocCab); chave wire confirmada por probe de rede 2026-06-18 (filCod=2, 410 reais); placeholder adiantamento#EQ:'S' era BUG (HTTP 500)",
-      "P0-4 — data-base = cdiDtaCi (imp019) / dioDtaDesembaraco (imp223), epoch-ms; XOR confirmado em dados reais; coluna aging popula (probe de rede 2026-06-18, filCod=2, 410 reais)",
-      "P0-5 — Fatia 1 só 1:1; N:M → backlog (bloqueada/composto-nm)",
+      "P0-3 — eleição = listFinanceiroAPagar(PROFORMA) + filtro docVldTipoAdto=1 (FinDocCab); placeholder adiantamento#EQ:'S' era BUG (HTTP 500)",
+      "P0-4 — data-base = cdiDtaCi (imp019) / dioDtaDesembaraco (imp223), epoch-ms; XOR confirmado; coluna aging popula",
+      "P0-5 — Fatia 1 só 1:1 (auto); N:M → casamento-manual/permuta-manual (alocação implementada nas fases seguintes)",
       "P0-6 — 'INVOICE casada' = exatamente 1 invoice FINALIZADA no processo",
-      "P0-7 — query lista TODAS via 3 filtros; sem janela incremental; multi-filial; rate-limit = nota de impl",
-      "P0-8 — aging conta da DATA-BASE (CI da D.I / desembaraço da DUIMP); coluna popula (P0-4 resolvido)",
-      "P1-2 — contas 131=PASSIVA=juros / 130=ATIVA=desconto (resolvido junto de P0-1)"
+      "P0-7 — query lista TODAS via 3 filtros; multi-filial; rate-limit = nota de impl",
+      "P0-8 — aging conta da DATA-BASE (CI da D.I / desembaraço da DUIMP)",
+      "P1-2 — contas 131=PASSIVA=juros / 130=ATIVA=desconto",
+      "gate-3-pago-via-detail — RESOLVIDO na impl: status TOTALMENTE PAGO + progresso de pagamento vêm do endpoint de detalhe (getDetalheTitulos: mnyTitValor/mnyTitAberto); migration 0010"
     ],
-    "build_probes": [
-      "P0-1 — confirmar doc-fonte de taxaAdiantamento/taxaInvoice/principalMoeda no com308"
-    ],
+    "build_probes": [],
     "business_rules_without_tests": [
       "elegibilidade-permuta",
       "di-xor-duimp",
@@ -67,9 +71,9 @@
     "design_system_replicated": true,
     "tooling_bootstrapped": true,
     "watchlist": [
-      "P0/P1-5 — caso N:M (composto): DECIDIDO backlog nesta fatia (bloqueada/composto-nm); shape de PermutaCandidata mantido 1:1, pode evoluir em fatia futura.",
-      "P1-A — caminho de leitura do adiantamento: RESOLVIDO por P0-3 (PROFORMA + filtro adiantamento=SIM; caminho tpdCod=143/gerNum=198 descartado).",
-      "Fatia 2 — entidade Permuta consumada + ação reconciliarPermuta (escrita fin010); exige caminho de write-back no ERP (risco arquitetural #1, O3)."
+      "Fase 3 — ação reconciliarPermuta (write-back fin010) sobre as alocações permuta_alocacao; exige caminho de escrita no ERP (risco arquitetural #1, O3). Permuta segue 'partial' até lá.",
+      "Cobertura de testes — as 4 business-rules seguem sem teste canônico (has_test=false); não-bloqueante, follow-up de testabilidade.",
+      "Arquivos de ação dedicados p/ alocarPermuta/buscarInvoiceCrossProcess/reconciliarPermuta — hoje documentados na entity Permuta; criar actions/permuta/*.md numa curadoria futura se a granularidade ajudar."
     ]
   }
 }

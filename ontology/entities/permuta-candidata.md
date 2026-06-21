@@ -2,10 +2,18 @@
 name: PermutaCandidata
 type: entity
 ontology_version: "0.2"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - src/backend/domain/service/permutas/EleicaoPermutasService.ts
+  - src/backend/domain/service/permutas/GestaoPermutasService.ts
+  - src/backend/domain/service/permutas/IngestaoPermutasService.ts
+  - src/backend/domain/repository/permutas/PermutaRelationalRepository.ts
+  - src/backend/domain/repository/permutas/PermutaSnapshotRepository.ts
+  - src/backend/domain/interface/permutas/PermutaCandidata.ts
+  - src/backend/migrations/0012_estado_permuta_manual.sql
+  - src/frontend/app/permutas/page.tsx
 properties:
   - priCod
   - adiantamento
@@ -15,14 +23,16 @@ properties:
   - aging
   - estadoElegibilidade
   - motivoBloqueio
+  - tipoPermuta
   - gatesAvaliados
 relationships:
   - "PermutaCandidata 1—1 Adiantamento (lado-débito)"
   - "PermutaCandidata 1—1 Invoice (lado-crédito, quando casada)"
   - "PermutaCandidata 1—1 DeclaracaoImportacao (data-base)"
   - "PermutaCandidata 1—1 VariacaoCambial (derivada)"
+  - "PermutaCandidata 1—* Permuta (alocação consumada; permuta-manual/casamento-manual originam alocações, ADR-0008)"
 state_machine: elegibilidade-permuta-candidata
-last_review: 2026-06-18
+last_review: 2026-06-21
 universality_evidence:
   - "docs-contexto/03_ontologia_financeiro.md §2 Frente I (backlog elegível com aging)"
   - "ontology/glossary.md — 'Backlog elegível' / 'Pendência bloqueada'"
@@ -38,13 +48,13 @@ universality_evidence:
 
 ## Por que "candidata" e não "Permuta"
 
-A `Permuta` **consumada** — a reconciliação efetiva escrita na `fin010` (baixa em BAIXAS
-PERMUTAS, Etapa 6) — **NÃO nasce nesta fatia**. Ela pertence à **Fatia 2** (escrita no ERP,
-caminho de write-back ainda não validado — risco arquitetural #1, ADR-0002/ADR-0003 O3).
-Modelar a `Permuta` consumada aqui seria modelar uma entidade cujo caminho de execução não
-existe. Esta fatia modela **apenas a candidata** (snapshot por execução do job, derivada,
-não persistida no ERP). Quando a Fatia 2 chegar, ela introduz a entidade `Permuta` + a ação
-`reconciliarPermuta` (`/feature-new permutas` Fatia 2).
+A `PermutaCandidata` é a **pendência** (a sugestão automática + sinalização de N:M); a
+`Permuta` é o **ato de reconciliar** (a alocação adto↔invoice). Desde **ADR-0008**, a
+entidade `Permuta` consumada **já existe** como **alocação** rascunho (`permuta_alocacao`) —
+ver `entities/permuta.md`. O que ainda **não** existe é a **baixa efetiva na `fin010`** (ação
+`reconciliarPermuta`, write-back no ERP, Etapa 6 / BAIXAS PERMUTAS) — risco arquitetural #1
+(ADR-0002/0003 O3), que é a **Fase 3**. Uma candidata em `permuta-manual` ou `casamento-manual`
+é a **origem** das alocações `Permuta` (o analista distribui o saldo em invoices).
 
 ## Definição de domínio
 
@@ -65,8 +75,9 @@ contada como falha — ver glossary "Pendência bloqueada").
 | `declaracaoImportacao` | `DeclaracaoImportacao?` | Gate 4 | D.I XOR DUIMP (existência/XOR + data-base via `cdiDtaCi`/`dioDtaDesembaraco`; P0-4 RESOLVIDO, probe 2026-06-18). |
 | `variacaoCambial` | `VariacaoCambial?` | `calcularVariacaoCambial` | Classificação por TAXA de câmbio (P0-1 RESOLVIDO). |
 | `aging` | number (dias) | derivado | Âncora = data-base (P0-8 RESOLVIDO); `aging = hoje − dataBase`. Leitura da data-base RESOLVIDA (P0-4, probe 2026-06-18) — coluna aging popula. |
-| `estadoElegibilidade` | enum | máquina de estado | `descoberta \| elegivel \| casamento-manual \| bloqueada` (ver state-machine; `casamento-manual` = N:M pós-4-gates, ADR-0005). |
-| `motivoBloqueio` | enum? | `casarInvoice` / `avaliarElegibilidade` | Motivo informativo. Para `bloqueada`: `sem-invoice \| falha-gate \| data-base-indisponivel \| detail-indisponivel`. Para `casamento-manual`: `composto-nm \| multiplas-invoices` (N:M, ADR-0005). |
+| `estadoElegibilidade` | enum | máquina de estado | `descoberta \| elegivel \| casamento-manual \| permuta-manual \| bloqueada` (ver state-machine; `casamento-manual` = N:M pós-4-gates mesmo processo, ADR-0005; `permuta-manual` = cliente-filtro cross-process, ADR-0007). |
+| `motivoBloqueio` | enum? | `casarInvoice` / `avaliarElegibilidade` / `EleicaoPermutasService` | Motivo informativo. Para `bloqueada`: `sem-invoice \| falha-gate \| data-base-indisponivel \| detail-indisponivel`. Para `casamento-manual`: `composto-nm \| multiplas-invoices` (N:M, ADR-0005). Para `permuta-manual`: `cliente-filtro` (ADR-0007). |
+| `tipoPermuta` | enum (derivado) | `GestaoPermutasService` | **Não persiste** (apresentação/abas). `simples \| multiplas \| cross-over \| cross-process`, derivado do estado + cardinalidade do processo (ADR-0009). |
 | `gatesAvaliados` | registro | `avaliarElegibilidade` | Resultado de cada um dos 4 gates (auditoria I5). |
 
 ## Cardinalidade — 1:1 vs N:M (P0-5/P0-6 — RESOLVIDO)
@@ -84,9 +95,10 @@ contada como falha — ver glossary "Pendência bloqueada").
 
 Ver `ontology/state-machines/elegibilidade-permuta-candidata.md`. Resumo:
 `descoberta → elegivel` (4 gates + 1 INVOICE casada, auto 1:1); `descoberta → casamento-manual`
-(4 gates + N:M >1 INVOICE — falta o analista escolher a invoice, ADR-0005); `descoberta →
-bloqueada` (falhou algum gate / 0 INVOICE / anomalia XOR / data-base indisponível). O estado
-`executada` **pertence à Fatia 2** (transição para a `Permuta` consumada) e **não** é modelado aqui.
+(4 gates + N:M >1 INVOICE mesmo processo — falta o analista alocar a invoice, ADR-0005);
+`descoberta → permuta-manual` (cliente-filtro pago + saldo, D.I dispensada, cross-process,
+ADR-0007); `descoberta → bloqueada` (falhou algum gate / 0 INVOICE / anomalia XOR / data-base
+indisponível). O estado `executada` (baixa na `fin010`) é a **Fase 3** e **não** é modelado aqui.
 
 ## Invariantes aplicáveis
 

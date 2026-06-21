@@ -2,10 +2,15 @@
 name: VariacaoCambial
 type: entity
 ontology_version: "0.2"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - src/backend/domain/service/permutas/VariacaoCambialPermutaService.ts
+  - src/backend/domain/service/permutas/AlocacaoPermutasService.ts
+  - src/backend/domain/client/ConexosClient.ts
+  - src/backend/migrations/0008_adiantamento_taxa.sql
+  - src/backend/migrations/0009_invoice_taxa.sql
 properties:
   - moeda
   - principalMoeda
@@ -18,7 +23,8 @@ properties:
   - contaContabil
 relationships:
   - "VariacaoCambial 1—1 PermutaCandidata (derivada do par Adiantamento×Invoice)"
-last_review: 2026-06-18
+  - "VariacaoCambial 1—1 Permuta (derivada por alocação, pela taxa da invoice sobre o valor parcial, ADR-0008)"
+last_review: 2026-06-21
 universality_evidence:
   - "docs-contexto/03_ontologia_financeiro.md §2 Frente I (divergência cambial — analista decide)"
   - "Interview permutas-painel-elegiveis Axis 1 — moeda/valor/taxa → juros|desconto"

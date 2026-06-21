@@ -2,10 +2,16 @@
 name: Adiantamento
 type: entity
 ontology_version: "0.2"
-implementation_status: planned
+implementation_status: implemented
 status: draft
 owners: [yuri]
-related_files: []
+related_files:
+  - src/backend/domain/client/ConexosClient.ts
+  - src/backend/domain/client/permutas/conexosPermutasConstants.ts
+  - src/backend/domain/service/permutas/EleicaoPermutasService.ts
+  - src/backend/domain/repository/permutas/PermutaRelationalRepository.ts
+  - src/backend/migrations/0010_adiantamento_pagamento_parcial.sql
+  - src/backend/migrations/0011_adiantamento_importador.sql
 properties:
   - docCod
   - priCod
@@ -15,12 +21,18 @@ properties:
   - moeda
   - pago
   - valorPermutar
+  - valorTotal
+  - valorAberto
+  - pesCod
+  - importador
   - exportador
 relationships:
   - "Adiantamento 1—1 DeclaracaoImportacao (via priCod, D.I XOR DUIMP)"
   - "Adiantamento 1—N Invoice (mesmo priCod; casamento via casarInvoice)"
   - "Adiantamento 1—1 PermutaCandidata (lado-débito da candidata)"
-last_review: 2026-06-18
+  - "Adiantamento N—1 ClienteFiltro (via pesCod; roteia o adto para permuta-manual)"
+  - "Adiantamento 1—N Permuta (lado-débito da alocação consumada, ADR-0008)"
+last_review: 2026-06-21
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente I (adiantamento ↔ invoice)"
   - "docs-contexto/03_ontologia_financeiro.md §2 Frente I"
@@ -56,6 +68,10 @@ Esta fatia (Fatia 1, READ-ONLY) apenas **lê e avalia** adiantamentos; não os m
 | `moeda` | string | sim | `com298.moeEspSigla` | Moeda do documento. |
 | `pago` | boolean | não | derivado: `mnyTitAberto===0` ou `pago===1` | Gate 3 da elegibilidade (TOTALMENTE PAGO). **NOVO GAP (probe 2026-06-18):** no `com298/list`, `mnyTitAberto`/`mnyTitPago` vêm `null` nos 410 adiantamentos reais → `isPago` retorna `false` para todos. Fonte real do status pago provavelmente no **endpoint de detalhe** (igual a `mnyTitPermutar`). Ver gap `gate-3-pago-via-detail`. |
 | `valorPermutar` | number | não | `getMnyTitPermutar(docCod)` (detail `GET /com298/{docCod}`) | Saldo a permutar disponível. `null` no list — hidratar no detail. Gate 2 (`> 0`). |
+| `valorTotal` | number? | não | `getDetalheTitulos` → `mnyTitValor` (BRL) | Valor de face do título (detalhe). Identidade: `valorTotal = valorPago + valorAberto`. Migration `0010`. Base do **progresso de pagamento** (% pago) exibido nos bloqueados por `nao-pago`. |
+| `valorAberto` | number? | não | `getDetalheTitulos` → `mnyTitAberto` (BRL) | Saldo em aberto do título (detalhe). Quanto **falta** pagar. Migration `0010`. |
+| `pesCod` | string? | não | `imp021` (listProcessos) | Chave do **importador** do processo, hidratada na eleição. Roteia adtos de `ClienteFiltro` para `permuta-manual` (ADR-0007). Migration `0011`. |
+| `importador` | string? | não | `imp021` (listProcessos) | Nome do importador (exibição/seletor do cadastro). Migration `0011`. |
 | `exportador` | string? | não | `com298.dpeNomPessoa` (coalesce) | Exibição. |
 
 ## Discriminador de tipo (PROFORMA) — P0-3 RESOLVIDO (probe de rede 2026-06-18)
