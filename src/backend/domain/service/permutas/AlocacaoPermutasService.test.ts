@@ -1,0 +1,229 @@
+import 'reflect-metadata';
+import type ConexosClient from '../../client/ConexosClient.js';
+import AlocacaoSaldoError from '../../errors/AlocacaoSaldoError.js';
+import type PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacaoRepository.js';
+import type PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
+import type LogService from '../LogService.js';
+import AlocacaoPermutasService from './AlocacaoPermutasService.js';
+import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
+
+const log = () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }) as unknown as LogService;
+
+const buildConexos = (over: Partial<jest.Mocked<ConexosClient>> = {}) =>
+    ({
+        listFiliais: jest.fn().mockResolvedValue([{ filCod: 2 }, { filCod: 4 }]),
+        listFinanceiroAPagar: jest
+            .fn()
+            .mockImplementation(async ({ filCod }: { filCod: number }) =>
+                filCod === 2
+                    ? {
+                          proformas: [],
+                          invoices: [
+                              {
+                                  docCod: 'I7',
+                                  priCod: '510',
+                                  moeda: 'USD',
+                                  valor: 4000,
+                                  pago: false,
+                                  referencia: 'INV/7',
+                              },
+                              {
+                                  // já paga (liquidada) → deve ser FILTRADA da busca.
+                                  docCod: 'I8-PAGA',
+                                  priCod: '510',
+                                  moeda: 'USD',
+                                  valor: 1000,
+                                  pago: true,
+                                  referencia: 'INV/8',
+                              },
+                          ],
+                      }
+                    : { proformas: [], invoices: [] },
+            ),
+        listDeclaracaoByProcesso: jest
+            .fn()
+            .mockResolvedValue([
+                { variante: 'DI', priCod: '510', dataBase: new Date('2026-02-10') },
+            ]),
+        listTitulosAPagar: jest
+            .fn()
+            .mockResolvedValue([{ valorNegociado: 800, taxa: 5.3, moedaNome: 'USD' }]),
+        // EM ABERTO via detalhe (lista é inconfiável p/ pago): I7 aberta, I8-PAGA paga.
+        getDetalheTitulos: jest.fn().mockImplementation(async ({ docCod }: { docCod: string }) => ({
+            pago: docCod === 'I8-PAGA',
+            valorAberto: docCod === 'I8-PAGA' ? 0 : 4000,
+        })),
+        ...over,
+    }) as unknown as ConexosClient;
+
+const buildAlocacaoRepo = (sums: { adto?: number; invoice?: number } = {}) => {
+    const upsertAlocacao = jest.fn().mockResolvedValue(undefined);
+    return {
+        repo: {
+            upsertAlocacao,
+            sumByAdiantamento: jest.fn().mockResolvedValue(sums.adto ?? 0),
+            sumByInvoice: jest.fn().mockResolvedValue(sums.invoice ?? 0),
+            deleteAlocacao: jest.fn().mockResolvedValue(1),
+        } as unknown as jest.Mocked<PermutaAlocacaoRepository>,
+        upsertAlocacao,
+    };
+};
+
+// adto: saldo a permutar 5500 BRL / taxa 5.5 = 1000 USD negociado.
+const buildRelational = (
+    over: {
+        valorPermutar?: number;
+        taxa?: number;
+        priCod?: string;
+        estado?: 'permuta-manual' | 'casamento-manual';
+    } = {},
+) =>
+    ({
+        findAdiantamento: jest.fn().mockResolvedValue({
+            docCod: 'A9',
+            priCod: over.priCod ?? '1153',
+            filCod: 2,
+            pago: true,
+            valorPermutar: over.valorPermutar ?? 5500,
+            taxa: over.taxa ?? 5.5,
+            moedaNegociada: 'USD',
+            estadoElegibilidade: over.estado ?? 'permuta-manual',
+            stale: false,
+        }),
+    }) as unknown as jest.Mocked<PermutaRelationalRepository>;
+
+const build = (opts: {
+    conexos?: ConexosClient;
+    sums?: { adto?: number; invoice?: number };
+    relational?: jest.Mocked<PermutaRelationalRepository>;
+}) => {
+    const { repo, upsertAlocacao } = buildAlocacaoRepo(opts.sums);
+    const service = new AlocacaoPermutasService(
+        opts.conexos ?? buildConexos(),
+        new VariacaoCambialPermutaService(),
+        repo,
+        opts.relational ?? buildRelational(),
+        log(),
+    );
+    return { service, upsertAlocacao };
+};
+
+describe('AlocacaoPermutasService', () => {
+    it('buscarInvoices (escopada à filial) filtra em-aberto, enriquece e marca temDi', async () => {
+        const { service } = build({});
+        const invoices = await service.buscarInvoices('510', 2);
+        // Só a invoice EM ABERTO (I7); a já paga (I8-PAGA) é filtrada.
+        expect(invoices).toHaveLength(1);
+        expect(invoices.some((i) => i.docCod === 'I8-PAGA')).toBe(false);
+        expect(invoices[0]).toMatchObject({
+            docCod: 'I7',
+            priCod: '510',
+            filCod: 2,
+            valorMoedaNegociada: 800,
+            taxa: 5.3,
+            temDi: true,
+        });
+        expect(invoices[0].dataBase).toBeDefined();
+    });
+
+    it('alocar grava com variação recalculada pela taxa da invoice (valor parcial)', async () => {
+        const { service, upsertAlocacao } = build({});
+        await service.alocar({
+            adiantamentoDocCod: 'A9',
+            invoiceDocCod: 'I7',
+            invoicePriCod: '510',
+            valorAlocado: 600,
+            criadoPor: 'simone',
+        });
+        expect(upsertAlocacao).toHaveBeenCalledTimes(1);
+        const arg = upsertAlocacao.mock.calls[0][0];
+        expect(arg).toMatchObject({
+            adiantamentoDocCod: 'A9',
+            invoiceDocCod: 'I7',
+            valorAlocado: 600,
+        });
+        // delta = 600 × (5.5 − 5.3) = 120 → JUROS.
+        expect(arg.variacaoClassificacao).toBe('JUROS');
+        expect(arg.variacaoResultado).toBeCloseTo(120, 5);
+    });
+
+    it('alocar excede saldo do ADIANTAMENTO → AlocacaoSaldoError', async () => {
+        // saldo adto = 1000 USD; pedir 1200.
+        const { service } = build({});
+        await expect(
+            service.alocar({
+                adiantamentoDocCod: 'A9',
+                invoiceDocCod: 'I7',
+                invoicePriCod: '510',
+                valorAlocado: 1200,
+            } as never),
+        ).rejects.toBeInstanceOf(AlocacaoSaldoError);
+    });
+
+    it('alocar excede saldo da INVOICE → AlocacaoSaldoError', async () => {
+        // invoice saldo = 800 USD; adto folgado (saldo alto). Pedir 900.
+        const { service } = build({
+            relational: buildRelational({ valorPermutar: 999999, taxa: 1 }),
+        });
+        await expect(
+            service.alocar({
+                adiantamentoDocCod: 'A9',
+                invoiceDocCod: 'I7',
+                invoicePriCod: '510',
+                valorAlocado: 900,
+                criadoPor: 'u',
+            }),
+        ).rejects.toBeInstanceOf(AlocacaoSaldoError);
+    });
+
+    it('alocar (casamento-manual) rejeita invoice de OUTRO processo (same-process)', async () => {
+        // adto casamento-manual no processo 1153; tentar alocar invoice do processo 510.
+        const { service } = build({
+            relational: buildRelational({ estado: 'casamento-manual', priCod: '1153' }),
+        });
+        await expect(
+            service.alocar({
+                adiantamentoDocCod: 'A9',
+                invoiceDocCod: 'I7',
+                invoicePriCod: '510',
+                valorAlocado: 100,
+                criadoPor: 'u',
+            }),
+        ).rejects.toThrow(/same-process/);
+    });
+
+    it('alocar rejeita moeda divergente (adto USD × invoice BRL)', async () => {
+        // invoice negociada em BRL (moedaNome BRL) vs adto USD → mismatch.
+        const conexos = buildConexos({
+            listTitulosAPagar: jest
+                .fn()
+                .mockResolvedValue([{ valorNegociado: 1000, taxa: 1, moedaNome: 'BRL' }]),
+        } as Partial<jest.Mocked<ConexosClient>>);
+        const { service } = build({ conexos }); // adto moedaNegociada 'USD' (default)
+        await expect(
+            service.alocar({
+                adiantamentoDocCod: 'A9',
+                invoiceDocCod: 'I7',
+                invoicePriCod: '510',
+                valorAlocado: 100,
+                criadoPor: 'u',
+            }),
+        ).rejects.toThrow(/currency mismatch/);
+    });
+
+    it('alocar rejeita invoice SEM D.I/DUIMP', async () => {
+        const conexos = buildConexos({
+            listDeclaracaoByProcesso: jest.fn().mockResolvedValue([]), // sem D.I
+        } as Partial<jest.Mocked<ConexosClient>>);
+        const { service } = build({ conexos });
+        await expect(
+            service.alocar({
+                adiantamentoDocCod: 'A9',
+                invoiceDocCod: 'I7',
+                invoicePriCod: '510',
+                valorAlocado: 100,
+                criadoPor: 'u',
+            }),
+        ).rejects.toThrow(/D\.I/);
+    });
+});

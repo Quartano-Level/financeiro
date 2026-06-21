@@ -1,18 +1,40 @@
 'use client'
 
 import * as React from 'react'
-import { ArrowLeftRight, Ban, CheckCircle2, ChevronRight, Layers, RefreshCw } from 'lucide-react'
+import Link from 'next/link'
+import {
+  ArrowLeftRight,
+  Ban,
+  CheckCircle2,
+  ChevronRight,
+  DatabaseZap,
+  Layers,
+  RefreshCw,
+  Users,
+} from 'lucide-react'
 import { toast } from 'sonner'
-import { fetchGestaoPermutas, processarAdiantamento } from '@/lib/api'
+import {
+  AlocacaoExcedeSaldoError,
+  buscarInvoicesPorProcesso,
+  criarAlocacao,
+  fetchGestaoPermutas,
+  fetchPermutaRuns,
+  IngestaoEmAndamentoError,
+  processarAdiantamento,
+  removerAlocacao,
+  runIngestaoManual,
+} from '@/lib/api'
 import type {
   CasamentoSugerido,
   GestaoPermutasResponse,
+  InvoiceBuscada,
   InvoiceEmAberto,
   PermutaPendente,
+  PermutaRun,
   ProcessamentoStatus,
   StatusElegibilidade,
 } from '@/lib/types'
-import { cn, formatNumber } from '@/lib/utils'
+import { cn, formatNumber, progressoPagamento } from '@/lib/utils'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -20,6 +42,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { KPIGrid, SimpleKPI } from '@/components/ui/kpi-card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
 import {
   Table,
   TableBody,
@@ -67,6 +90,51 @@ const MOTIVO_LABEL: Record<string, string> = {
   'multiplas-invoices': 'Múltiplas invoices',
   'falha-gate': 'Falha em gate',
   'detail-indisponivel': 'Detalhe indisponível',
+  'cliente-filtro': 'Cliente filtro (permuta manual)',
+}
+
+/**
+ * Trilha de auditoria (ADR-0006): "analista simone" para um username, "cron job"
+ * para o agendado. O username vem do `triggered_by` gravado server-side a partir
+ * do token autenticado — não de input do cliente.
+ */
+function rotuloQuemRodou(triggeredBy: string): string {
+  if (triggeredBy === 'cron') return 'cron job'
+  return `analista ${triggeredBy}`
+}
+
+/** Carimbo "21/06/2026 · 10h52" a partir de um ISO timestamp. */
+function formatRunWhen(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  const data = d.toLocaleDateString('pt-BR')
+  const hora = d
+    .toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    .replace(':', 'h')
+  return `${data} · ${hora}`
+}
+
+/** Badge de status de uma run no histórico do modal de ingestão. */
+function RunStatusBadge({ status }: { status: PermutaRun['status'] }) {
+  if (status === 'success') {
+    return (
+      <Badge className="border-transparent bg-success-subtle text-success-foreground">
+        <CheckCircle2 aria-hidden /> Sucesso
+      </Badge>
+    )
+  }
+  if (status === 'partial') {
+    return (
+      <Badge className="border-transparent bg-warning-subtle text-warning-foreground">
+        <Layers aria-hidden /> Parcial
+      </Badge>
+    )
+  }
+  return (
+    <Badge className="border-transparent bg-danger-subtle text-danger-foreground">
+      <Ban aria-hidden /> Falha
+    </Badge>
+  )
 }
 
 function StatusBadge({ status, motivo }: { status: StatusElegibilidade; motivo?: string }) {
@@ -84,6 +152,16 @@ function StatusBadge({ status, motivo }: { status: StatusElegibilidade; motivo?:
         title={MOTIVO_LABEL[motivo ?? ''] ?? 'Casamento manual (N:M)'}
       >
         <Layers aria-hidden /> Casamento manual (N:M)
+      </Badge>
+    )
+  }
+  if (status === 'permuta-manual') {
+    return (
+      <Badge
+        className="border-transparent bg-permuta-subtle text-permuta-foreground"
+        title={MOTIVO_LABEL[motivo ?? ''] ?? 'Permuta manual (cross-process)'}
+      >
+        <ArrowLeftRight aria-hidden /> Permuta manual
       </Badge>
     )
   }
@@ -259,6 +337,7 @@ const FILTRO_VAZIO_LABEL: Record<StatusElegibilidade, string> = {
   elegivel: 'elegível',
   bloqueada: 'bloqueado',
   'casamento-manual': 'em casamento manual',
+  'permuta-manual': 'em permuta manual',
   'ja-permutado': 'já permutado',
 }
 
@@ -267,9 +346,148 @@ const STATUS_OPCOES: { value: FiltroStatus; label: string }[] = [
   { value: 'todos', label: 'Todos os status' },
   { value: 'elegivel', label: 'Elegível' },
   { value: 'casamento-manual', label: 'Casamento manual (N:M)' },
+  { value: 'permuta-manual', label: 'Permuta manual' },
   { value: 'ja-permutado', label: 'Já permutado' },
   { value: 'bloqueada', label: 'Bloqueada' },
 ]
+
+/** Estado de filtro (filial + busca) + paginação de uma aba. */
+interface TabelaFiltro<T> {
+  filial: string
+  busca: string
+  setFilial: (v: string) => void
+  setBusca: (v: string) => void
+  pagina: number
+  setPagina: React.Dispatch<React.SetStateAction<number>>
+  filiais: number[]
+  slice: T[]
+  total: number
+  totalPaginas: number
+  paginaAtual: number
+  pageSize: number
+}
+
+/**
+ * Hook de filtro (filial + busca textual) + paginação para uma aba — espelha a
+ * tabela principal. Trocar filtro volta à 1ª página (sem setState-in-effect).
+ */
+function useTabelaFiltro<T>(
+  items: T[],
+  getFilCod: (x: T) => number,
+  getBuscaTexto: (x: T) => string,
+  pageSize = 20,
+): TabelaFiltro<T> {
+  const [filial, setFilialState] = React.useState('todas')
+  const [busca, setBuscaState] = React.useState('')
+  const [pagina, setPagina] = React.useState(1)
+  const b = busca.trim().toLowerCase()
+  const filtrados = items.filter(
+    (x) =>
+      (filial === 'todas' || String(getFilCod(x)) === filial) &&
+      (b === '' || getBuscaTexto(x).toLowerCase().includes(b)),
+  )
+  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / pageSize))
+  const paginaAtual = Math.min(pagina, totalPaginas)
+  const slice = filtrados.slice((paginaAtual - 1) * pageSize, paginaAtual * pageSize)
+  const filiais = [...new Set(items.map(getFilCod))].sort((a, c) => a - c)
+  const setFilial = (v: string) => {
+    setFilialState(v)
+    setPagina(1)
+  }
+  const setBusca = (v: string) => {
+    setBuscaState(v)
+    setPagina(1)
+  }
+  return {
+    filial,
+    busca,
+    setFilial,
+    setBusca,
+    pagina,
+    setPagina,
+    filiais,
+    slice,
+    total: filtrados.length,
+    totalPaginas,
+    paginaAtual,
+    pageSize,
+  }
+}
+
+/** Barra de filtro de uma aba: filial + busca por exportador/processo. */
+function FiltroBarra<T>({
+  aba,
+  buscaPlaceholder,
+}: {
+  aba: TabelaFiltro<T>
+  buscaPlaceholder: string
+}) {
+  return (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+      <div className="flex flex-col gap-1">
+        <span className="text-xs text-muted-foreground">Filial</span>
+        <Select value={aba.filial} onValueChange={aba.setFilial}>
+          <SelectTrigger className="w-44" aria-label="Filtrar por filial">
+            <SelectValue placeholder="Todas as filiais" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todas">Todas as filiais</SelectItem>
+            {aba.filiais.map((f) => (
+              <SelectItem key={f} value={String(f)}>
+                Filial {f}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="flex flex-1 flex-col gap-1">
+        <span className="text-xs text-muted-foreground">Buscar</span>
+        <Input
+          value={aba.busca}
+          onChange={(e) => aba.setBusca(e.target.value)}
+          placeholder={buscaPlaceholder}
+          aria-label={buscaPlaceholder}
+        />
+      </div>
+    </div>
+  )
+}
+
+/** Rodapé de paginação de uma aba (igual ao da tabela principal). */
+function Paginacao<T>({ aba }: { aba: TabelaFiltro<T> }) {
+  if (aba.total === 0) return null
+  return (
+    <div className="flex flex-col gap-2 pt-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+      <span>
+        Mostrando {(aba.paginaAtual - 1) * aba.pageSize + 1}–
+        {Math.min(aba.paginaAtual * aba.pageSize, aba.total)} de {aba.total}
+      </span>
+      {aba.totalPaginas > 1 ? (
+        <div className="flex items-center gap-2">
+          <span>
+            Página {aba.paginaAtual} de {aba.totalPaginas}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={aba.paginaAtual <= 1}
+            onClick={() => aba.setPagina((p) => Math.max(1, p - 1))}
+          >
+            Anterior
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={aba.paginaAtual >= aba.totalPaginas}
+            onClick={() => aba.setPagina((p) => Math.min(aba.totalPaginas, p + 1))}
+          >
+            Próxima
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
 
 export default function GestaoPermutasPage() {
   const [data, setData] = React.useState<GestaoPermutasResponse | null>(null)
@@ -303,6 +521,50 @@ export default function GestaoPermutasPage() {
     }
   }, [])
 
+  // Modal de ingestão manual (ADR-0006): trigger entre os cron jobs + trilha de
+  // auditoria das últimas rodadas.
+  const [ingestaoOpen, setIngestaoOpen] = React.useState(false)
+  const [runs, setRuns] = React.useState<PermutaRun[] | null>(null)
+  const [runsLoading, setRunsLoading] = React.useState(false)
+  const [ingestRunning, setIngestRunning] = React.useState(false)
+
+  const carregarRuns = React.useCallback(async () => {
+    setRunsLoading(true)
+    try {
+      setRuns(await fetchPermutaRuns())
+    } catch {
+      setRuns([])
+    } finally {
+      setRunsLoading(false)
+    }
+  }, [])
+
+  const abrirIngestao = React.useCallback(() => {
+    setIngestaoOpen(true)
+    void carregarRuns()
+  }, [carregarRuns])
+
+  const rodarIngestao = React.useCallback(async () => {
+    setIngestRunning(true)
+    try {
+      const result = await runIngestaoManual()
+      toast.success(
+        `Ingestão concluída — ${result.totalAdiantamentos} adiantamentos, ${result.totalCasamentos} casamentos.`,
+      )
+      // Atualiza o painel com os dados recém-ingeridos + a trilha de auditoria.
+      await Promise.all([load(), carregarRuns()])
+    } catch (err) {
+      if (err instanceof IngestaoEmAndamentoError) {
+        toast.warning(err.message)
+        void carregarRuns()
+      } else {
+        toast.error(`Falha ao rodar a ingestão${err instanceof Error ? ` — ${err.message}` : ''}.`)
+      }
+    } finally {
+      setIngestRunning(false)
+    }
+  }, [load, carregarRuns])
+
   // Carga inicial: resolve a promise num callback (sem setState síncrono no
   // corpo do effect) e ignora o resultado se o componente desmontar.
   React.useEffect(() => {
@@ -318,29 +580,15 @@ export default function GestaoPermutasPage() {
   }, [])
 
   const [processando, setProcessando] = React.useState<string | null>(null)
-  // Resolução do casamento manual N:M (modal): adiantamento em questão + invoice
-  // escolhida + valor a abater. null = modal fechado.
-  const [resolverManual, setResolverManual] = React.useState<PermutaPendente | null>(null)
-  const [invoiceManual, setInvoiceManual] = React.useState<string>('')
-  const [valorManual, setValorManual] = React.useState<string>('')
 
-  const processar = React.useCallback(
-    async (adtoDocCod: string, adtoRef: string, invoiceDocCod: string, observacao?: string) => {
-      setProcessando(adtoDocCod)
-      try {
-        await processarAdiantamento(adtoDocCod, invoiceDocCod, observacao)
-        toast.success(`Adiantamento ${adtoRef} processado`)
-        await load()
-      } catch (err) {
-        toast.error(
-          `Falha ao processar ${adtoRef}${err instanceof Error ? `: ${err.message}` : ''}`,
-        )
-      } finally {
-        setProcessando(null)
-      }
-    },
-    [load],
-  )
+  // Alocação manual cross-process (Fase 2): adto + busca de invoice por processo.
+  const [alocando, setAlocando] = React.useState<PermutaPendente | null>(null)
+  const [buscaProcesso, setBuscaProcesso] = React.useState<string>('')
+  const [invoicesBuscadas, setInvoicesBuscadas] = React.useState<InvoiceBuscada[] | null>(null)
+  const [buscandoInv, setBuscandoInv] = React.useState(false)
+  const [invoiceAloc, setInvoiceAloc] = React.useState<string>('')
+  const [valorAloc, setValorAloc] = React.useState<string>('')
+  const [salvandoAloc, setSalvandoAloc] = React.useState(false)
 
   // Processa em LOTE todos os adiantamentos pendentes do casamento confirmado no
   // modal (1 invoice : N adiantamentos). Os já processados são ignorados.
@@ -365,41 +613,101 @@ export default function GestaoPermutasPage() {
     }
   }, [confirmacao, load])
 
-  // Abre o modal de resolução manual já preenchendo o valor a abater com o valor
-  // negociado do adiantamento (editável pelo analista).
-  const abrirResolverManual = React.useCallback((p: PermutaPendente) => {
-    setResolverManual(p)
-    setInvoiceManual('')
-    // Valor a abater em USD (principal). O saldo a permutar é nativo em R$ no
-    // Conexos → convertido p/ USD pela taxa. Default = saldo em USD; teto = saldo.
-    const saldoBrl = p.detalhe?.valorPermutar
-    const taxa = p.detalhe?.taxaAdiantamento
-    const saldoUSD = saldoBrl != null && taxa != null && taxa > 0 ? saldoBrl / taxa : undefined
-    setValorManual(saldoUSD != null ? formatNumber(saldoUSD) : '')
-  }, [])
+  // --- Alocação manual (Fase 2) ---
+  // A busca é SEMPRE escopada à filial do adiantamento — o priCod não é único entre
+  // filiais (ex.: "523" filial 4 = ZHEJIANG VOB, "523" filial 6 = outra empresa).
+  const buscarAloc = React.useCallback(
+    async (priCodArg?: string, filCodArg?: number) => {
+      const priCod = (priCodArg ?? buscaProcesso).trim()
+      const filCod = filCodArg ?? alocando?.filCod
+      if (!priCod || filCod == null) return
+      setBuscandoInv(true)
+      try {
+        setInvoicesBuscadas(await buscarInvoicesPorProcesso(priCod, filCod))
+        setInvoiceAloc('')
+      } catch {
+        setInvoicesBuscadas([])
+        toast.error('Falha ao buscar invoices no Conexos.')
+      } finally {
+        setBuscandoInv(false)
+      }
+    },
+    [buscaProcesso, alocando],
+  )
 
-  // Lança o casamento manual: registra a invoice escolhida + o valor a abater
-  // (na observação) e processa o adiantamento.
-  const lancarManual = React.useCallback(async () => {
-    if (!resolverManual || !invoiceManual) return
-    const p = resolverManual
-    // Variação cambial a partir da taxa da invoice ESCOLHIDA + o valor a abater.
-    const invSel = p.candidatas?.find((i) => i.docCod === invoiceManual)
-    const taxaAdto = p.detalhe?.taxaAdiantamento
-    const taxaInv = invSel?.taxa
-    const valNum = parseBrl(valorManual)
-    const delta =
-      taxaAdto != null && taxaInv != null && Number.isFinite(valNum) && valNum > 0
-        ? valNum * (taxaAdto - taxaInv)
-        : null
-    const cls = delta == null ? '' : delta > 0 ? 'JUROS' : delta < 0 ? 'DESCONTO' : 'NEUTRO'
-    const obs =
-      `Casamento manual N:M · invoice ${invoiceManual}` +
-      (valorManual ? ` · valor a abater ${valorManual} ${moedaCodigo(p.moeda)}` : '') +
-      (cls && delta != null ? ` · ${cls} R$ ${formatNumber(Math.abs(delta))}` : '')
-    setResolverManual(null)
-    await processar(p.docCod, p.docCod, invoiceManual, obs)
-  }, [resolverManual, invoiceManual, valorManual, processar])
+  const abrirAlocar = React.useCallback(
+    (p: PermutaPendente) => {
+      setAlocando(p)
+      setInvoiceAloc('')
+      setValorAloc('')
+      setInvoicesBuscadas(null)
+      // Múltiplas/cross-over = MESMO processo → pré-preenche e já busca o próprio
+      // processo. Cross-process casa com OUTRO processo → deixa em branco.
+      const priProprio = p.tipoPermuta !== 'cross-process' ? p.detalhe?.priCod : undefined
+      setBuscaProcesso(priProprio ?? '')
+      if (priProprio) void buscarAloc(priProprio, p.filCod)
+    },
+    [buscarAloc],
+  )
+
+  const adicionarAloc = React.useCallback(async () => {
+    if (!alocando || !invoiceAloc) return
+    const inv = invoicesBuscadas?.find((i) => i.docCod === invoiceAloc)
+    if (!inv) return
+    const valor = parseBrl(valorAloc)
+    if (!(Number.isFinite(valor) && valor > 0)) {
+      toast.error('Informe um valor a alocar válido.')
+      return
+    }
+    setSalvandoAloc(true)
+    try {
+      await criarAlocacao(alocando.docCod, {
+        invoiceDocCod: inv.docCod,
+        invoicePriCod: inv.priCod,
+        valorAlocado: valor,
+      })
+      toast.success(`Alocado ${formatNumber(valor)} na invoice ${inv.docCod}.`)
+      setInvoiceAloc('')
+      setValorAloc('')
+      await load()
+    } catch (err) {
+      if (err instanceof AlocacaoExcedeSaldoError) {
+        toast.warning(err.message)
+      } else {
+        toast.error(`Falha ao alocar${err instanceof Error ? ` — ${err.message}` : ''}.`)
+      }
+    } finally {
+      setSalvandoAloc(false)
+    }
+  }, [alocando, invoiceAloc, invoicesBuscadas, valorAloc, load])
+
+  const removerAloc = React.useCallback(
+    async (invoiceDocCod: string) => {
+      if (!alocando) return
+      try {
+        await removerAlocacao(alocando.docCod, invoiceDocCod)
+        toast.success(`Alocação da invoice ${invoiceDocCod} removida.`)
+        await load()
+      } catch (err) {
+        toast.error(`Falha ao remover${err instanceof Error ? ` — ${err.message}` : ''}.`)
+      }
+    },
+    [alocando, load],
+  )
+
+  // Reflete os dados frescos no modal de alocação após cada load().
+  const alocandoAtual =
+    alocando != null
+      ? ((data?.pendentes ?? []).find((p) => p.docCod === alocando.docCod) ?? alocando)
+      : null
+
+  // Invoices elegíveis p/ alocação: precisam ter D.I E a MESMA moeda negociada do
+  // adiantamento (não dá pra permutar USD contra invoice em BRL — moedas distintas).
+  const moedaAdtoAloc = alocandoAtual ? moedaCodigo(alocandoAtual.moeda) : ''
+  const invoicesElegiveis = (invoicesBuscadas ?? []).filter(
+    (i) => i.temDi && moedaCodigo(i.moeda ?? 'USD') === moedaAdtoAloc,
+  )
+  const invoicesOcultadas = (invoicesBuscadas?.length ?? 0) - invoicesElegiveis.length
 
   // Filiais distintas presentes nos pendentes (para o seletor de filial).
   const filiais = React.useMemo(
@@ -465,58 +773,42 @@ export default function GestaoPermutasPage() {
     setPagina(1)
   }
 
-  // Filtro de filial reaproveitado nos dois cards de casamento (mesmo seletor do topo).
-  const passaFilial = (filCod: number) =>
-    filtroFilial === 'todas' || String(filCod) === filtroFilial
-
-  // Adiantamentos N:M aguardando o analista escolher a invoice (ADR-0005).
-  const casamentoManual = (data?.pendentes ?? []).filter(
-    (p) => p.status === 'casamento-manual' && passaFilial(p.filCod),
+  // Listas-base por tipo de permuta (sem filtro de filial — cada aba tem o SEU
+  // próprio filtro + paginação via useTabelaFiltro). Os contadores das abas usam
+  // estas listas completas.
+  const casamentoManualBase = (data?.pendentes ?? []).filter(
+    (p) => p.status === 'casamento-manual',
   )
+  //  - múltiplas  = 1 adiantamento → N invoices (mesmo processo).
+  //  - cross-over = N adiantamentos ↔ M invoices (mesmo processo).
+  const multiplas = casamentoManualBase.filter((p) => p.tipoPermuta === 'multiplas')
+  const crossOver = casamentoManualBase.filter((p) => p.tipoPermuta === 'cross-over')
+  // Cross-process = cliente-filtro (invoice em OUTRO processo) — alocação manual.
+  const crossProcess = (data?.pendentes ?? []).filter((p) => p.status === 'permuta-manual')
+  // Casamentos automáticos (sugeridos = "simples").
+  const casamentosSugeridos = data?.casamentos ?? []
 
-  // Casamentos automáticos (sugeridos), filtrados por filial da invoice/processo.
-  const casamentosSugeridos = (data?.casamentos ?? []).filter((c) =>
-    passaFilial(c.invoice.filCod),
+  // Filtro (filial + busca) + paginação por aba — replicam a tabela principal.
+  const abaSimples = useTabelaFiltro(
+    casamentosSugeridos,
+    (c) => c.invoice.filCod,
+    (c) => `${c.priCod} ${c.invoice.exportador} ${c.invoice.referencia ?? ''}`,
   )
-
-  // Validação do valor a abater (modal manual): em R$, limitado ao saldo a
-  // permutar (BRL nativo do Conexos). USD é só referência (valor ÷ taxa).
-  const detManual = resolverManual?.detalhe
-  const saldoManualBrl = detManual?.valorPermutar
-  const taxaManual = detManual?.taxaAdiantamento
-  // USD é o principal; o saldo (nativo R$) é convertido p/ USD pela taxa.
-  const saldoManualUSD =
-    saldoManualBrl != null && taxaManual != null && taxaManual > 0
-      ? saldoManualBrl / taxaManual
-      : null
-  const valorManualNum = parseBrl(valorManual) // em USD
-  const valorManualExcede = saldoManualUSD != null && valorManualNum > saldoManualUSD + 0.005
-  const valorManualValido =
-    Number.isFinite(valorManualNum) && valorManualNum > 0 && !valorManualExcede
-  // R$ equivalente do que será abatido (secundário) = USD × taxa.
-  const valorManualBRL =
-    taxaManual != null && taxaManual > 0 && Number.isFinite(valorManualNum) && valorManualNum > 0
-      ? valorManualNum * taxaManual
-      : null
-  // Variação cambial do casamento manual — a partir da taxa da invoice ESCOLHIDA
-  // + o valor a abater (USD). delta = valorAbater × (taxaAdto − taxaInvoice) [R$].
-  const invSelManual = resolverManual?.candidatas?.find((i) => i.docCod === invoiceManual)
-  const taxaInvManual = invSelManual?.taxa
-  const varDeltaManual =
-    taxaManual != null &&
-    taxaInvManual != null &&
-    Number.isFinite(valorManualNum) &&
-    valorManualNum > 0
-      ? valorManualNum * (taxaManual - taxaInvManual)
-      : null
-  const varClassManual =
-    varDeltaManual == null
-      ? null
-      : varDeltaManual > 0
-        ? 'JUROS'
-        : varDeltaManual < 0
-          ? 'DESCONTO'
-          : 'NEUTRO'
+  const abaMultiplas = useTabelaFiltro(
+    multiplas,
+    (p) => p.filCod,
+    (p) => `${p.docCod} ${p.exportador}`,
+  )
+  const abaCrossOver = useTabelaFiltro(
+    crossOver,
+    (p) => p.filCod,
+    (p) => `${p.docCod} ${p.exportador}`,
+  )
+  const abaCrossProcess = useTabelaFiltro(
+    crossProcess,
+    (p) => p.filCod,
+    (p) => `${p.docCod} ${p.exportador}`,
+  )
 
   // Consolidação por MOEDA NEGOCIADA por card: USD como valor principal, demais
   // moedas (EUR, …) menores embaixo. Soma `valorMoedaNegociada`; itens sem
@@ -526,10 +818,61 @@ export default function GestaoPermutasPage() {
     pendentes: somaPorMoeda(pend),
     elegiveis: somaPorMoeda(pend.filter((p) => p.status === 'elegivel')),
     casamentoManual: somaPorMoeda(pend.filter((p) => p.status === 'casamento-manual')),
+    permutaManual: somaPorMoeda(pend.filter((p) => p.status === 'permuta-manual')),
     jaPermutado: somaPorMoeda(pend.filter((p) => p.status === 'ja-permutado')),
     bloqueadas: somaPorMoeda(pend.filter((p) => p.status === 'bloqueada')),
     invoicesEmAberto: somaPorMoeda(data?.invoicesEmAberto ?? []),
   }
+
+  // Tabela de alocação manual (1 adto → N invoices) — compartilhada pelas abas
+  // Múltiplas, Cross-over e Cross-process. Mostra saldo restante + nº de
+  // alocações + ação "Alocar" (distribui o saldo em várias invoices).
+  const renderCrossProcessTable = (list: PermutaPendente[]) =>
+    list.length === 0 ? (
+      <EmptyState
+        title="Nenhuma permuta cross-process"
+        description="Não há adiantamentos de clientes-filtro aguardando alocação."
+      />
+    ) : (
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Filial</TableHead>
+            <TableHead>Código</TableHead>
+            <TableHead>Exportador</TableHead>
+            <TableHead className="text-right">Valor Moeda Negociada</TableHead>
+            <TableHead className="text-right">Saldo restante</TableHead>
+            <TableHead className="text-right">Alocações</TableHead>
+            <TableHead className="text-right">Ação</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {list.map((p) => (
+            <TableRow key={p.docCod}>
+              <TableCell>{p.filCod}</TableCell>
+              <TableCell className="font-medium">{p.docCod}</TableCell>
+              <TableCell>{p.exportador}</TableCell>
+              <TableCell className="text-right">
+                <Moeda valor={p.valorMoedaNegociada} moeda={p.moeda} />
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                {p.saldoRestante != null
+                  ? `${formatNumber(p.saldoRestante)} ${moedaCodigo(p.moeda)}`
+                  : '—'}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                {p.alocacoes?.length ?? 0}
+              </TableCell>
+              <TableCell className="text-right">
+                <Button size="sm" variant="outline" onClick={() => abrirAlocar(p)}>
+                  <ArrowLeftRight aria-hidden /> Alocar
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    )
 
   return (
     <div className="space-y-6">
@@ -553,6 +896,18 @@ export default function GestaoPermutasPage() {
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
               <RefreshCw className={cn(loading && 'animate-spin')} aria-hidden /> Atualizar
             </Button>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/permutas/clientes-filtro" title="Cadastrar clientes para permuta manual">
+                <Users aria-hidden /> Clientes filtro
+              </Link>
+            </Button>
+            <Button
+              size="sm"
+              onClick={abrirIngestao}
+              title="Rodar a ingestão de dados do Conexos agora (entre os horários do cron)"
+            >
+              <DatabaseZap aria-hidden /> Ingestão de dados
+            </Button>
           </div>
         }
       />
@@ -563,7 +918,9 @@ export default function GestaoPermutasPage() {
         <EmptyState title="Não foi possível carregar a gestão de permutas" />
       ) : (
         <>
-          <KPIGrid columns={6}>
+          {/* Topo = RESUMO (contadores). Os tipos de permuta (simples/múltiplas/
+              cross-over/cross-process) viram abas na área de trabalho abaixo. */}
+          <KPIGrid columns={4}>
             <SimpleKPI
               color="info"
               label="Adiantamentos pendentes"
@@ -572,24 +929,6 @@ export default function GestaoPermutasPage() {
               tooltip="Mostrar todos os adiantamentos pendentes"
               active={vista === 'adiantamentos' && filtro === 'todos'}
               onClick={() => mudarFiltro('todos')}
-            />
-            <SimpleKPI
-              color="danger"
-              label="Bloqueadas"
-              value={data.totais.bloqueadas}
-              footer={<KpiFooter totais={moedaTotais.bloqueadas}>pendência de gate</KpiFooter>}
-              tooltip="Filtrar a tabela pelas bloqueadas"
-              active={vista === 'adiantamentos' && filtro === 'bloqueada'}
-              onClick={() => mudarFiltro('bloqueada')}
-            />
-            <SimpleKPI
-              color="info"
-              label="Já permutado"
-              value={data.totais.jaPermutado}
-              footer={<KpiFooter totais={moedaTotais.jaPermutado}>concluído (permuta anterior)</KpiFooter>}
-              tooltip="Filtrar a tabela pelos já permutados"
-              active={vista === 'adiantamentos' && filtro === 'ja-permutado'}
-              onClick={() => mudarFiltro('ja-permutado')}
             />
             <SimpleKPI
               color="info"
@@ -601,22 +940,22 @@ export default function GestaoPermutasPage() {
               onClick={verInvoices}
             />
             <SimpleKPI
-              color="success"
-              label="Elegíveis"
-              value={data.totais.elegiveis}
-              footer={<KpiFooter totais={moedaTotais.elegiveis}>passaram os 4 gates</KpiFooter>}
-              tooltip="Filtrar a tabela pelos elegíveis"
-              active={vista === 'adiantamentos' && filtro === 'elegivel'}
-              onClick={() => mudarFiltro('elegivel')}
+              color="info"
+              label="Já permutado"
+              value={data.totais.jaPermutado}
+              footer={<KpiFooter totais={moedaTotais.jaPermutado}>concluído (permuta anterior)</KpiFooter>}
+              tooltip="Filtrar a tabela pelos já permutados"
+              active={vista === 'adiantamentos' && filtro === 'ja-permutado'}
+              onClick={() => mudarFiltro('ja-permutado')}
             />
             <SimpleKPI
-              color="warning"
-              label="Casamento manual"
-              value={data.totais.casamentoManual}
-              footer={<KpiFooter totais={moedaTotais.casamentoManual}>N:M, falta escolher invoice</KpiFooter>}
-              tooltip="Filtrar a tabela pelos casamentos manuais (N:M)"
-              active={vista === 'adiantamentos' && filtro === 'casamento-manual'}
-              onClick={() => mudarFiltro('casamento-manual')}
+              color="danger"
+              label="Bloqueadas"
+              value={data.totais.bloqueadas}
+              footer={<KpiFooter totais={moedaTotais.bloqueadas}>pendência de gate</KpiFooter>}
+              tooltip="Filtrar a tabela pelas bloqueadas"
+              active={vista === 'adiantamentos' && filtro === 'bloqueada'}
+              onClick={() => mudarFiltro('bloqueada')}
             />
           </KPIGrid>
 
@@ -791,6 +1130,9 @@ export default function GestaoPermutasPage() {
                       const taxa = d?.taxaAdiantamento
                       const saldoNeg =
                         saldoBrl != null && taxa != null && taxa > 0 ? saldoBrl / taxa : null
+                      // Progresso de pagamento (ADR-0006): % pago + quanto falta —
+                      // exibido nos bloqueados por pagamento parcial (`nao-pago`).
+                      const prog = progressoPagamento(d?.valorTotal, d?.valorAberto, taxa)
                       // Conta da variação cambial (só p/ casados): a classificação
                       // sai de delta = principalMoeda × (taxaAdto − taxaInvoice).
                       // O principalMoeda (valor negociado da invoice) é recuperado
@@ -857,6 +1199,17 @@ export default function GestaoPermutasPage() {
                                   <Campo label="Referência">{p.referencia}</Campo>
                                   <Campo label="Data de emissão">{fmtData(d?.dataEmissao)}</Campo>
                                   <Campo label="Pago">{d?.pago ? 'Sim' : 'Não'}</Campo>
+                                  {prog ? (
+                                    <Campo label="Progresso de pagamento">
+                                      {prog.percentPago}% pago
+                                      <div className="text-xs font-normal text-muted-foreground">
+                                        falta R$ {formatNumber(prog.faltaBrl)}
+                                        {prog.faltaUsd != null
+                                          ? ` (≈ ${formatNumber(prog.faltaUsd)} ${moedaCodigo(p.moeda)})`
+                                          : ''}
+                                      </div>
+                                    </Campo>
+                                  ) : null}
                                   <Campo label="Valor (face)">
                                     {p.valorBrl != null ? `R$ ${formatNumber(p.valorBrl)}` : '—'}
                                   </Campo>
@@ -992,6 +1345,47 @@ export default function GestaoPermutasPage() {
                                     </div>
                                   </div>
                                 ) : null}
+                                {/* Alocação manual cross-process (Fase 2) — só permuta-manual. */}
+                                {p.status === 'permuta-manual' ? (
+                                  <div className="mt-3 rounded-md border bg-background/60 px-3 py-2">
+                                    <div className="mb-1 flex items-center justify-between">
+                                      <span className="text-xs font-medium text-foreground">
+                                        Alocação manual (cross-process)
+                                      </span>
+                                      <span className="text-xs text-muted-foreground">
+                                        Saldo restante:{' '}
+                                        {p.saldoRestante != null
+                                          ? `${formatNumber(p.saldoRestante)} ${moedaCodigo(p.moeda)}`
+                                          : '—'}
+                                      </span>
+                                    </div>
+                                    {p.alocacoes && p.alocacoes.length > 0 ? (
+                                      <ul className="mb-2 space-y-0.5 text-xs text-muted-foreground">
+                                        {p.alocacoes.map((al) => (
+                                          <li key={al.invoiceDocCod}>
+                                            invoice {al.invoiceDocCod}
+                                            {al.invoicePriCod ? ` (proc ${al.invoicePriCod})` : ''} ·{' '}
+                                            {formatNumber(al.valorAlocado)} {moedaCodigo(al.moeda ?? p.moeda)}
+                                            {al.variacaoClassificacao && al.variacaoResultado != null
+                                              ? ` · ${al.variacaoClassificacao} R$ ${formatNumber(al.variacaoResultado)}`
+                                              : ''}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    ) : (
+                                      <p className="mb-2 text-xs text-muted-foreground">
+                                        Nenhuma alocação ainda.
+                                      </p>
+                                    )}
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => abrirAlocar(p)}
+                                    >
+                                      <ArrowLeftRight aria-hidden /> Alocar invoice
+                                    </Button>
+                                  </div>
+                                ) : null}
                               </TableCell>
                             </TableRow>
                           ) : null}
@@ -1048,92 +1442,69 @@ export default function GestaoPermutasPage() {
 
           {/* Casamento — sugerido (auto 1:N) × manual (N:M), alternados por aba */}
           <Card>
-            <Tabs defaultValue="sugerido">
+            <Tabs defaultValue="simples">
               <CardHeader>
                 <TabsList>
-                  <TabsTrigger value="sugerido">
-                    <ArrowLeftRight className="size-4" aria-hidden /> Casamento sugerido (
+                  <TabsTrigger value="simples">
+                    <ArrowLeftRight className="size-4" aria-hidden /> Simples (
                     {casamentosSugeridos.length})
                   </TabsTrigger>
-                  <TabsTrigger value="manual">
-                    <Layers className="size-4" aria-hidden /> Casamento manual N:M (
-                    {casamentoManual.length})
+                  <TabsTrigger value="multiplas">
+                    <Layers className="size-4" aria-hidden /> Múltiplas ({multiplas.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="cross-over">
+                    <Layers className="size-4" aria-hidden /> Cross-over ({crossOver.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="cross-process">
+                    <ArrowLeftRight className="size-4" aria-hidden /> Cross-process (
+                    {crossProcess.length})
                   </TabsTrigger>
                 </TabsList>
               </CardHeader>
               <CardContent>
-                <TabsContent value="manual" className="space-y-4">
+                <TabsContent value="multiplas" className="space-y-4">
                   <p className="text-sm text-muted-foreground">
-                    Escolha qual <strong>invoice (fatura)</strong> do mesmo processo este{' '}
-                    <strong>adiantamento (PROFORMA já pago)</strong> vai abater. O processo tem
-                    vários adiantamentos e várias invoices, então o casamento 1:1 automático não se
-                    aplica — você decide a ligação.
+                    <strong>1 adiantamento → N invoices</strong> (mesmo processo): o adiantamento é
+                    distribuído entre as várias invoices do processo. Escolha a invoice e o valor a
+                    abater.
                   </p>
-                  {casamentoManual.length === 0 ? (
-                    <EmptyState
-                      title="Nenhum casamento manual"
-                      description="Não há adiantamentos N:M aguardando escolha de invoice."
-                    />
-                  ) : (
-                    <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Filial</TableHead>
-                      <TableHead>Código</TableHead>
-                      <TableHead>Exportador</TableHead>
-                      <TableHead className="text-right">Valor Moeda Negociada</TableHead>
-                      <TableHead className="text-right">Ação</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {casamentoManual.map((p) => {
-                      const candidatas = p.candidatas ?? []
-                      return (
-                        <TableRow key={p.docCod}>
-                          <TableCell>{p.filCod}</TableCell>
-                          <TableCell className="font-medium">{p.docCod}</TableCell>
-                          <TableCell>{p.exportador}</TableCell>
-                          <TableCell className="text-right">
-                            <Moeda valor={p.valorMoedaNegociada} moeda={p.moeda} />
-                            {p.valorBrl != null ? (
-                              <div className="text-xs text-muted-foreground tabular-nums">
-                                ≈ R$ {formatNumber(p.valorBrl)}
-                              </div>
-                            ) : null}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {p.processamentoStatus === 'processado' ? (
-                              <ProcessamentoBadge status="processado" />
-                            ) : candidatas.length === 0 ? (
-                              <span className="text-xs text-muted-foreground">
-                                Sem invoices candidatas
-                              </span>
-                            ) : (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={processando === p.docCod}
-                                onClick={() => abrirResolverManual(p)}
-                              >
-                                {processando === p.docCod ? 'Processando…' : 'Resolver'}
-                              </Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                    </Table>
-                  )}
+                  <FiltroBarra aba={abaMultiplas} buscaPlaceholder="Buscar código ou exportador…" />
+                  {renderCrossProcessTable(abaMultiplas.slice)}
+                  <Paginacao aba={abaMultiplas} />
                 </TabsContent>
 
-                <TabsContent value="sugerido" className="space-y-4">
+                <TabsContent value="cross-over" className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    <strong>N adiantamentos ↔ M invoices</strong> (mesmo processo): vários
+                    adiantamentos e várias invoices se cruzam. Você decide cada ligação e o valor.
+                  </p>
+                  <FiltroBarra aba={abaCrossOver} buscaPlaceholder="Buscar código ou exportador…" />
+                  {renderCrossProcessTable(abaCrossOver.slice)}
+                  <Paginacao aba={abaCrossOver} />
+                </TabsContent>
+
+                <TabsContent value="cross-process" className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    <strong>Cliente-filtro</strong>: o adiantamento casa com invoices de{' '}
+                    <strong>outro processo</strong>. Busque a invoice pelo número do processo e
+                    distribua o valor (a invoice precisa ter D.I/DUIMP).
+                  </p>
+                  <FiltroBarra
+                    aba={abaCrossProcess}
+                    buscaPlaceholder="Buscar código ou exportador…"
+                  />
+                  {renderCrossProcessTable(abaCrossProcess.slice)}
+                  <Paginacao aba={abaCrossProcess} />
+                </TabsContent>
+
+                <TabsContent value="simples" className="space-y-4">
                   <p className="text-sm text-muted-foreground">
                     Casamento automático: processos com <strong>exatamente 1 invoice</strong>. Cada
                     adiantamento abate essa invoice (1:1); se o processo tiver vários adiantamentos,
                     todos aparecem agrupados sob a mesma invoice (1 invoice : N adiantamentos).
                   </p>
-                  {casamentosSugeridos.length === 0 ? (
+                  <FiltroBarra aba={abaSimples} buscaPlaceholder="Buscar processo ou exportador…" />
+                  {abaSimples.total === 0 ? (
                 <EmptyState
                   title="Nenhum casamento sugerido"
                   description="Não há invoices em aberto casáveis na última eleição."
@@ -1151,7 +1522,7 @@ export default function GestaoPermutasPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {casamentosSugeridos.map((c, g) => {
+                    {abaSimples.slice.map((c, g) => {
                       const abertaInv = invoiceExpandida === c.invoice.docCod
                       const totalUsado = c.adiantamentos.reduce(
                         (s, a) => s + (a.valorASerUsado ?? 0),
@@ -1292,6 +1663,7 @@ export default function GestaoPermutasPage() {
                   </TableBody>
                 </Table>
                   )}
+                  <Paginacao aba={abaSimples} />
                 </TabsContent>
               </CardContent>
             </Tabs>
@@ -1396,168 +1768,270 @@ export default function GestaoPermutasPage() {
             </DialogContent>
           </Dialog>
 
-          {/* Modal de resolução do casamento manual N:M */}
+          {/* Modal de ingestão manual de dados (ADR-0006) */}
           <Dialog
-            open={resolverManual !== null}
+            open={ingestaoOpen}
             onOpenChange={(open) => {
-              if (!open) setResolverManual(null)
+              // Não fecha enquanto a ingestão está rodando (espera no modal).
+              if (ingestRunning) return
+              setIngestaoOpen(open)
             }}
           >
             <DialogContent size="md">
               <DialogHeader>
-                <DialogTitle>
-                  Resolver casamento manual — Adiantamento {resolverManual?.docCod}
-                </DialogTitle>
+                <DialogTitle>Ingestão de dados</DialogTitle>
                 <DialogDescription>
-                  Escolha a invoice do mesmo processo e o valor a abater, e lance a permuta.
+                  Roda a mesma pipeline do agendamento automático, sob demanda.
                 </DialogDescription>
               </DialogHeader>
               <DialogBody>
-                {resolverManual ? (
+                <div className="rounded-md border border-warning/40 bg-warning-subtle/40 p-3 text-sm text-warning-foreground">
+                  <p>
+                    Esta ação lê os dados do <strong>Conexos</strong> e recalcula o painel
+                    (adiantamentos, invoices, casamentos e elegibilidade). É somente leitura no
+                    ERP — <strong>nada é baixado nem lançado</strong>. Pode levar alguns segundos;
+                    aguarde aqui até concluir.
+                  </p>
+                </div>
+
+                <div className="mt-4">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="text-xs font-medium text-muted-foreground">Últimas rodadas</div>
+                    {runsLoading ? <Spinner className="text-muted-foreground" /> : null}
+                  </div>
+                  {runsLoading && !runs ? (
+                    <div className="space-y-2">
+                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-10 w-full" />
+                    </div>
+                  ) : runs && runs.length > 0 ? (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Quem rodou</TableHead>
+                          <TableHead>Quando</TableHead>
+                          <TableHead className="text-right">Elegíveis</TableHead>
+                          <TableHead className="text-right">Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {runs.map((run) => (
+                          <TableRow key={run.runId}>
+                            <TableCell className="font-medium">
+                              {rotuloQuemRodou(run.triggeredBy)}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {formatRunWhen(run.finishedAt)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {run.status === 'success'
+                                ? run.totalElegiveis.toLocaleString('pt-BR')
+                                : '—'}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <RunStatusBadge status={run.status} />
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Nenhuma rodada registrada ainda.</p>
+                  )}
+                </div>
+              </DialogBody>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setIngestaoOpen(false)}
+                  disabled={ingestRunning}
+                >
+                  Fechar
+                </Button>
+                <Button onClick={() => void rodarIngestao()} disabled={ingestRunning}>
+                  {ingestRunning ? (
+                    <>
+                      <Spinner /> Rodando…
+                    </>
+                  ) : (
+                    <>
+                      <DatabaseZap aria-hidden /> Rodar agora
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Modal de alocação manual cross-process (Fase 2) */}
+          <Dialog
+            open={alocando !== null}
+            onOpenChange={(open) => {
+              if (!open) setAlocando(null)
+            }}
+          >
+            <DialogContent size="lg">
+              <DialogHeader>
+                <DialogTitle>Alocar adiantamento</DialogTitle>
+                <DialogDescription>
+                  Distribua o saldo a permutar em uma ou mais invoices (busque pelo número do
+                  processo). A invoice precisa ter D.I/DUIMP. Rascunho — a baixa no ERP é um passo
+                  posterior.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogBody>
+                {alocandoAtual ? (
                   <>
                     <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
-                      <Campo label="Processo">{resolverManual.detalhe?.priCod ?? '—'}</Campo>
-                      <Campo label="Exportador">{resolverManual.exportador}</Campo>
-                      <Campo label="Valor moeda negociada">
-                        <Moeda
-                          valor={resolverManual.valorMoedaNegociada}
-                          moeda={resolverManual.moeda}
-                        />
-                      </Campo>
-                      <Campo label="Taxa adiantamento">
-                        {resolverManual.detalhe?.taxaAdiantamento != null
-                          ? fmtTaxa(resolverManual.detalhe.taxaAdiantamento)
+                      <Campo label="Adiantamento">{alocandoAtual.docCod}</Campo>
+                      <Campo label="Exportador">{alocandoAtual.exportador}</Campo>
+                      <Campo label="Saldo restante">
+                        {alocandoAtual.saldoRestante != null
+                          ? `${formatNumber(alocandoAtual.saldoRestante)} ${moedaCodigo(alocandoAtual.moeda)}`
                           : '—'}
                       </Campo>
-                      <Campo label="Saldo a permutar">
-                        {saldoManualUSD != null ? (
-                          <>
-                            {formatNumber(saldoManualUSD)} {moedaCodigo(resolverManual.moeda)}
-                            {saldoManualBrl != null ? (
-                              <div className="text-xs font-normal text-muted-foreground">
-                                R$ {formatNumber(saldoManualBrl)}
-                              </div>
-                            ) : null}
-                          </>
-                        ) : saldoManualBrl != null ? (
-                          `R$ ${formatNumber(saldoManualBrl)}`
-                        ) : (
-                          '—'
-                        )}
-                      </Campo>
-                      <Campo label="D.I / DUIMP">
-                        {resolverManual.detalhe?.declaracao?.variante ?? '—'}
-                      </Campo>
-                      <Campo label="Data D.I / DUIMP">
-                        {fmtData(resolverManual.detalhe?.declaracao?.dataBase)}
-                      </Campo>
                     </dl>
-                    <div className="mt-4 space-y-3">
-                      <div className="space-y-1">
-                        <label htmlFor="manual-invoice" className="text-sm font-medium">
-                          Invoice a casar
-                        </label>
-                        <Select value={invoiceManual} onValueChange={setInvoiceManual}>
-                          <SelectTrigger id="manual-invoice">
-                            <SelectValue placeholder="Escolher invoice…" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {(resolverManual.candidatas ?? []).map((inv) => (
-                              <SelectItem key={inv.docCod} value={inv.docCod}>
-                                Processo {resolverManual.detalhe?.priCod ?? '—'} · Invoice{' '}
-                                {inv.docCod} ·{' '}
-                                {inv.valorMoedaNegociada != null
-                                  ? `${formatNumber(inv.valorMoedaNegociada)} ${moedaCodigo(inv.moeda)}`
-                                  : '—'}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <p className="text-xs text-muted-foreground">
-                          O Processo ({resolverManual.detalhe?.priCod ?? '—'}) é o código em comum
-                          entre o adiantamento e a invoice.
-                        </p>
-                      </div>
-                      <div className="space-y-1">
-                        <label htmlFor="manual-valor" className="text-sm font-medium">
-                          Valor a abater ({moedaCodigo(resolverManual.moeda)})
-                        </label>
-                        <Input
-                          id="manual-valor"
-                          type="text"
-                          inputMode="decimal"
-                          value={valorManual}
-                          onChange={(e) => setValorManual(e.target.value)}
-                          onBlur={() =>
-                            setValorManual((v) => {
-                              const n = parseBrl(v)
-                              return Number.isFinite(n) && v.trim() !== '' ? formatNumber(n) : v
-                            })
-                          }
-                          aria-invalid={valorManualExcede}
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Saldo a permutar:{' '}
-                          {saldoManualUSD != null
-                            ? `${formatNumber(saldoManualUSD)} ${moedaCodigo(resolverManual.moeda)}`
-                            : '—'}
-                          {saldoManualBrl != null ? ` · R$ ${formatNumber(saldoManualBrl)}` : ''}
-                        </p>
-                        {/* "Abate" só quando PARCIAL (< saldo) — no padrão é o saldo inteiro. */}
-                        {valorManualBRL != null &&
-                        saldoManualUSD != null &&
-                        valorManualNum < saldoManualUSD - 0.005 ? (
-                          <p className="text-xs text-muted-foreground">
-                            Você vai abater {formatNumber(valorManualNum)}{' '}
-                            {moedaCodigo(resolverManual.moeda)} ≈ R$ {formatNumber(valorManualBRL)}
-                          </p>
-                        ) : null}
-                        {valorManualExcede ? (
-                          <p className="text-xs text-danger-foreground">
-                            Não pode exceder o saldo a permutar (
-                            {formatNumber(saldoManualUSD ?? 0)}{' '}
-                            {moedaCodigo(resolverManual.moeda)}).
-                          </p>
-                        ) : null}
-                      </div>
 
-                      {/* Variação cambial calculada a partir da taxa da invoice ESCOLHIDA
-                          + o valor a abater. Mostra juros/desconto antes de lançar. */}
-                      {varDeltaManual != null && taxaManual != null && taxaInvManual != null ? (
-                        <div className="space-y-0.5 rounded-md border bg-background/60 px-3 py-2 text-xs text-muted-foreground tabular-nums">
-                          <div className="font-medium text-foreground">
-                            Variação cambial (em R$):
-                          </div>
-                          <div>
-                            Adiantamento: {formatNumber(valorManualNum)}{' '}
-                            {moedaCodigo(resolverManual.moeda)} × {fmtTaxa(taxaManual)} ={' '}
-                            <span className="text-foreground">
-                              R$ {formatNumber(valorManualNum * taxaManual)}
-                            </span>
-                          </div>
-                          <div>
-                            Invoice: {formatNumber(valorManualNum)}{' '}
-                            {moedaCodigo(resolverManual.moeda)} × {fmtTaxa(taxaInvManual)} ={' '}
-                            <span className="text-foreground">
-                              R$ {formatNumber(valorManualNum * taxaInvManual)}
-                            </span>
-                          </div>
-                          <div>
-                            Diferença ={' '}
-                            <span className="font-medium text-foreground">
-                              R$ {formatNumber(Math.abs(varDeltaManual))}
-                            </span>{' '}
-                            → <span className="font-medium text-foreground">{varClassManual}</span>{' '}
-                            {varClassManual === 'JUROS'
-                              ? '(passiva)'
-                              : varClassManual === 'DESCONTO'
-                                ? '(ativa)'
-                                : ''}
-                          </div>
+                    {alocandoAtual.alocacoes && alocandoAtual.alocacoes.length > 0 ? (
+                      <div className="mt-4">
+                        <div className="mb-1 text-xs font-medium text-muted-foreground">
+                          Alocações
                         </div>
-                      ) : invoiceManual && taxaInvManual == null ? (
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Invoice</TableHead>
+                              <TableHead>Processo</TableHead>
+                              <TableHead className="text-right">Valor</TableHead>
+                              <TableHead className="text-right">Variação</TableHead>
+                              <TableHead className="text-right">Ação</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {alocandoAtual.alocacoes.map((al) => (
+                              <TableRow key={al.invoiceDocCod}>
+                                <TableCell className="font-medium">{al.invoiceDocCod}</TableCell>
+                                <TableCell className="text-muted-foreground">
+                                  {al.invoicePriCod ?? '—'}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {formatNumber(al.valorAlocado)} {moedaCodigo(al.moeda ?? alocandoAtual.moeda)}
+                                </TableCell>
+                                <TableCell className="text-right text-xs">
+                                  {al.variacaoClassificacao && al.variacaoResultado != null
+                                    ? `${al.variacaoClassificacao} · R$ ${formatNumber(al.variacaoResultado)}`
+                                    : '—'}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => void removerAloc(al.invoiceDocCod)}
+                                    aria-label={`Remover alocação da invoice ${al.invoiceDocCod}`}
+                                  >
+                                    <Ban aria-hidden />
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    ) : null}
+
+                    <div className="mt-4 space-y-3 rounded-md border bg-background/60 px-3 py-3">
+                      <div className="text-xs font-medium text-foreground">Nova alocação</div>
+                      {/* Cross-process busca QUALQUER processo; múltiplas/cross-over
+                          ficam TRAVADAS no próprio processo do adiantamento. */}
+                      {alocandoAtual.tipoPermuta === 'cross-process' ? (
+                        <div className="flex flex-wrap items-end gap-2">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-muted-foreground">Número do processo</span>
+                            <Input
+                              aria-label="Número do processo"
+                              value={buscaProcesso}
+                              onChange={(e) => setBuscaProcesso(e.target.value)}
+                              placeholder="ex.: 510"
+                              className="w-40"
+                            />
+                          </div>
+                          <Button
+                            variant="outline"
+                            onClick={() => void buscarAloc()}
+                            disabled={buscandoInv || !buscaProcesso.trim()}
+                            aria-busy={buscandoInv}
+                          >
+                            {buscandoInv ? <Spinner /> : null} Buscar
+                          </Button>
+                        </div>
+                      ) : (
                         <p className="text-xs text-muted-foreground">
-                          Invoice escolhida sem taxa no Conexos — variação não calculada.
+                          Invoices do processo{' '}
+                          <strong className="text-foreground">
+                            {alocandoAtual.detalhe?.priCod ?? buscaProcesso}
+                          </strong>{' '}
+                          (mesmo processo do adiantamento).
+                          {buscandoInv ? ' Carregando…' : ''}
+                        </p>
+                      )}
+
+                      {invoicesBuscadas != null ? (
+                        invoicesElegiveis.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">
+                            {invoicesBuscadas.length === 0
+                              ? 'Nenhuma invoice encontrada para esse processo.'
+                              : `Nenhuma invoice elegível (em ${moedaAdtoAloc} e com D.I/DUIMP) para esse processo.`}
+                          </p>
+                        ) : (
+                          <div className="flex flex-wrap items-end gap-2">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted-foreground">Invoice</span>
+                              <Select
+                                value={invoiceAloc}
+                                onValueChange={setInvoiceAloc}
+                                aria-label={`Selecionar invoice (em ${moedaAdtoAloc}, com D.I)`}
+                              >
+                                <SelectTrigger className="w-96" aria-label="Selecionar invoice">
+                                  <SelectValue placeholder="Escolha uma invoice…" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {invoicesElegiveis.map((i) => (
+                                    <SelectItem key={i.docCod} value={i.docCod}>
+                                      {i.docCod} ·{' '}
+                                      {i.valorMoedaNegociada != null
+                                        ? `${formatNumber(i.valorMoedaNegociada)} ${moedaCodigo(i.moeda ?? 'USD')}`
+                                        : 's/ valor'}
+                                      {i.taxa != null ? ` · taxa ${fmtTaxa(i.taxa)}` : ''}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted-foreground">
+                                Valor a alocar ({moedaCodigo(alocandoAtual.moeda)})
+                              </span>
+                              <Input
+                                value={valorAloc}
+                                onChange={(e) => setValorAloc(e.target.value)}
+                                placeholder="0,00"
+                                className="w-40"
+                              />
+                            </div>
+                            <Button
+                              onClick={() => void adicionarAloc()}
+                              disabled={salvandoAloc || !invoiceAloc || !valorAloc}
+                              aria-busy={salvandoAloc}
+                            >
+                              {salvandoAloc ? <Spinner /> : <ArrowLeftRight aria-hidden />} Adicionar
+                            </Button>
+                          </div>
+                        )
+                      ) : null}
+                      {invoicesBuscadas != null && invoicesOcultadas > 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                          {invoicesOcultadas} invoice(s) omitida(s): sem D.I/DUIMP ou em outra moeda
+                          (≠ {moedaAdtoAloc}).
                         </p>
                       ) : null}
                     </div>
@@ -1565,19 +2039,8 @@ export default function GestaoPermutasPage() {
                 ) : null}
               </DialogBody>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setResolverManual(null)}>
-                  Cancelar
-                </Button>
-                <Button
-                  disabled={!PROCESSAMENTO_HABILITADO || !invoiceManual || !valorManualValido}
-                  title={
-                    !PROCESSAMENTO_HABILITADO
-                      ? 'Indisponível — aguardando write-back no Conexos'
-                      : undefined
-                  }
-                  onClick={() => void lancarManual()}
-                >
-                  Lançar permuta
+                <Button variant="outline" onClick={() => setAlocando(null)}>
+                  Fechar
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -1591,8 +2054,8 @@ export default function GestaoPermutasPage() {
 function LoadingSkeleton() {
   return (
     <div className="space-y-6">
-      <KPIGrid columns={6}>
-        {Array.from({ length: 6 }).map((_, i) => (
+      <KPIGrid columns={4}>
+        {Array.from({ length: 4 }).map((_, i) => (
           <Skeleton key={i} className="h-24" />
         ))}
       </KPIGrid>

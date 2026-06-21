@@ -7,11 +7,18 @@ import type {
 } from '../../repository/permutas/PermutaRelationalRepository.js';
 import type PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
 import type PermutaProcessamentoRepository from '../../repository/permutas/PermutaProcessamentoRepository.js';
+import type PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacaoRepository.js';
+import type { AlocacaoRow } from '../../repository/permutas/PermutaAlocacaoRepository.js';
 import type { Processamento } from '../../interface/permutas/Processamento.js';
 import GestaoPermutasService from './GestaoPermutasService.js';
 import type LogService from '../LogService.js';
 
 const buildLog = () => ({ info: jest.fn().mockResolvedValue(undefined) }) as unknown as LogService;
+
+const buildAlocacao = (rows: AlocacaoRow[] = []) =>
+    ({
+        listAtivas: jest.fn().mockResolvedValue(rows),
+    }) as unknown as jest.Mocked<PermutaAlocacaoRepository>;
 
 const adiantamentos: AdiantamentoAtivo[] = [
     {
@@ -35,6 +42,8 @@ const adiantamentos: AdiantamentoAtivo[] = [
         pago: true,
         estadoElegibilidade: 'bloqueada',
         motivoBloqueio: 'sem-invoice',
+        valorTotal: 1000,
+        valorAberto: 400,
         stale: false,
     },
     {
@@ -53,6 +62,22 @@ const adiantamentos: AdiantamentoAtivo[] = [
         stale: false,
     },
 ];
+
+const permutaManualAdto: AdiantamentoAtivo = {
+    docCod: 'A9',
+    priCod: '1153',
+    filCod: 2,
+    referencia: 'CT199/25',
+    exportador: 'VE STAAL',
+    valorMoedaNegociada: 50000,
+    moeda: 'USD',
+    pago: true,
+    estadoElegibilidade: 'permuta-manual',
+    motivoBloqueio: 'cliente-filtro',
+    pesCod: '191',
+    importador: 'INOX-TECH',
+    stale: false,
+};
 
 const invoices: InvoiceRow[] = [
     {
@@ -107,6 +132,7 @@ describe('GestaoPermutasService.exporGestao', () => {
         const service = new GestaoPermutasService(
             buildRelational(),
             buildProcessamento(),
+            buildAlocacao(),
             buildLog(),
         );
 
@@ -124,6 +150,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             elegiveis: 1,
             bloqueadas: 1,
             casamentoManual: 1,
+            permutaManual: 0,
             jaPermutado: 0,
         });
     });
@@ -132,6 +159,7 @@ describe('GestaoPermutasService.exporGestao', () => {
         const service = new GestaoPermutasService(
             buildRelational(),
             buildProcessamento(),
+            buildAlocacao(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -144,10 +172,95 @@ describe('GestaoPermutasService.exporGestao', () => {
         expect(res.pendentes.find((p) => p.docCod === 'A1')?.status).toBe('elegivel');
     });
 
+    it('classifica tipoPermuta: simples (elegível), multiplas (1 adto N:M), cross-process', async () => {
+        const service = new GestaoPermutasService(
+            buildRelational(),
+            buildProcessamento(),
+            buildAlocacao(),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+        // A1 elegível → simples; A3 casamento-manual sozinho no priCod 4000 → multiplas.
+        expect(res.pendentes.find((p) => p.docCod === 'A1')?.tipoPermuta).toBe('simples');
+        expect(res.pendentes.find((p) => p.docCod === 'A3')?.tipoPermuta).toBe('multiplas');
+        // A2 bloqueada → sem tipo.
+        expect(res.pendentes.find((p) => p.docCod === 'A2')?.tipoPermuta).toBeUndefined();
+    });
+
+    it('classifica cross-over quando o processo tem >1 adiantamento casamento-manual', async () => {
+        // Dois adtos casamento-manual no MESMO priCod (5000) → cross-over (N:M).
+        const nm1: AdiantamentoAtivo = {
+            docCod: 'X1',
+            priCod: '5000',
+            filCod: 2,
+            valorMoedaNegociada: 100,
+            moeda: 'USD',
+            pago: true,
+            estadoElegibilidade: 'casamento-manual',
+            stale: false,
+        };
+        const nm2: AdiantamentoAtivo = { ...nm1, docCod: 'X2' };
+        const service = new GestaoPermutasService(
+            buildRelational({ adiantamentos: [nm1, nm2] }),
+            buildProcessamento(),
+            buildAlocacao(),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+        expect(res.pendentes.find((p) => p.docCod === 'X1')?.tipoPermuta).toBe('cross-over');
+        expect(res.pendentes.find((p) => p.docCod === 'X2')?.tipoPermuta).toBe('cross-over');
+    });
+
+    it('anexa saldoRestante + alocações também a casamento-manual (múltiplas/cross-over)', async () => {
+        // casamento-manual com saldo 4400 BRL / taxa 5.5 = 800 USD; alocado 300 → resta 500.
+        const nm: AdiantamentoAtivo = {
+            docCod: 'M1',
+            priCod: '6000',
+            filCod: 2,
+            valorMoedaNegociada: 800,
+            moeda: 'USD',
+            pago: true,
+            estadoElegibilidade: 'casamento-manual',
+            valorPermutar: 4400,
+            taxa: 5.5,
+            stale: false,
+        };
+        const service = new GestaoPermutasService(
+            buildRelational({ adiantamentos: [nm] }),
+            buildProcessamento(),
+            buildAlocacao([
+                {
+                    adiantamentoDocCod: 'M1',
+                    invoiceDocCod: 'INV-X',
+                    valorAlocado: 300,
+                    moeda: 'USD',
+                    criadoEm: new Date('2026-06-21T10:00:00Z'),
+                },
+            ]),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+        const pm = res.pendentes.find((p) => p.docCod === 'M1');
+        expect(pm?.alocacoes).toHaveLength(1);
+        expect(pm?.saldoRestante).toBeCloseTo(500, 5);
+    });
+
+    it('classifica cross-process para permuta-manual (cliente-filtro)', async () => {
+        const service = new GestaoPermutasService(
+            buildRelational({ adiantamentos: [...adiantamentos, permutaManualAdto] }),
+            buildProcessamento(),
+            buildAlocacao(),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+        expect(res.pendentes.find((p) => p.docCod === 'A9')?.tipoPermuta).toBe('cross-process');
+    });
+
     it('maps aging_days→diasEmAberto and defaults missing fields', async () => {
         const service = new GestaoPermutasService(
             buildRelational(),
             buildProcessamento(),
+            buildAlocacao(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -207,6 +320,7 @@ describe('GestaoPermutasService.exporGestao', () => {
                 casamentos: [casamentoUsdNeg],
             }),
             buildProcessamento(),
+            buildAlocacao(),
             buildLog(),
         );
 
@@ -222,6 +336,7 @@ describe('GestaoPermutasService.exporGestao', () => {
         const service = new GestaoPermutasService(
             buildRelational(),
             buildProcessamento(),
+            buildAlocacao(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -257,6 +372,7 @@ describe('GestaoPermutasService.exporGestao', () => {
         const service = new GestaoPermutasService(
             buildRelational({ adiantamentos: [...adiantamentos, jaPermutado] }),
             buildProcessamento(),
+            buildAlocacao(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -295,6 +411,7 @@ describe('GestaoPermutasService.exporGestao', () => {
         const service = new GestaoPermutasService(
             buildRelational({ invoices: candidatasInvoices }),
             buildProcessamento(),
+            buildAlocacao(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -306,10 +423,54 @@ describe('GestaoPermutasService.exporGestao', () => {
         expect(res.pendentes.find((p) => p.docCod === 'A2')?.candidatas).toBeUndefined();
     });
 
+    it('anexa alocações + saldoRestante ao permuta-manual', async () => {
+        // adto A9: saldo a permutar 5500 BRL / taxa 5.5 = 1000 USD; alocado 600 → resta 400.
+        const adto = { ...permutaManualAdto, valorPermutar: 5500, taxa: 5.5 };
+        const service = new GestaoPermutasService(
+            buildRelational({ adiantamentos: [...adiantamentos, adto] }),
+            buildProcessamento(),
+            buildAlocacao([
+                {
+                    adiantamentoDocCod: 'A9',
+                    invoiceDocCod: 'I7',
+                    invoicePriCod: '510',
+                    valorAlocado: 600,
+                    moeda: 'USD',
+                    variacaoClassificacao: 'JUROS',
+                    variacaoResultado: 120,
+                    criadoEm: new Date('2026-06-20T10:00:00Z'),
+                },
+            ]),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+
+        const pm = res.pendentes.find((p) => p.docCod === 'A9');
+        expect(pm?.alocacoes).toHaveLength(1);
+        expect(pm?.alocacoes?.[0]).toMatchObject({ invoiceDocCod: 'I7', valorAlocado: 600 });
+        expect(pm?.saldoRestante).toBeCloseTo(400, 5);
+    });
+
+    it('mapeia estado permuta-manual para status próprio + conta no total', async () => {
+        const service = new GestaoPermutasService(
+            buildRelational({ adiantamentos: [...adiantamentos, permutaManualAdto] }),
+            buildProcessamento(),
+            buildAlocacao(),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+
+        const pm = res.pendentes.find((p) => p.docCod === 'A9');
+        expect(pm?.status).toBe('permuta-manual');
+        expect(pm?.motivoBloqueio).toBe('cliente-filtro');
+        expect(res.totais.permutaManual).toBe(1);
+    });
+
     it('builds detalhe: priCod/pago + declaracao (DI) + taxa/variacao for matched (A1)', async () => {
         const service = new GestaoPermutasService(
             buildRelational(),
             buildProcessamento(),
+            buildAlocacao(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -329,6 +490,9 @@ describe('GestaoPermutasService.exporGestao', () => {
         expect(a2?.detalhe?.priCod).toBe('3000');
         expect(a2?.detalhe?.declaracao).toBeUndefined();
         expect(a2?.detalhe?.taxaAdiantamento).toBeUndefined();
+        // Progresso de pagamento (face + saldo em aberto) flui ao detalhe.
+        expect(a2?.detalhe?.valorTotal).toBe(1000);
+        expect(a2?.detalhe?.valorAberto).toBe(400);
     });
 
     it('surfaces processamentoStatus on pendentes and casamento adiantamentos', async () => {
@@ -337,6 +501,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildProcessamento([
                 { adiantamentoDocCod: 'A1', status: 'processado', processadoPor: 'u' },
             ]),
+            buildAlocacao(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');

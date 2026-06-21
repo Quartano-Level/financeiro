@@ -3,6 +3,81 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.2.7 (2026-06-21) — tipos de permuta em abas + topo resumo (ADR-0009)
+
+Refinamento de apresentação (sem novo estado no banco). Classificação DERIVADA `tipoPermuta`
+(`simples`/`multiplas`/`cross-over`/`cross-process`) calculada em `GestaoPermutasService` a partir do
+estado + cardinalidade do processo (nº de adtos casamento-manual no priCod: >1 → cross-over, senão
+multiplas; permuta-manual → cross-process; elegível → simples).
+
+- **Topo enxuto**: KPIs viram só resumo (Pendentes · Invoices em aberto · Já permutado · Bloqueadas).
+- **Área de trabalho = 4 abas**: Simples · Múltiplas · Cross-over · Cross-process (cross-process com a
+  ação "Alocar" da ADR-0008; aba própria por ser cross-process, não dobrada em cross-over). Cada aba tem
+  filtro próprio (filial + busca) + paginação (espelha a tabela principal).
+- READ-ONLY no ERP; sem migration/reseed (derivação a cada leitura). Também correção do filtro "em aberto"
+  da busca de invoice (usa o DETALHE, não o `pago` da lista — inconfiável). PatternGuardian 100%; Design ok.
+
+## v0.2.6 (2026-06-20) — alocação manual N:M cross-process (Fase 2, ADR-0008)
+
+Feature: `permutas-alocacao` (branch `feat/permutas-multiplas`). A `Permuta` consumada (backlog da Fatia 2
+no ADR-0004) nasce como **alocação** — READ-ONLY no ERP; a baixa em `fin010` é a Fase 3.
+
+- **Entidade alocação (`permuta_alocacao`).** Links livres adto↔invoice (cross-process, N:M, valores
+  parciais), UNIQUE por par, sobrevive à re-ingestão. Invariantes de saldo (moeda negociada): Σ por adto
+  ≤ saldo a permutar; Σ por invoice ≤ valor em aberto → excesso = `AlocacaoSaldoError` (422).
+- **Busca LIVE cross-process** (`buscarInvoices` por nº de processo): consulta Conexos (todas as filiais),
+  enriquece valor/taxa (com308), valida **D.I/DUIMP** (invoice sem D.I é omitida). Re-valida no alocar.
+- **Variação cambial** recalculada pela taxa da INVOICE + valor parcial; data-base da D.I da invoice.
+- **UI:** ação "Alocar invoice" nas linhas `permuta-manual` + modal (busca, distribui valor, lista
+  alocações, saldo restante). Rascunho editável; sem write-back. Migration 0014. ADR-0008.
+
+## v0.2.5 (2026-06-20) — cliente-filtro + estado `permuta-manual` (Fase 1, ADR-0007)
+
+Feature: `permutas-cliente-filtro` (branch `feat/permutas-multiplas`). Permuta múltipla MANUAL
+cross-process — Fase 1 (cadastro + roteamento; alocação/escrita = Fases 2/3).
+
+- **Novo estado `permuta-manual`** na máquina de elegibilidade (5º estado):
+  `descoberta | elegivel | casamento-manual | permuta-manual | bloqueada`. Adtos de cliente-filtro
+  pagos e com saldo, prontos p/ permuta manual cross-process. Motivo `cliente-filtro`.
+- **Cadastro `cliente_filtro`** (por importador `pesCod`, mantido pelo analista no frontend). A pipeline
+  roteia os adtos desses importadores: `BLOQUEADA && pago && saldo>0 → permuta-manual` (D.I não exigida na
+  manual; Gate 4 segue obrigatório na automática).
+- **Importador hidratado** na eleição (`imp021` via `listProcessos`) e persistido no fato
+  (`pes_cod`/`importador`). Resolve o "0 invoices" do 1153 e dá visibilidade do dono do adto.
+- **Cross-process / alocação / escrita** = Fatia 2/3 (esta fase só sinaliza e enfileira). I4 intocado.
+- Migrations 0011 (importador), 0012 (CHECK +permuta-manual), 0013 (cliente_filtro). ADR-0007.
+
+## v0.2.4 (2026-06-20) — progresso de pagamento dos bloqueados por `nao-pago`
+
+Feature: `permutas-pagamento-parcial` (branch `feat/permutas-multiplas`). Exibição read-only;
+**nenhuma entidade/ação/regra nova** — adição de campo derivado do detalhe já buscado.
+
+- **Contrato de integração (conexos.md).** O detalhe `com298/{docCod}` (`getDetalheTitulos`) passa a
+  retornar também `valorTotal` (`mnyTitValor`, face) e `valorAberto` (`mnyTitAberto`, saldo) — além de
+  `valorPermutar`/`pago`/`valorPermutado`. Zero fan-out novo (mesma chamada do Gate 2/Gate 3).
+- **UI.** No detalhe da linha, bloqueados por `nao-pago` mostram **% pago + quanto falta** (R$ e ≈USD,
+  derivado pela taxa). Identidade `mnyTitValor = mnyTitPago + mnyTitAberto` (já documentada).
+- **Gate 3 INTOCADO.** Continua `pago ⟺ mnyTitAberto === 0`. Isto é só visibilidade — **não** permite
+  desbloquear/permuta parcial (decisão de domínio I3 / follow-up `vc-permuta-parcial`, Fatia 2).
+
+## v0.2.3 (2026-06-20) — ingestão MANUAL no painel de Permutas (ADR-0006)
+
+Feature: `permutas-ingestao-manual` (branch `feat/permutas-multiplas`). Trigger
+humano para a ingestão existente, entre os horários do cron. **Nenhuma entidade
+ou ação nova** — interface operacional + exposição da auditoria já persistida.
+
+- **ADR-0006 — trigger manual.** `POST /permutas/ingestao` dispara o MESMO compute
+  do cron (`IngestaoPermutasService`) e espera concluir; a tela aguarda no modal.
+  *Human-in-the-loop* (I1): o analista decide quando rodar.
+- **Auditoria exposta (I5/O6).** `GET /permutas/runs` lista as últimas rodadas
+  (cron + manuais) — quem rodou, quando, status, totais. `triggered_by` = username
+  do token **verificado server-side** (não spoofável); cron = `'cron'`.
+- **Concorrência bloqueada.** Rodada manual concorrente a uma em andamento (cron ou
+  outro analista) → `IngestLockBusyError` (advisory lock existente) → **HTTP 409**,
+  sem segundo fan-out no Conexos e sem run de erro na trilha (contenção ≠ falha).
+- **I4 preservado.** Somente leitura no ERP; risco #1 (write-back `fin010`, Fatia 2)
+  intocado. Mitiga parcialmente O4 (sem scheduler próprio; o cron segue externo).
+
 ## v0.2.2 (2026-06-18) — P0-3 e P0-4 RESOLVIDOS por probe de rede empírico
 
 Feature: `permutas-painel-elegiveis`. Probe de rede no **dev tenant Columbia** (2026-06-18,

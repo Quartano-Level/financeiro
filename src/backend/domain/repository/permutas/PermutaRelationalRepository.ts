@@ -3,6 +3,7 @@ import { inject, injectable } from 'tsyringe';
 import PostgreeDatabaseClient, {
     type TransactionClient,
 } from '../../client/database/PostgreeDatabaseClient.js';
+import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 
 /** Linha de Adiantamento persistida no modelo relacional (Fase B). */
 export interface AdiantamentoRow {
@@ -19,11 +20,24 @@ export interface AdiantamentoRow {
     moedaNegociada?: string;
     pago: boolean;
     valorPermutar?: number;
-    estadoElegibilidade: 'descoberta' | 'elegivel' | 'bloqueada' | 'casamento-manual';
+    estadoElegibilidade:
+        | 'descoberta'
+        | 'elegivel'
+        | 'bloqueada'
+        | 'casamento-manual'
+        | 'permuta-manual';
     motivoBloqueio?: string;
     agingDays?: number;
     /** Taxa de câmbio negociada do título (`com308` `titFltTaxaMneg`). */
     taxa?: number;
+    /** Valor de FACE do título em BRL (`mnyTitValor`) — progresso de pagamento. */
+    valorTotal?: number;
+    /** Saldo em aberto do título em BRL (`mnyTitAberto`) — quanto falta pagar. */
+    valorAberto?: number;
+    /** Importador (cliente) do processo — `pesCod` do `imp021` (cliente-filtro). */
+    pesCod?: string;
+    /** Nome do importador (`imp021.dpeNomPessoa`) — exibição/auditoria. */
+    importador?: string;
 }
 
 /** Linha de Invoice persistida no modelo relacional (Fase B). */
@@ -185,7 +199,7 @@ export default class PermutaRelationalRepository {
                     return runId;
                 }),
             async () => {
-                throw new Error('permuta ingest advisory lock busy — another ingestion is running');
+                throw new IngestLockBusyError();
             },
         );
     };
@@ -225,12 +239,18 @@ export default class PermutaRelationalRepository {
             params[`motivo_${i}`] = r.motivoBloqueio ?? null;
             params[`aging_${i}`] = r.agingDays ?? null;
             params[`taxa_${i}`] = r.taxa ?? null;
+            params[`valorTotal_${i}`] = r.valorTotal ?? null;
+            params[`valorAberto_${i}`] = r.valorAberto ?? null;
+            params[`pesCod_${i}`] = r.pesCod ?? null;
+            params[`importador_${i}`] = r.importador ?? null;
             return (
                 `($docCod_${i}, $priCod_${i}, $filCod_${i}, $referencia_${i}, ` +
                 `$exportador_${i}, $dataEmissao_${i}, $valor_${i}, $valorMoedaNegociada_${i}, ` +
                 `$moeda_${i}, $moedaNegociada_${i}, $pago_${i}, $valorPermutar_${i}, ` +
                 `$estado_${i}, $motivo_${i}, ` +
-                `$aging_${i}, $taxa_${i}, $runId, now(), FALSE, now())`
+                `$aging_${i}, $taxa_${i}, $valorTotal_${i}, $valorAberto_${i}, ` +
+                `$pesCod_${i}, $importador_${i}, ` +
+                `$runId, now(), FALSE, now())`
             );
         });
         await tx.insert(
@@ -238,6 +258,7 @@ export default class PermutaRelationalRepository {
                 doc_cod, pri_cod, fil_cod, referencia, exportador, data_emissao,
                 valor, valor_moeda_negociada, moeda, moeda_negociada, pago, valor_permutar,
                 estado_elegibilidade, motivo_bloqueio, aging_days, taxa,
+                valor_total, valor_aberto, pes_cod, importador,
                 last_ingest_run_id, last_seen_at, stale, updated_at
             ) VALUES ${tuples.join(', ')}
             ON CONFLICT (doc_cod) DO UPDATE SET
@@ -256,6 +277,10 @@ export default class PermutaRelationalRepository {
                 motivo_bloqueio = EXCLUDED.motivo_bloqueio,
                 aging_days = EXCLUDED.aging_days,
                 taxa = EXCLUDED.taxa,
+                valor_total = EXCLUDED.valor_total,
+                valor_aberto = EXCLUDED.valor_aberto,
+                pes_cod = EXCLUDED.pes_cod,
+                importador = EXCLUDED.importador,
                 last_ingest_run_id = EXCLUDED.last_ingest_run_id,
                 last_seen_at = EXCLUDED.last_seen_at,
                 stale = FALSE,
@@ -444,8 +469,32 @@ export default class PermutaRelationalRepository {
 
     // ---- Reads (tela Gestão) ----
 
+    /** Importador distinto presente no backlog ativo — alimenta o seletor do
+     * cadastro de cliente-filtro (evita o analista digitar o pesCod). */
+    public listImportadores = async (): Promise<
+        Array<{ pesCod: string; importador?: string; qtdAdtos: number }>
+    > => {
+        const rows = await this.databaseClient.selectMany(
+            `SELECT pes_cod, importador, count(*) AS qtd
+             FROM permuta_adiantamento
+             WHERE NOT stale AND pes_cod IS NOT NULL
+             GROUP BY pes_cod, importador
+             ORDER BY importador ASC NULLS LAST`,
+        );
+        return rows.map((r) => ({
+            pesCod: String(r.pes_cod),
+            ...(r.importador != null ? { importador: String(r.importador) } : {}),
+            qtdAdtos: Number(r.qtd),
+        }));
+    };
+
     public listAdiantamentosAtivos = async (filtro?: {
-        estadoElegibilidade?: 'descoberta' | 'elegivel' | 'bloqueada' | 'casamento-manual';
+        estadoElegibilidade?:
+            | 'descoberta'
+            | 'elegivel'
+            | 'bloqueada'
+            | 'casamento-manual'
+            | 'permuta-manual';
     }): Promise<AdiantamentoAtivo[]> => {
         const rows = filtro?.estadoElegibilidade
             ? await this.databaseClient.selectMany(
@@ -520,6 +569,10 @@ export default class PermutaRelationalRepository {
         ...(r.motivo_bloqueio != null ? { motivoBloqueio: String(r.motivo_bloqueio) } : {}),
         ...(r.aging_days != null ? { agingDays: Number(r.aging_days) } : {}),
         ...(r.taxa != null ? { taxa: Number(r.taxa) } : {}),
+        ...(r.valor_total != null ? { valorTotal: Number(r.valor_total) } : {}),
+        ...(r.valor_aberto != null ? { valorAberto: Number(r.valor_aberto) } : {}),
+        ...(r.pes_cod != null ? { pesCod: String(r.pes_cod) } : {}),
+        ...(r.importador != null ? { importador: String(r.importador) } : {}),
         stale: Boolean(r.stale),
     });
 

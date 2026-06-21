@@ -16,6 +16,8 @@ import type {
     InvoiceRow,
 } from '../../repository/permutas/PermutaRelationalRepository.js';
 import PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
+import type { AlocacaoRow } from '../../repository/permutas/PermutaAlocacaoRepository.js';
+import PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacaoRepository.js';
 import PermutaProcessamentoRepository from '../../repository/permutas/PermutaProcessamentoRepository.js';
 import LogService from '../LogService.js';
 
@@ -32,18 +34,29 @@ export default class GestaoPermutasService {
         private relationalRepository: PermutaRelationalRepository,
         @inject(PermutaProcessamentoRepository)
         private processamentoRepository: PermutaProcessamentoRepository,
+        @inject(PermutaAlocacaoRepository)
+        private alocacaoRepository: PermutaAlocacaoRepository,
         @inject(LogService) private logService: LogService,
     ) {}
 
     public exporGestao = async (requestId: string): Promise<GestaoPermutasResponse> => {
-        const [adiantamentos, invoices, casamentos, processamentos, declaracoes] =
+        const [adiantamentos, invoices, casamentos, processamentos, declaracoes, alocacoes] =
             await Promise.all([
                 this.relationalRepository.listAdiantamentosAtivos(),
                 this.relationalRepository.listInvoicesEmAberto(),
                 this.relationalRepository.listCasamentos(),
                 this.processamentoRepository.listProcessamentos(),
                 this.relationalRepository.listDeclaracoes(),
+                this.alocacaoRepository.listAtivas(),
             ]);
+
+        // Alocações manuais (Fase 2) agrupadas por adiantamento.
+        const alocacoesByAdto = new Map<string, AlocacaoRow[]>();
+        for (const a of alocacoes) {
+            const list = alocacoesByAdto.get(a.adiantamentoDocCod) ?? [];
+            list.push(a);
+            alocacoesByAdto.set(a.adiantamentoDocCod, list);
+        }
 
         const statusByDocCod = new Map<string, ProcessamentoStatus>(
             processamentos.map((p) => [p.adiantamentoDocCod, p.status]),
@@ -68,6 +81,18 @@ export default class GestaoPermutasService {
             invoicesByPriCod.set(i.priCod, lista);
         }
 
+        // Nº de adiantamentos `casamento-manual` por processo — distingue `multiplas`
+        // (1 adto → N invoices) de `cross-over` (N adtos ↔ M invoices) no `tipoPermuta`.
+        const adtosCasamentoPorPriCod = new Map<string, number>();
+        for (const a of adiantamentos) {
+            if (a.estadoElegibilidade === 'casamento-manual') {
+                adtosCasamentoPorPriCod.set(
+                    a.priCod,
+                    (adtosCasamentoPorPriCod.get(a.priCod) ?? 0) + 1,
+                );
+            }
+        }
+
         const pendentes = adiantamentos.map((a) =>
             this.toPendente(
                 a,
@@ -75,6 +100,8 @@ export default class GestaoPermutasService {
                 invoicesByPriCod,
                 declaracaoByPriCod,
                 casamentoByAdtoDocCod,
+                alocacoesByAdto.get(a.docCod) ?? [],
+                adtosCasamentoPorPriCod,
             ),
         );
         const invoicesEmAberto = invoices.map((i) => this.toInvoiceEmAberto(i));
@@ -88,6 +115,7 @@ export default class GestaoPermutasService {
         const elegiveis = pendentes.filter((p) => p.status === 'elegivel').length;
         const bloqueadas = pendentes.filter((p) => p.status === 'bloqueada').length;
         const casamentoManual = pendentes.filter((p) => p.status === 'casamento-manual').length;
+        const permutaManual = pendentes.filter((p) => p.status === 'permuta-manual').length;
         const jaPermutado = pendentes.filter((p) => p.status === 'ja-permutado').length;
 
         await this.logService.info({
@@ -113,6 +141,7 @@ export default class GestaoPermutasService {
                 elegiveis,
                 bloqueadas,
                 casamentoManual,
+                permutaManual,
                 jaPermutado,
             },
         };
@@ -124,6 +153,8 @@ export default class GestaoPermutasService {
         invoicesByPriCod: Map<string, InvoiceRow[]>,
         declaracaoByPriCod: Map<string, DeclaracaoRow>,
         casamentoByAdtoDocCod: Map<string, CasamentoRow>,
+        alocacoesDoAdto: AlocacaoRow[],
+        adtosCasamentoPorPriCod: Map<string, number>,
     ): PermutaPendente => {
         // "Já permutado" é gravado como BLOQUEADA+motivo `ja-permutado` (estado
         // concluído, não erro). Aqui na apresentação é promovido a status próprio,
@@ -134,9 +165,11 @@ export default class GestaoPermutasService {
                 ? 'elegivel'
                 : a.estadoElegibilidade === 'casamento-manual'
                   ? 'casamento-manual'
-                  : a.motivoBloqueio === 'ja-permutado'
-                    ? 'ja-permutado'
-                    : 'bloqueada';
+                  : a.estadoElegibilidade === 'permuta-manual'
+                    ? 'permuta-manual'
+                    : a.motivoBloqueio === 'ja-permutado'
+                      ? 'ja-permutado'
+                      : 'bloqueada';
         const processamentoStatus = statusByDocCod.get(a.docCod);
         // Casamento manual (N:M): candidatas = invoices em aberto do MESMO processo.
         const candidatas =
@@ -144,6 +177,36 @@ export default class GestaoPermutasService {
                 ? (invoicesByPriCod.get(a.priCod) ?? []).map((i) => this.toInvoiceEmAberto(i))
                 : undefined;
         const detalhe = this.toDetalhe(a, declaracaoByPriCod, casamentoByAdtoDocCod);
+        // Alocações manuais (Fase 2) + saldo restante (moeda negociada): para os
+        // casos que usam a alocação N:M — permuta-manual (cross-process) E
+        // casamento-manual (múltiplas/cross-over, distribuir 1 adto em N invoices).
+        // saldoNeg = saldoPermutar(BRL)/taxa; restante = saldoNeg − Σ alocado.
+        const podeAlocar = status === 'permuta-manual' || status === 'casamento-manual';
+        const alocacoes =
+            podeAlocar && alocacoesDoAdto.length > 0
+                ? alocacoesDoAdto.map((al) => this.toAlocacaoDetalhe(al))
+                : undefined;
+        const saldoNeg =
+            a.valorPermutar !== undefined && a.taxa !== undefined && a.taxa > 0
+                ? a.valorPermutar / a.taxa
+                : undefined;
+        const saldoRestante =
+            podeAlocar && saldoNeg !== undefined
+                ? saldoNeg - alocacoesDoAdto.reduce((s, al) => s + al.valorAlocado, 0)
+                : undefined;
+        // Tipo de permuta (derivado, p/ as abas). cross-process = cliente-filtro;
+        // casamento-manual divide-se por nº de adtos do processo: 1 → multiplas
+        // (1 adto → N invoices), >1 → cross-over (N:M); elegível auto-casável → simples.
+        const tipoPermuta =
+            status === 'permuta-manual'
+                ? ('cross-process' as const)
+                : status === 'casamento-manual'
+                  ? (adtosCasamentoPorPriCod.get(a.priCod) ?? 1) > 1
+                      ? ('cross-over' as const)
+                      : ('multiplas' as const)
+                  : status === 'elegivel'
+                    ? ('simples' as const)
+                    : undefined;
         return {
             docCod: a.docCod,
             filCod: a.filCod ?? 0,
@@ -160,10 +223,29 @@ export default class GestaoPermutasService {
             status,
             ...(a.motivoBloqueio !== undefined ? { motivoBloqueio: a.motivoBloqueio } : {}),
             ...(processamentoStatus !== undefined ? { processamentoStatus } : {}),
+            ...(tipoPermuta !== undefined ? { tipoPermuta } : {}),
             ...(candidatas !== undefined ? { candidatas } : {}),
+            ...(alocacoes !== undefined ? { alocacoes } : {}),
+            ...(saldoRestante !== undefined ? { saldoRestante } : {}),
             detalhe,
         };
     };
+
+    /** Mapeia uma AlocacaoRow para o shape exibido na tela (AlocacaoDetalhe). */
+    private toAlocacaoDetalhe = (
+        al: AlocacaoRow,
+    ): import('../../interface/permutas/Gestao.js').AlocacaoDetalhe => ({
+        invoiceDocCod: al.invoiceDocCod,
+        ...(al.invoicePriCod !== undefined ? { invoicePriCod: al.invoicePriCod } : {}),
+        valorAlocado: al.valorAlocado,
+        ...(al.moeda !== undefined ? { moeda: al.moeda } : {}),
+        ...(al.variacaoClassificacao !== undefined
+            ? { variacaoClassificacao: al.variacaoClassificacao }
+            : {}),
+        ...(al.variacaoResultado !== undefined ? { variacaoResultado: al.variacaoResultado } : {}),
+        ...(al.criadoPor !== undefined ? { criadoPor: al.criadoPor } : {}),
+        criadoEm: al.criadoEm.toISOString(),
+    });
 
     /**
      * Monta as micro-informações do adiantamento (exibidas ao expandir a linha).
@@ -181,6 +263,10 @@ export default class GestaoPermutasService {
             pago: a.pago,
             ...(a.dataEmissao !== undefined ? { dataEmissao: a.dataEmissao.toISOString() } : {}),
             ...(a.valorPermutar !== undefined ? { valorPermutar: a.valorPermutar } : {}),
+            // Progresso de pagamento (face + saldo em aberto) — a UI deriva % pago e
+            // quanto falta nos bloqueados por `nao-pago`.
+            ...(a.valorTotal !== undefined ? { valorTotal: a.valorTotal } : {}),
+            ...(a.valorAberto !== undefined ? { valorAberto: a.valorAberto } : {}),
             ...this.declaracaoDetalhe(declaracaoByPriCod.get(a.priCod)),
             ...variacao,
             // Não-casados não têm `permuta_casamento`, mas a taxa do PRÓPRIO título

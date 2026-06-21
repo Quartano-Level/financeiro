@@ -223,6 +223,60 @@ describe('PermutaSnapshotRepository', () => {
         expect(params).toMatchObject({ key: 'idem-key', runId: 'run-9' });
     });
 
+    it('listRecentRuns maps run rows (cron + manual), most recent first, parameterized LIMIT', async () => {
+        const db = buildDb();
+        (db.selectMany as jest.Mock).mockResolvedValue([
+            {
+                id: 'run-2',
+                triggered_by: 'simone',
+                started_at: '2026-06-21T13:52:00Z',
+                finished_at: '2026-06-21T13:52:30Z',
+                status: 'success',
+                total_candidatas: 509,
+                total_elegiveis: 27,
+                total_bloqueadas: 413,
+                error_message: null,
+            },
+            {
+                id: 'run-1',
+                triggered_by: 'cron',
+                started_at: '2026-06-21T09:00:00Z',
+                finished_at: '2026-06-21T09:00:25Z',
+                status: 'error',
+                total_candidatas: 0,
+                total_elegiveis: 0,
+                total_bloqueadas: 0,
+                error_message: 'conexos timeout',
+            },
+        ]);
+        const repo = new PermutaSnapshotRepository(db);
+
+        const runs = await repo.listRecentRuns(10);
+
+        expect(runs).toHaveLength(2);
+        expect(runs[0]).toMatchObject({
+            runId: 'run-2',
+            triggeredBy: 'simone',
+            status: 'success',
+            totalElegiveis: 27,
+        });
+        expect(runs[0].errorMessage).toBeUndefined();
+        expect(runs[0].finishedAt).toBeInstanceOf(Date);
+        expect(runs[1]).toMatchObject({ triggeredBy: 'cron', status: 'error' });
+        expect(runs[1].errorMessage).toBe('conexos timeout');
+
+        const [sql, params] = (db.selectMany as jest.Mock).mock.calls[0];
+        expect(sql).toContain('FROM permuta_eleicao_run');
+        expect(sql).toContain('ORDER BY finished_at DESC');
+        // Dedup: filtra o header de ingest BEM-SUCEDIDO (duplicado com elegiveis=0),
+        // mas mantém o header de ingest com erro (falha visível na trilha).
+        expect(sql).toContain("NOT (kind = 'ingest' AND status = 'success')");
+        // LIMIT parameterized (Rule #5) — no interpolation.
+        expect(sql).toContain('$limit');
+        expect(sql).not.toMatch(/'\s*\+|\$\{/);
+        expect(params).toEqual({ limit: 10 });
+    });
+
     it('findLatestSnapshot returns null when no successful run exists', async () => {
         const db = buildDb();
         const repo = new PermutaSnapshotRepository(db);

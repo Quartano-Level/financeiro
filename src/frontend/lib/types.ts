@@ -26,7 +26,59 @@ export type StatusElegibilidade =
   | 'elegivel'
   | 'bloqueada'
   | 'casamento-manual'
+  | 'permuta-manual'
   | 'ja-permutado'
+
+/**
+ * Tipo de permuta — classificação DERIVADA (apresentação) p/ as abas:
+ *  - `simples`       — 1:1 ou 1 invoice → N adiantamentos (auto-casável).
+ *  - `multiplas`     — 1 adiantamento → N invoices (mesmo processo).
+ *  - `cross-over`    — N adiantamentos ↔ M invoices (mesmo processo).
+ *  - `cross-process` — cliente-filtro: a invoice está em OUTRO processo.
+ */
+export type TipoPermuta = 'simples' | 'multiplas' | 'cross-over' | 'cross-process'
+
+/** Importador (cliente) cadastrado como "filtro" — permuta manual cross-process. */
+export interface ClienteFiltro {
+  pesCod: string
+  importador?: string
+  criadoEm: string
+}
+
+/** Importador distinto do backlog (seletor do cadastro de cliente-filtro). */
+export interface Importador {
+  pesCod: string
+  importador?: string
+  qtdAdtos: number
+}
+
+/** Invoice encontrada na busca cross-process (live), para a alocação manual (Fase 2). */
+export interface InvoiceBuscada {
+  docCod: string
+  priCod: string
+  filCod: number
+  referencia?: string
+  exportador?: string
+  dataEmissao?: string
+  valorMoedaNegociada?: number
+  moeda?: string
+  taxa?: number
+  /** O processo da invoice tem D.I/DUIMP? (a alocação exige `true`). */
+  temDi: boolean
+  dataBase?: string
+}
+
+/** Uma alocação manual adto↔invoice (Fase 2), exibida na linha do permuta-manual. */
+export interface AlocacaoDetalhe {
+  invoiceDocCod: string
+  invoicePriCod?: string
+  valorAlocado: number
+  moeda?: string
+  variacaoClassificacao?: string
+  variacaoResultado?: number
+  criadoPor?: string
+  criadoEm: string
+}
 
 /** Status do analista sobre um adiantamento (botão "Processar"). */
 export type ProcessamentoStatus = 'pendente' | 'processando' | 'processado' | 'erro'
@@ -41,6 +93,10 @@ export interface PermutaDetalhe {
   pago: boolean
   dataEmissao?: string
   valorPermutar?: number
+  /** Valor de FACE do título em BRL (`mnyTitValor`) — progresso de pagamento. */
+  valorTotal?: number
+  /** Saldo em aberto do título em BRL (`mnyTitAberto`) — quanto falta pagar (Gate 3). */
+  valorAberto?: number
   declaracao?: { variante: 'DI' | 'DUIMP'; dataBase?: string }
   taxaAdiantamento?: number
   taxaInvoice?: number
@@ -64,12 +120,18 @@ export interface PermutaPendente {
   motivoBloqueio?: string
   /** Status do processamento do analista, quando registrado no banco. */
   processamentoStatus?: ProcessamentoStatus
+  /** Tipo de permuta (classificação derivada p/ as abas) — ver `TipoPermuta`. */
+  tipoPermuta?: TipoPermuta
   /**
    * Invoices candidatas para o casamento manual (N:M) — invoices em aberto do
    * mesmo processo (`priCod`). Preenchido só quando `status === 'casamento-manual'`;
    * o analista escolhe UMA e processa (ADR-0005).
    */
   candidatas?: InvoiceEmAberto[]
+  /** Alocações manuais N:M cross-process (Fase 2) — só p/ `permuta-manual`. */
+  alocacoes?: AlocacaoDetalhe[]
+  /** Saldo a permutar ainda não alocado (moeda negociada) — `permuta-manual`. */
+  saldoRestante?: number
   /** Micro-informações exibidas ao expandir a linha (qualquer status). */
   detalhe?: PermutaDetalhe
 }
@@ -114,6 +176,37 @@ export interface CasamentoSugerido {
   adiantamentos: CasamentoAdiantamento[]
 }
 
+/**
+ * Resumo de uma rodada de ingestão para a trilha de auditoria do modal de
+ * ingestão manual (ADR-0006). Espelha `GET /permutas/runs`. `triggeredBy` é o
+ * username do analista que rodou, ou `'cron'` para o job agendado.
+ */
+export interface PermutaRun {
+  runId: string
+  triggeredBy: string
+  startedAt: string
+  finishedAt: string
+  status: 'success' | 'partial' | 'error'
+  totalCandidatas: number
+  totalElegiveis: number
+  totalBloqueadas: number
+  errorMessage?: string
+}
+
+export interface PermutaRunsResponse {
+  runs: PermutaRun[]
+}
+
+/** Resultado de uma ingestão manual disparada com sucesso (`POST /permutas/ingestao`). */
+export interface IngestaoResult {
+  runId: string
+  status: 'success' | 'error'
+  totalAdiantamentos: number
+  totalInvoices: number
+  totalCasamentos: number
+  totalStale: number
+}
+
 export interface GestaoPermutasResponse {
   /** ISO timestamp de quando o snapshot/eleição foi gerado. */
   geradoEm?: string
@@ -129,6 +222,8 @@ export interface GestaoPermutasResponse {
     bloqueadas: number
     /** N:M que passaram os 4 gates, aguardando escolha de invoice (ADR-0005). */
     casamentoManual: number
+    /** Adtos de clientes-filtro (pago + saldo) p/ permuta manual cross-process. */
+    permutaManual: number
     /** Já permutados (pago + 100% consumido antes) — estado CONCLUÍDO, fora de bloqueadas. */
     jaPermutado: number
   }

@@ -25,6 +25,23 @@ export interface PermutaEleicaoRunInput {
     errorMessage?: string;
 }
 
+/**
+ * Resumo de uma run de ingestão/eleição para a trilha de auditoria do modal
+ * (ADR-0006): quem disparou (`triggeredBy` = username do analista, ou `'cron'`),
+ * quando, status e totais. Lido pelo `GET /permutas/runs`.
+ */
+export interface PermutaRunSummary {
+    runId: string;
+    triggeredBy: string;
+    startedAt: Date;
+    finishedAt: Date;
+    status: RunStatus;
+    totalCandidatas: number;
+    totalElegiveis: number;
+    totalBloqueadas: number;
+    errorMessage?: string;
+}
+
 /** Linha do snapshot de uma candidata, como persistida para leitura no painel. */
 export interface PermutaCandidataSnapshotRow {
     runId: string;
@@ -194,6 +211,43 @@ export default class PermutaSnapshotRepository {
             bloqueadasByMotivo: bloqueadasByMotivo ?? {},
         };
     };
+
+    /**
+     * Últimas `limit` runs (cron + manuais), mais recentes primeiro, para a
+     * trilha de auditoria do modal de ingestão manual (ADR-0006). `limit` é
+     * saneado pelo caller (1..50). SQL parametrizado (Rule #5).
+     *
+     * Dedup: cada ingestão BEM-SUCEDIDA grava DUAS linhas em `permuta_eleicao_run`
+     * — o header `kind='ingest'` (totais relacionais, `total_elegiveis=0`) e o
+     * snapshot `kind='eleicao'` (com a elegibilidade real). O modal mostra os
+     * elegíveis, então filtramos o header de ingest bem-sucedido (o duplicado).
+     * Uma ingestão que FALHOU só tem o header `kind='ingest'` (status `error`),
+     * sem par — esse NÃO é filtrado, para a falha aparecer na trilha.
+     */
+    public listRecentRuns = async (limit: number): Promise<PermutaRunSummary[]> => {
+        const rows = await this.databaseClient.selectMany(
+            `SELECT id, triggered_by, started_at, finished_at, status,
+                    total_candidatas, total_elegiveis, total_bloqueadas, error_message
+             FROM permuta_eleicao_run
+             WHERE NOT (kind = 'ingest' AND status = 'success')
+             ORDER BY finished_at DESC
+             LIMIT $limit`,
+            { limit },
+        );
+        return rows.map((r) => this.mapRunSummary(r));
+    };
+
+    private mapRunSummary = (r: Record<string, unknown>): PermutaRunSummary => ({
+        runId: String(r.id),
+        triggeredBy: String(r.triggered_by),
+        startedAt: new Date(r.started_at as string | Date),
+        finishedAt: new Date(r.finished_at as string | Date),
+        status: r.status as RunStatus,
+        totalCandidatas: Number(r.total_candidatas),
+        totalElegiveis: Number(r.total_elegiveis),
+        totalBloqueadas: Number(r.total_bloqueadas),
+        ...(r.error_message != null ? { errorMessage: String(r.error_message) } : {}),
+    });
 
     /** Lê o snapshot de candidatas do último run com status 'success'. */
     public findLatestSnapshot = async (): Promise<{

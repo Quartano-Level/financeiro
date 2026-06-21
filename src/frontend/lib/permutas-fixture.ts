@@ -90,6 +90,28 @@ export const gestaoPermutasFixture: GestaoPermutasResponse = {
       motivoBloqueio: 'sem-invoice',
     },
     {
+      // Bloqueada por pagamento PARCIAL (Gate 3): o detalhe traz face + saldo em
+      // aberto → a tela mostra "63% pago · falta R$ … (≈ US$ …)" (ADR-0006).
+      docCod: '10585',
+      filCod: 2,
+      referencia: '2783_PROFORMA',
+      exportador: 'EMPRESA NACIONAL DE MINERIA – ENAMI',
+      valorMoedaNegociada: 2365617.41,
+      valorBrl: 12393942.73,
+      moeda: 'USD',
+      diasEmAberto: 129,
+      status: 'bloqueada',
+      motivoBloqueio: 'nao-pago',
+      detalhe: {
+        priCod: '1403',
+        pago: false,
+        dataEmissao: '2026-01-28',
+        taxaAdiantamento: 5.2313,
+        valorTotal: 12393942.73,
+        valorAberto: 4580000.0,
+      },
+    },
+    {
       // N:M — passou os 4 gates, mas o processo tem >1 INVOICE FINALIZADA: falta
       // só o analista escolher a invoice (ADR-0005). Não é bloqueada.
       docCod: '26102',
@@ -194,11 +216,12 @@ export const gestaoPermutasFixture: GestaoPermutasResponse = {
     },
   ],
   totais: {
-    pendentes: 8,
+    pendentes: 9,
     invoicesEmAberto: 3,
     elegiveis: 5,
-    bloqueadas: 1,
+    bloqueadas: 3,
     casamentoManual: 1,
+    permutaManual: 0,
     jaPermutado: 0,
   },
 }

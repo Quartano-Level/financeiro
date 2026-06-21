@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { inject, injectable } from 'tsyringe';
 import ConexosClient, {
     type DeclaracaoEntry,
+    type ProcessoListItem,
     siglaMoedaNegociada,
 } from '../../client/ConexosClient.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
@@ -17,6 +18,7 @@ import { GATE } from '../../interface/permutas/PermutaCandidata.js';
 import type Invoice from '../../interface/permutas/Invoice.js';
 import type PermutaCandidata from '../../interface/permutas/PermutaCandidata.js';
 import LogService from '../LogService.js';
+import ClienteFiltroRepository from '../../repository/permutas/ClienteFiltroRepository.js';
 import PermutaSnapshotRepository, {
     type PermutaEleicaoRunInput,
 } from '../../repository/permutas/PermutaSnapshotRepository.js';
@@ -108,6 +110,8 @@ export default class EleicaoPermutasService {
         @inject(LogService) private logService: LogService,
         @inject(BoundedConcurrency) private boundedConcurrency: BoundedConcurrency,
         @inject(PostgreeDatabaseClient) private databaseClient: PostgreeDatabaseClient,
+        @inject(ClienteFiltroRepository)
+        private clienteFiltroRepository: ClienteFiltroRepository,
     ) {}
 
     /**
@@ -228,12 +232,21 @@ export default class EleicaoPermutasService {
         // Conexos para os demais workers em voo.
         const abortController = new AbortController();
         try {
+            // Clientes-filtro (importadores p/ permuta manual cross-process) —
+            // carregados UMA vez por run e usados no roteamento de cada candidata.
+            const filtroPesCods = await this.clienteFiltroRepository.listPesCodsAtivos();
             const filiais = await this.conexosClient.listFiliais();
             // Filiais em paralelo com limite (P0-4) — speedup de I/O ≥5× vs. o
             // laço sequencial anterior. `map` propaga a 1ª falha → run aborta.
             const perFilial = await this.boundedConcurrency.map(
                 filiais,
-                (filial) => this.processFilial(filial.filCod, flowId, abortController.signal),
+                (filial) =>
+                    this.processFilial(
+                        filial.filCod,
+                        flowId,
+                        abortController.signal,
+                        filtroPesCods,
+                    ),
                 FILIAIS_CONCURRENCY,
             );
             const candidatas: PermutaCandidata[] = perFilial.flat();
@@ -345,6 +358,7 @@ export default class EleicaoPermutasService {
         filCod: number,
         flowId: string,
         signal: AbortSignal,
+        filtroPesCods: Set<string>,
     ): Promise<PermutaCandidata[]> => {
         const { adiantamentos, capHit } = await this.conexosClient.listAdiantamentosProforma({
             filCod,
@@ -364,9 +378,10 @@ export default class EleicaoPermutasService {
         // chamadas Conexos BATCHED (uma só, internamente chunked em 50) em vez de
         // 1 chamada por adiantamento. Resultados indexados em `Map` por priCod.
         const priCodsUnicos = [...new Set(adiantamentos.map((a) => a.priCod))];
-        const [declaracoesByPriCod, invoicesByPriCod] = await Promise.all([
+        const [declaracoesByPriCod, invoicesByPriCod, processosByPriCod] = await Promise.all([
             this.fetchDeclaracoesBatched(priCodsUnicos, filCod),
             this.fetchInvoicesBatched(priCodsUnicos, filCod),
+            this.fetchProcessosBatched(priCodsUnicos, filCod),
         ]);
 
         // Adiantamentos em paralelo com limite (P0-4). Só o detail por-documento
@@ -378,10 +393,27 @@ export default class EleicaoPermutasService {
                 this.buildCandidata(adiantamento, filCod, flowId, {
                     declaracoes: declaracoesByPriCod.get(adiantamento.priCod) ?? [],
                     invoices: invoicesByPriCod.get(adiantamento.priCod) ?? [],
+                    ...(processosByPriCod.get(adiantamento.priCod) !== undefined
+                        ? { processo: processosByPriCod.get(adiantamento.priCod) }
+                        : {}),
+                    filtroPesCods,
                     signal,
                 }),
             ADIANTAMENTOS_CONCURRENCY,
         );
+    };
+
+    /** Batch dos processos (imp021) de TODOS os priCods da filial → Map por priCod.
+     * Hidrata o importador (`pesCod`/nome) de cada adiantamento, usado no
+     * roteamento de clientes-filtro e na exibição. */
+    private fetchProcessosBatched = async (
+        priCods: string[],
+        filCod: number,
+    ): Promise<Map<string, ProcessoListItem>> => {
+        const processos = await this.conexosClient.listProcessos({ priCods, filCod });
+        const byPriCod = new Map<string, ProcessoListItem>();
+        for (const p of processos) byPriCod.set(p.priCod, p);
+        return byPriCod;
     };
 
     /** Batch das declarações (D.I/DUIMP) de TODOS os priCods da filial → Map. */
@@ -481,9 +513,22 @@ export default class EleicaoPermutasService {
         adiantamento: Adiantamento,
         filCod: number,
         flowId: string,
-        context: { declaracoes: DeclaracaoEntry[]; invoices: Invoice[]; signal: AbortSignal },
+        context: {
+            declaracoes: DeclaracaoEntry[];
+            invoices: Invoice[];
+            processo?: ProcessoListItem;
+            filtroPesCods: Set<string>;
+            signal: AbortSignal;
+        },
     ): Promise<PermutaCandidata> => {
-        const { declaracoes, invoices, signal } = context;
+        const { declaracoes, invoices, processo, filtroPesCods, signal } = context;
+        // Hidrata o importador (pesCod/nome) do processo em qualquer caminho de
+        // saída — usado no roteamento de cliente-filtro e na exibição.
+        const comImportador = (a: Adiantamento): Adiantamento => ({
+            ...a,
+            ...(processo?.pesCod !== undefined ? { pesCod: processo.pesCod } : {}),
+            ...(processo?.importador !== undefined ? { importador: processo.importador } : {}),
+        });
         // P0-4 — corte cooperativo: se a run já abortou (outra filial falhou),
         // não dispara o detail fetch deste adiantamento.
         if (signal.aborted) {
@@ -500,7 +545,13 @@ export default class EleicaoPermutasService {
         // Conexos), o `getDetalheTitulos` lança `ConexosError` — NÃO travamos a
         // run inteira nem reprovamos a candidata por mérito (`falha-gate`).
         // Bloqueamos com `DETAIL_INDISPONIVEL` (re-avaliável na próxima run).
-        let detalhe: { valorPermutar?: number; pago?: boolean; valorPermutado?: number };
+        let detalhe: {
+            valorPermutar?: number;
+            pago?: boolean;
+            valorPermutado?: number;
+            valorTotal?: number;
+            valorAberto?: number;
+        };
         try {
             detalhe = await this.conexosClient.getDetalheTitulos({
                 docCod: adiantamento.docCod,
@@ -519,12 +570,12 @@ export default class EleicaoPermutasService {
                         motivo: MOTIVO_BLOQUEIO.DETAIL_INDISPONIVEL,
                     },
                 });
-                return this.buildDetailIndisponivelCandidata(adiantamento);
+                return this.buildDetailIndisponivelCandidata(comImportador(adiantamento));
             }
             throw error;
         }
         const hydrated: Adiantamento = {
-            ...adiantamento,
+            ...comImportador(adiantamento),
             ...(detalhe.valorPermutar !== undefined
                 ? { valorPermutar: detalhe.valorPermutar }
                 : {}),
@@ -533,6 +584,10 @@ export default class EleicaoPermutasService {
             ...(detalhe.valorPermutado !== undefined
                 ? { valorPermutado: detalhe.valorPermutado }
                 : {}),
+            // Progresso de pagamento (face + saldo em aberto) — exibido no detalhe
+            // dos bloqueados por `nao-pago` (% pago + quanto falta). Read-only.
+            ...(detalhe.valorTotal !== undefined ? { valorTotal: detalhe.valorTotal } : {}),
+            ...(detalhe.valorAberto !== undefined ? { valorAberto: detalhe.valorAberto } : {}),
             // Gate 3 — `pago` SEMPRE vem do detalhe (mnyTitAberto === 0): o list
             // devolve mnyTitAberto/mnyTitPago NULL em produção, então o `pago` da
             // row do list é inservível. Quando o detalhe não traz `mnyTitAberto`
@@ -547,13 +602,32 @@ export default class EleicaoPermutasService {
             invoices,
         });
 
+        // Roteamento de CLIENTE FILTRO (Fase 1): se o importador está cadastrado e o
+        // adiantamento está pago + com saldo a permutar, a candidata BLOQUEADA (ex.
+        // sem D.I / sem invoice no próprio processo) vira `permuta-manual` — será
+        // permutada manualmente e cross-process (Fatia 2). nao-pago/sem-saldo seguem
+        // bloqueados (a manual exige pago + saldo); elegível/casamento-manual/já-permutado
+        // não são tocados. A D.I não é exigida na manual (vem da invoice escolhida).
+        const ehClienteFiltro = hydrated.pesCod !== undefined && filtroPesCods.has(hydrated.pesCod);
+        const roteiaParaManual =
+            ehClienteFiltro &&
+            result.estadoElegibilidade === ESTADO_ELEGIBILIDADE.BLOQUEADA &&
+            hydrated.pago === true &&
+            (hydrated.valorPermutar ?? 0) > 0;
+        const estadoElegibilidade = roteiaParaManual
+            ? ESTADO_ELEGIBILIDADE.PERMUTA_MANUAL
+            : result.estadoElegibilidade;
+        const motivoBloqueio = roteiaParaManual
+            ? MOTIVO_BLOQUEIO.CLIENTE_FILTRO
+            : result.motivoBloqueio;
+
         const dataBase = result.declaracaoImportacao?.dataBase;
         const aging = this.agingService.compute(dataBase);
 
         const candidata: PermutaCandidata = {
             priCod: result.priCod,
             adiantamento: result.adiantamento,
-            estadoElegibilidade: result.estadoElegibilidade,
+            estadoElegibilidade,
             gatesAvaliados: result.gatesAvaliados,
             ...(result.invoiceCasada !== undefined ? { invoiceCasada: result.invoiceCasada } : {}),
             ...(result.invoicesCandidatas !== undefined
@@ -562,9 +636,7 @@ export default class EleicaoPermutasService {
             ...(result.declaracaoImportacao !== undefined
                 ? { declaracaoImportacao: result.declaracaoImportacao }
                 : {}),
-            ...(result.motivoBloqueio !== undefined
-                ? { motivoBloqueio: result.motivoBloqueio }
-                : {}),
+            ...(motivoBloqueio !== undefined ? { motivoBloqueio } : {}),
             ...(aging !== undefined ? { aging } : {}),
         };
 

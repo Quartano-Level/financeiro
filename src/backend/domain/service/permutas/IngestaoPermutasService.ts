@@ -1,4 +1,5 @@
 import { inject, injectable } from 'tsyringe';
+import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import { ESTADO_ELEGIBILIDADE } from '../../interface/permutas/EstadoElegibilidade.js';
 import type PermutaCandidata from '../../interface/permutas/PermutaCandidata.js';
@@ -151,6 +152,13 @@ export default class IngestaoPermutasService {
                 totalStale,
             };
         } catch (error) {
+            // Lock ocupado (cron ou outro analista rodando) NÃO é falha: nada se
+            // moveu, nada foi escrito (ADR-0006). Não grava run `error` (poluiria a
+            // trilha de auditoria do modal) nem loga como erro — só re-lança para a
+            // rota mapear em HTTP 409.
+            if (error instanceof IngestLockBusyError) {
+                throw error;
+            }
             const message = error instanceof Error ? error.message : String(error);
             // Cabeçalho de erro FORA da transação (a tx foi revertida — os fatos
             // last-good sobrevivem). Best-effort: uma falha aqui não mascara o
@@ -205,6 +213,16 @@ export default class IngestaoPermutasService {
             ? { moedaNegociada: c.adiantamento.moedaNegociada }
             : {}),
         ...(c.adiantamento.taxa !== undefined ? { taxa: c.adiantamento.taxa } : {}),
+        ...(c.adiantamento.valorTotal !== undefined
+            ? { valorTotal: c.adiantamento.valorTotal }
+            : {}),
+        ...(c.adiantamento.valorAberto !== undefined
+            ? { valorAberto: c.adiantamento.valorAberto }
+            : {}),
+        ...(c.adiantamento.pesCod !== undefined ? { pesCod: c.adiantamento.pesCod } : {}),
+        ...(c.adiantamento.importador !== undefined
+            ? { importador: c.adiantamento.importador }
+            : {}),
         pago: c.adiantamento.pago,
         ...(c.adiantamento.valorPermutar !== undefined
             ? { valorPermutar: c.adiantamento.valorPermutar }
@@ -228,6 +246,8 @@ export default class IngestaoPermutasService {
                 return 'elegivel';
             case ESTADO_ELEGIBILIDADE.CASAMENTO_MANUAL:
                 return 'casamento-manual';
+            case ESTADO_ELEGIBILIDADE.PERMUTA_MANUAL:
+                return 'permuta-manual';
             case ESTADO_ELEGIBILIDADE.BLOQUEADA:
                 return 'bloqueada';
             default:

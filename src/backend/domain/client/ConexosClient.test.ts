@@ -1221,6 +1221,9 @@ describe('ConexosClient', () => {
 
             expect(detail.valorPermutar).toBe(0);
             expect(detail.pago).toBe(false);
+            // Progresso de pagamento: face + saldo em aberto (NÃO pago → aberto = face).
+            expect(detail.valorTotal).toBe(384119.95);
+            expect(detail.valorAberto).toBe(384119.95);
         });
 
         it('returns pago=true when mnyTitAberto === 0 (doc 24166, TOTALMENTE pago)', async () => {
@@ -1238,6 +1241,9 @@ describe('ConexosClient', () => {
 
             expect(detail.valorPermutar).toBe(266350.43);
             expect(detail.pago).toBe(true);
+            // Totalmente pago → saldo em aberto = 0.
+            expect(detail.valorTotal).toBe(266350.43);
+            expect(detail.valorAberto).toBe(0);
         });
 
         it('returns pago=undefined when mnyTitAberto is absent (conservative — Gate 3 reprova)', async () => {
@@ -1249,6 +1255,9 @@ describe('ConexosClient', () => {
 
             expect(detail.valorPermutar).toBe(44917.24);
             expect(detail.pago).toBeUndefined();
+            // Sem mnyTitValor/mnyTitAberto no payload → campos omitidos.
+            expect(detail.valorTotal).toBeUndefined();
+            expect(detail.valorAberto).toBeUndefined();
         });
 
         it('retries a transient detail failure, then succeeds', async () => {

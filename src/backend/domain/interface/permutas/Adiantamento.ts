@@ -62,4 +62,23 @@ export default interface Adiantamento {
      * + variação). Opcional — depende do detalhe do título.
      */
     taxa?: number;
+    /**
+     * Valor de FACE do título em BRL (`mnyTitValor` do detail). Total a pagar —
+     * base do "progresso de pagamento" dos bloqueados por `nao-pago`. Identidade:
+     * `valorTotal = valorPago + valorAberto`. Opcional — depende do detalhe.
+     */
+    valorTotal?: number;
+    /**
+     * Saldo AINDA em aberto do título em BRL (`mnyTitAberto` do detail). Quanto
+     * falta pagar; `0` ⇒ totalmente pago (Gate 3). Opcional — depende do detalhe.
+     */
+    valorAberto?: number;
+    /**
+     * Importador (cliente Columbia) do PROCESSO — `pesCod` do `imp021`. Hidratado
+     * na eleição via `listProcessos`. Usado para rotear adtos de "clientes filtro"
+     * ao estado `permuta-manual`. Opcional.
+     */
+    pesCod?: string;
+    /** Nome do importador (`imp021.dpeNomPessoa`) — exibição/auditoria. Opcional. */
+    importador?: string;
 }

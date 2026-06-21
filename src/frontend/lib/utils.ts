@@ -35,3 +35,25 @@ export function formatNumber(val: number): string {
     maximumFractionDigits: 2,
   }).format(val)
 }
+
+/**
+ * Progresso de pagamento de um adiantamento parcialmente pago (ADR-0006).
+ * `valorTotal`/`valorAberto` vêm em BRL (`mnyTitValor`/`mnyTitAberto`). Retorna
+ * `null` quando não há o que mostrar (sem total, total ≤ 0, ou nada em aberto =
+ * já totalmente pago). `percentPago` é inteiro com **arredondamento para baixo**
+ * (`floor`): como estes itens NÃO estão totalmente pagos, nunca deve ler "100%"
+ * enquanto houver saldo em aberto (ex.: falta R$ 0,02 de R$ 20M → 99%, não 100%).
+ * `faltaUsd` é `null` quando não há taxa para converter.
+ */
+export function progressoPagamento(
+  valorTotal?: number,
+  valorAberto?: number,
+  taxa?: number,
+): { percentPago: number; faltaBrl: number; faltaUsd: number | null } | null {
+  if (valorTotal == null || valorAberto == null || valorTotal <= 0 || valorAberto <= 0) {
+    return null
+  }
+  const percentPago = Math.floor(((valorTotal - valorAberto) / valorTotal) * 100)
+  const faltaUsd = taxa != null && taxa > 0 ? valorAberto / taxa : null
+  return { percentPago, faltaBrl: valorAberto, faltaUsd }
+}

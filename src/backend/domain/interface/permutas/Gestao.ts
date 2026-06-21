@@ -5,7 +5,22 @@ import type { ProcessamentoStatus } from './Processamento.js';
  * `src/frontend/lib/types.ts` (a tela consome este JSON diretamente).
  */
 
-export type StatusElegibilidade = 'elegivel' | 'bloqueada' | 'casamento-manual' | 'ja-permutado';
+export type StatusElegibilidade =
+    | 'elegivel'
+    | 'bloqueada'
+    | 'casamento-manual'
+    | 'permuta-manual'
+    | 'ja-permutado';
+
+/**
+ * Tipo de permuta — classificação DERIVADA (apresentação), não é estado no banco.
+ * Organiza a área de trabalho em abas por cardinalidade + escopo:
+ *  - `simples`       — 1:1 ou 1 invoice → N adiantamentos (auto-casável).
+ *  - `multiplas`     — 1 adiantamento → N invoices (mesmo processo).
+ *  - `cross-over`    — N adiantamentos ↔ M invoices (mesmo processo).
+ *  - `cross-process` — cliente-filtro: a invoice está em OUTRO processo.
+ */
+export type TipoPermuta = 'simples' | 'multiplas' | 'cross-over' | 'cross-process';
 
 /**
  * Micro-informações de um adiantamento, exibidas ao expandir a linha na tela
@@ -22,6 +37,10 @@ export interface PermutaDetalhe {
     dataEmissao?: string;
     /** Saldo a permutar (`mnyTitPermutar`). */
     valorPermutar?: number;
+    /** Valor de FACE do título em BRL (`mnyTitValor`) — progresso de pagamento. */
+    valorTotal?: number;
+    /** Saldo em aberto do título em BRL (`mnyTitAberto`) — quanto falta pagar (Gate 3). */
+    valorAberto?: number;
     /** D.I/DUIMP do processo (Gate 4) + data-base da variação. */
     declaracao?: { variante: 'DI' | 'DUIMP'; dataBase?: string };
     /** Taxa de fechamento do adiantamento (só p/ casados). */
@@ -34,6 +53,18 @@ export interface PermutaDetalhe {
     variacaoResultado?: number;
     /** Delta de taxa (adto − invoice) — só p/ casados. */
     variacaoDelta?: number;
+}
+
+/** Uma alocação manual adto↔invoice (Fase 2), exibida na linha do permuta-manual. */
+export interface AlocacaoDetalhe {
+    invoiceDocCod: string;
+    invoicePriCod?: string;
+    valorAlocado: number;
+    moeda?: string;
+    variacaoClassificacao?: string;
+    variacaoResultado?: number;
+    criadoPor?: string;
+    criadoEm: string;
 }
 
 export interface PermutaPendente {
@@ -51,6 +82,12 @@ export interface PermutaPendente {
     motivoBloqueio?: string;
     /** Status do analista (botão "Processar"), quando registrado. */
     processamentoStatus?: ProcessamentoStatus;
+    /** Tipo de permuta (classificação derivada p/ as abas) — ver `TipoPermuta`. */
+    tipoPermuta?: TipoPermuta;
+    /** Alocações manuais N:M cross-process (Fase 2) — só p/ `permuta-manual`. */
+    alocacoes?: AlocacaoDetalhe[];
+    /** Saldo a permutar AINDA não alocado (moeda negociada) — `permuta-manual`. */
+    saldoRestante?: number;
     /**
      * Invoices candidatas do casamento manual (N:M) — invoices em aberto do mesmo
      * processo (`priCod`). Preenchido só quando `status === 'casamento-manual'`
@@ -111,6 +148,8 @@ export interface GestaoPermutasResponse {
         bloqueadas: number;
         /** N:M que passaram os 4 gates, aguardando escolha de invoice (ADR-0005). */
         casamentoManual: number;
+        /** Adtos de clientes-filtro (pago + saldo) p/ permuta manual cross-process. */
+        permutaManual: number;
         /** Já permutados (pago + 100% consumido em permuta anterior) — estado CONCLUÍDO, fora de bloqueadas. */
         jaPermutado: number;
     };

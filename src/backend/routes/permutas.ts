@@ -3,16 +3,52 @@ import { Router } from 'express';
 import { container } from 'tsyringe';
 import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
+import AlocacaoSaldoError from '../domain/errors/AlocacaoSaldoError.js';
+import IngestLockBusyError from '../domain/errors/IngestLockBusyError.js';
 import { PROCESSAMENTO_STATUS } from '../domain/interface/permutas/Processamento.js';
+import AlocacaoPermutasService from '../domain/service/permutas/AlocacaoPermutasService.js';
+import ClienteFiltroRepository from '../domain/repository/permutas/ClienteFiltroRepository.js';
 import PermutaProcessamentoRepository from '../domain/repository/permutas/PermutaProcessamentoRepository.js';
+import PermutaRelationalRepository from '../domain/repository/permutas/PermutaRelationalRepository.js';
+import PermutaSnapshotRepository from '../domain/repository/permutas/PermutaSnapshotRepository.js';
 import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasService.js';
 import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasService.js';
+import IngestaoPermutasService from '../domain/service/permutas/IngestaoPermutasService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 
 /** Zod no boundary — corpo do POST /processar (Rule: validar inputs externos). */
 const processarBodySchema = z.object({
     invoiceDocCod: z.string().trim().min(1).optional(),
+    observacao: z.string().trim().min(1).optional(),
+});
+
+/** Quantas runs o modal de auditoria mostra por padrão / no máximo. */
+const RUNS_DEFAULT_LIMIT = 10;
+const RUNS_MAX_LIMIT = 50;
+
+/** Zod no boundary — query `?limit=` do GET /runs (saneado 1..50). */
+const runsQuerySchema = z.object({
+    limit: z.coerce.number().int().min(1).max(RUNS_MAX_LIMIT).optional(),
+});
+
+/** Zod no boundary — corpo do POST /cliente-filtro (cadastro de importador). */
+const clienteFiltroBodySchema = z.object({
+    pesCod: z.string().trim().min(1),
+    importador: z.string().trim().min(1).optional(),
+});
+
+/** Zod no boundary — query `?priCod=&filCod=` da busca de invoice (escopada à filial). */
+const buscarInvoicesQuerySchema = z.object({
+    priCod: z.string().trim().min(1),
+    filCod: z.coerce.number().int().positive(),
+});
+
+/** Zod no boundary — corpo do POST /alocacoes (alocação manual N:M). */
+const alocacaoBodySchema = z.object({
+    invoiceDocCod: z.string().trim().min(1),
+    invoicePriCod: z.string().trim().min(1),
+    valorAlocado: z.number().positive(),
     observacao: z.string().trim().min(1).optional(),
 });
 
@@ -53,6 +89,189 @@ router.post(
             totalElegiveis: result.totalElegiveis,
             totalBloqueadas: result.totalBloqueadas,
             status: result.status,
+        });
+    }),
+);
+
+// POST /permutas/ingestao — dispara a ingestão MANUAL (ADR-0006). Roda o MESMO
+// compute do cron (`IngestaoPermutasService`), alimentando o modelo relacional
+// (`/gestao`) + snapshot. Espera terminar e devolve os totais (a UI aguarda no
+// modal). `triggered_by` = username autenticado (auditoria O6/I5). Se já houver
+// uma ingestão rodando (advisory lock), responde 409 sem disparar fan-out novo.
+router.post(
+    '/ingestao',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(IngestaoPermutasService);
+        const triggeredBy = req.user?.sub ?? req.user?.email ?? 'unknown';
+        try {
+            const result = await service.executar({ triggeredBy });
+            res.json({
+                runId: result.runId,
+                status: result.status,
+                totalAdiantamentos: result.totalAdiantamentos,
+                totalInvoices: result.totalInvoices,
+                totalCasamentos: result.totalCasamentos,
+                totalStale: result.totalStale,
+            });
+        } catch (error) {
+            if (error instanceof IngestLockBusyError) {
+                res.status(error.statusCode).json({
+                    error: error.code,
+                    message: error.userMessage,
+                });
+                return;
+            }
+            throw error;
+        }
+    }),
+);
+
+// GET /permutas/runs — trilha de auditoria das últimas rodadas (cron + manuais)
+// para o modal de ingestão manual (ADR-0006). READ-ONLY.
+router.get(
+    '/runs',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = runsQuerySchema.safeParse(req.query);
+        if (!parsed.success) {
+            res.status(400).json({ error: 'invalid query', details: parsed.error.flatten() });
+            return;
+        }
+        const limit = parsed.data.limit ?? RUNS_DEFAULT_LIMIT;
+        const repository = container.resolve(PermutaSnapshotRepository);
+        const runs = await repository.listRecentRuns(limit);
+        res.json({ runs });
+    }),
+);
+
+// GET /permutas/cliente-filtro — lista os clientes-filtro (importadores) ativos.
+router.get(
+    '/cliente-filtro',
+    asyncHandler(async (_req, res) => {
+        await bootstrapAppContainer();
+        const repository = container.resolve(ClienteFiltroRepository);
+        const clientes = await repository.listAtivos();
+        res.json({ clientes });
+    }),
+);
+
+// POST /permutas/cliente-filtro — cadastra/atualiza um cliente-filtro (importador).
+// UPSERT por pesCod; `criado_por` = username autenticado (auditoria O6).
+router.post(
+    '/cliente-filtro',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = clienteFiltroBodySchema.safeParse(req.body ?? {});
+        if (!parsed.success) {
+            res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
+            return;
+        }
+        const criadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const repository = container.resolve(ClienteFiltroRepository);
+        await repository.upsertClienteFiltro({
+            pesCod: parsed.data.pesCod,
+            ...(parsed.data.importador !== undefined ? { importador: parsed.data.importador } : {}),
+            criadoPor,
+        });
+        res.json({ pesCod: parsed.data.pesCod });
+    }),
+);
+
+// DELETE /permutas/cliente-filtro/:pesCod — remove um cliente-filtro.
+router.delete(
+    '/cliente-filtro/:pesCod',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const pesCod = String(req.params.pesCod);
+        const repository = container.resolve(ClienteFiltroRepository);
+        await repository.deleteByPesCod(pesCod);
+        res.json({ pesCod });
+    }),
+);
+
+// GET /permutas/importadores — importadores distintos do backlog (seletor do
+// cadastro de cliente-filtro). READ-ONLY.
+router.get(
+    '/importadores',
+    asyncHandler(async (_req, res) => {
+        await bootstrapAppContainer();
+        const repository = container.resolve(PermutaRelationalRepository);
+        const importadores = await repository.listImportadores();
+        res.json({ importadores });
+    }),
+);
+
+// GET /permutas/invoices/buscar?priCod=&filCod= — busca LIVE invoices de um processo
+// NA FILIAL dada (priCod não é único entre filiais), p/ a alocação manual (Fase 2).
+// READ-ONLY no ERP.
+router.get(
+    '/invoices/buscar',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = buscarInvoicesQuerySchema.safeParse(req.query);
+        if (!parsed.success) {
+            res.status(400).json({ error: 'invalid query', details: parsed.error.flatten() });
+            return;
+        }
+        const service = container.resolve(AlocacaoPermutasService);
+        const invoices = await service.buscarInvoices(parsed.data.priCod, parsed.data.filCod);
+        res.json({ invoices });
+    }),
+);
+
+// POST /permutas/adiantamentos/:docCod/alocacoes — cria/atualiza uma alocação
+// manual N:M cross-process (rascunho). 422 quando excede o saldo de algum lado.
+router.post(
+    '/adiantamentos/:docCod/alocacoes',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = alocacaoBodySchema.safeParse(req.body ?? {});
+        if (!parsed.success) {
+            res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
+            return;
+        }
+        const criadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const service = container.resolve(AlocacaoPermutasService);
+        try {
+            await service.alocar({
+                adiantamentoDocCod: String(req.params.docCod),
+                invoiceDocCod: parsed.data.invoiceDocCod,
+                invoicePriCod: parsed.data.invoicePriCod,
+                valorAlocado: parsed.data.valorAlocado,
+                criadoPor,
+                ...(parsed.data.observacao !== undefined
+                    ? { observacao: parsed.data.observacao }
+                    : {}),
+            });
+            res.json({
+                adiantamentoDocCod: String(req.params.docCod),
+                invoiceDocCod: parsed.data.invoiceDocCod,
+            });
+        } catch (error) {
+            if (error instanceof AlocacaoSaldoError) {
+                res.status(error.statusCode).json({
+                    error: error.code,
+                    message: error.userMessage,
+                    details: error.details,
+                });
+                return;
+            }
+            throw error;
+        }
+    }),
+);
+
+// DELETE /permutas/adiantamentos/:docCod/alocacoes/:invoiceDocCod — remove alocação.
+router.delete(
+    '/adiantamentos/:docCod/alocacoes/:invoiceDocCod',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(AlocacaoPermutasService);
+        await service.remover(String(req.params.docCod), String(req.params.invoiceDocCod));
+        res.json({
+            adiantamentoDocCod: String(req.params.docCod),
+            invoiceDocCod: String(req.params.invoiceDocCod),
         });
     }),
 );

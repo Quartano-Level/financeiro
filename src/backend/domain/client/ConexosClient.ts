@@ -881,7 +881,13 @@ export default class ConexosClient {
     public getDetalheTitulos = async (params: {
         docCod: string;
         filCod: number;
-    }): Promise<{ valorPermutar?: number; pago?: boolean; valorPermutado?: number }> => {
+    }): Promise<{
+        valorPermutar?: number;
+        pago?: boolean;
+        valorPermutado?: number;
+        valorTotal?: number;
+        valorAberto?: number;
+    }> => {
         const { docCod, filCod } = params;
         try {
             // P0-3 — wrapped in the same RetryExecutor as every other Conexos
@@ -940,15 +946,27 @@ export default class ConexosClient {
      */
     private mapDetalheTitulos = (
         detail: Record<string, unknown>,
-    ): { valorPermutar?: number; pago?: boolean; valorPermutado?: number } => {
+    ): {
+        valorPermutar?: number;
+        pago?: boolean;
+        valorPermutado?: number;
+        valorTotal?: number;
+        valorAberto?: number;
+    } => {
         const valorPermutar = this.parseOptionalNumber(detail.mnyTitPermutar);
         const valorPermutado = this.parseOptionalNumber(detail.mnyTitPermuta);
-        const mnyTitAberto = this.parseOptionalNumber(detail.mnyTitAberto);
-        const pago = mnyTitAberto === undefined ? undefined : mnyTitAberto === 0;
+        // `mnyTitValor` (face) e `mnyTitAberto` (saldo em aberto) — identidade
+        // mnyTitValor = mnyTitPago + mnyTitAberto. Alimentam o "progresso de
+        // pagamento" dos bloqueados por `nao-pago` (% pago + quanto falta).
+        const valorTotal = this.parseOptionalNumber(detail.mnyTitValor);
+        const valorAberto = this.parseOptionalNumber(detail.mnyTitAberto);
+        const pago = valorAberto === undefined ? undefined : valorAberto === 0;
         return {
             ...(valorPermutar !== undefined ? { valorPermutar } : {}),
             ...(pago !== undefined ? { pago } : {}),
             ...(valorPermutado !== undefined ? { valorPermutado } : {}),
+            ...(valorTotal !== undefined ? { valorTotal } : {}),
+            ...(valorAberto !== undefined ? { valorAberto } : {}),
         };
     };
 

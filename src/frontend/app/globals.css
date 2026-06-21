@@ -38,6 +38,10 @@
   --info: #3b82f6;
   --info-subtle: #dbeafe;
   --info-foreground: #1e3a8a;
+  /* Permuta manual (cliente-filtro) — violeta, distinto dos 4 status acima. */
+  --permuta: #8b5cf6;
+  --permuta-subtle: #ede9fe;
+  --permuta-foreground: #5b21b6;
   --overlay: rgb(0 0 0 / 0.5);
 
   /* Origem do documento — domain tokens for the FIFO timeline (Phase 4 of
@@ -97,6 +101,9 @@
   --color-info: var(--info);
   --color-info-subtle: var(--info-subtle);
   --color-info-foreground: var(--info-foreground);
+  --color-permuta: var(--permuta);
+  --color-permuta-subtle: var(--permuta-subtle);
+  --color-permuta-foreground: var(--permuta-foreground);
   --color-overlay: var(--overlay);
   --color-origem-proforma: var(--origem-proforma);
   --color-origem-proforma-foreground: var(--origem-proforma-foreground);

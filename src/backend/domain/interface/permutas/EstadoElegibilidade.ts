@@ -16,6 +16,14 @@ export const ESTADO_ELEGIBILIDADE = {
      * Escopo: motivos `composto-nm` / `multiplas-invoices` (ADR-0005).
      */
     CASAMENTO_MANUAL: 'casamento-manual',
+    /**
+     * Adiantamento de um **cliente filtro** (importador cadastrado) que será
+     * permutado MANUALMENTE e CROSS-PROCESS — a invoice vem de qualquer outro
+     * processo, escolhida pelo analista (Fatia 2). Não é reprovação de mérito:
+     * está pago e com saldo, só não há invoice no próprio processo. A D.I não é
+     * exigida na manual (vem da invoice escolhida). Motivo: `cliente-filtro`.
+     */
+    PERMUTA_MANUAL: 'permuta-manual',
 } as const;
 
 export type EstadoElegibilidade = (typeof ESTADO_ELEGIBILIDADE)[keyof typeof ESTADO_ELEGIBILIDADE];
@@ -48,6 +56,12 @@ export const MOTIVO_BLOQUEIO = {
     FALHA_GATE: 'falha-gate',
     /** Gate 4 sem D.I nem DUIMP — sem âncora de data-base. */
     DATA_BASE_INDISPONIVEL: 'data-base-indisponivel',
+    /**
+     * Importador cadastrado como "cliente filtro": o adiantamento (pago + com
+     * saldo) é roteado para `PERMUTA_MANUAL` (permuta manual cross-process) em vez
+     * de bloqueada. Motivo informativo do estado `permuta-manual`, não um bloqueio.
+     */
+    CLIENTE_FILTRO: 'cliente-filtro',
     /**
      * Leitura do DETALHE da PROFORMA (`getDetalheTitulos`) indisponível após
      * retries — blip transiente do Conexos, NÃO uma reprovação legítima de gate

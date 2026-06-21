@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
  */
 
 interface KPICardRootProps extends React.HTMLAttributes<HTMLDivElement> {
-    color?: 'default' | 'primary' | 'success' | 'warning' | 'danger' | 'info'
+    color?: 'default' | 'primary' | 'success' | 'warning' | 'danger' | 'info' | 'permuta'
     active?: boolean
     onClick?: () => void
     loading?: boolean
@@ -27,6 +27,7 @@ const colorRing: Record<NonNullable<KPICardRootProps['color']>, string> = {
     warning: 'border-warning',
     danger: 'border-danger',
     info: 'border-info',
+    permuta: 'border-permuta',
 }
 
 const dotColor: Record<NonNullable<KPICardRootProps['color']>, string> = {
@@ -36,6 +37,7 @@ const dotColor: Record<NonNullable<KPICardRootProps['color']>, string> = {
     warning: 'bg-warning',
     danger: 'bg-danger',
     info: 'bg-info',
+    permuta: 'bg-permuta',
 }
 
 const KPICardRoot = React.forwardRef<HTMLDivElement, KPICardRootProps>(

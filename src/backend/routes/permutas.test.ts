@@ -10,10 +10,17 @@ jest.mock('../domain/appContainer.js', () => ({
     bootstrapAppContainer: jest.fn().mockResolvedValue(undefined),
 }));
 
+import AlocacaoSaldoError from '../domain/errors/AlocacaoSaldoError.js';
+import IngestLockBusyError from '../domain/errors/IngestLockBusyError.js';
+import AlocacaoPermutasService from '../domain/service/permutas/AlocacaoPermutasService.js';
 import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasService.js';
 import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasService.js';
+import IngestaoPermutasService from '../domain/service/permutas/IngestaoPermutasService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
+import ClienteFiltroRepository from '../domain/repository/permutas/ClienteFiltroRepository.js';
 import PermutaProcessamentoRepository from '../domain/repository/permutas/PermutaProcessamentoRepository.js';
+import PermutaRelationalRepository from '../domain/repository/permutas/PermutaRelationalRepository.js';
+import PermutaSnapshotRepository from '../domain/repository/permutas/PermutaSnapshotRepository.js';
 import { errorMiddleware } from '../http/errorMiddleware.js';
 import { requestIdMiddleware } from '../middleware/requestId.js';
 import permutasRouter from './permutas.js';
@@ -103,6 +110,154 @@ describe('POST /permutas/eleicao', () => {
     });
 });
 
+describe('POST /permutas/ingestao', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    it('triggers the manual ingestion with the authenticated user identity and returns totals', async () => {
+        const executar = jest.fn().mockResolvedValue({
+            runId: 'run-i1',
+            flowId: 'flow-i1',
+            status: 'success',
+            totalAdiantamentos: 509,
+            totalInvoices: 126,
+            totalCasamentos: 27,
+            totalStale: 4,
+        });
+        container.registerInstance(IngestaoPermutasService, { executar } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/ingestao`, { method: 'POST' });
+            const body = await readJson(res);
+            expect(res.status).toBe(200);
+            expect(body).toMatchObject({
+                runId: 'run-i1',
+                status: 'success',
+                totalAdiantamentos: 509,
+                totalCasamentos: 27,
+            });
+            // triggered_by = username autenticado (auditoria O6) — fonte server-side.
+            expect(executar).toHaveBeenCalledWith({ triggeredBy: 'user-abc' });
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('returns 409 (ingestion_in_progress) when the advisory lock is busy', async () => {
+        const executar = jest.fn().mockRejectedValue(new IngestLockBusyError());
+        container.registerInstance(IngestaoPermutasService, { executar } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/ingestao`, { method: 'POST' });
+            const body = await readJson(res);
+            expect(res.status).toBe(409);
+            expect(body.error).toBe('INGESTION_IN_PROGRESS');
+            expect(typeof body.message).toBe('string');
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('lets unexpected errors fall through to the error middleware (500, not 409)', async () => {
+        const executar = jest.fn().mockRejectedValue(new Error('boom'));
+        container.registerInstance(IngestaoPermutasService, { executar } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/ingestao`, { method: 'POST' });
+            expect(res.status).toBe(500);
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('requires authentication (401 when unauthenticated)', async () => {
+        const server = await listen(buildApp({ authenticated: false }));
+        try {
+            const res = await fetch(`${server.url}/permutas/ingestao`, { method: 'POST' });
+            expect(res.status).toBe(401);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+describe('GET /permutas/runs', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    it('returns the recent runs (default limit) for the audit modal', async () => {
+        const listRecentRuns = jest.fn().mockResolvedValue([
+            {
+                runId: 'run-2',
+                triggeredBy: 'simone',
+                startedAt: new Date('2026-06-21T13:52:00Z'),
+                finishedAt: new Date('2026-06-21T13:52:30Z'),
+                status: 'success',
+                totalCandidatas: 509,
+                totalElegiveis: 27,
+                totalBloqueadas: 413,
+            },
+            {
+                runId: 'run-1',
+                triggeredBy: 'cron',
+                startedAt: new Date('2026-06-21T09:00:00Z'),
+                finishedAt: new Date('2026-06-21T09:00:25Z'),
+                status: 'success',
+                totalCandidatas: 508,
+                totalElegiveis: 26,
+                totalBloqueadas: 412,
+            },
+        ]);
+        container.registerInstance(PermutaSnapshotRepository, { listRecentRuns } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/runs`);
+            const body = await readJson(res);
+            expect(res.status).toBe(200);
+            expect(body.runs).toHaveLength(2);
+            expect(body.runs[0]).toMatchObject({ triggeredBy: 'simone', totalElegiveis: 27 });
+            expect(body.runs[1].triggeredBy).toBe('cron');
+            // Default limit applied when ?limit absent.
+            expect(listRecentRuns).toHaveBeenCalledWith(10);
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('honors a valid ?limit and rejects an out-of-range one (400)', async () => {
+        const listRecentRuns = jest.fn().mockResolvedValue([]);
+        container.registerInstance(PermutaSnapshotRepository, { listRecentRuns } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const ok = await fetch(`${server.url}/permutas/runs?limit=5`);
+            expect(ok.status).toBe(200);
+            expect(listRecentRuns).toHaveBeenCalledWith(5);
+
+            const bad = await fetch(`${server.url}/permutas/runs?limit=999`);
+            expect(bad.status).toBe(400);
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('requires authentication (401 when unauthenticated)', async () => {
+        const server = await listen(buildApp({ authenticated: false }));
+        try {
+            const res = await fetch(`${server.url}/permutas/runs`);
+            expect(res.status).toBe(401);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
 describe('GET /permutas/painel', () => {
     afterEach(() => {
         container.clearInstances();
@@ -155,6 +310,245 @@ describe('GET /permutas/painel', () => {
             const body = await readJson(res);
             expect(res.status).toBe(200);
             expect(body.items).toEqual([]);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+describe('cliente-filtro CRUD', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    it('GET lista os clientes-filtro ativos', async () => {
+        const listAtivos = jest
+            .fn()
+            .mockResolvedValue([{ pesCod: '191', importador: 'INOX-TECH', criadoEm: new Date() }]);
+        container.registerInstance(ClienteFiltroRepository, { listAtivos } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/cliente-filtro`);
+            const body = await readJson(res);
+            expect(res.status).toBe(200);
+            expect(body.clientes[0]).toMatchObject({ pesCod: '191', importador: 'INOX-TECH' });
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('POST faz upsert com o usuário autenticado em criadoPor', async () => {
+        const upsertClienteFiltro = jest.fn().mockResolvedValue(undefined);
+        container.registerInstance(ClienteFiltroRepository, { upsertClienteFiltro } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/cliente-filtro`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ pesCod: '191', importador: 'INOX-TECH' }),
+            });
+            expect(res.status).toBe(200);
+            expect(upsertClienteFiltro).toHaveBeenCalledWith({
+                pesCod: '191',
+                importador: 'INOX-TECH',
+                criadoPor: 'user-abc',
+            });
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('POST rejeita corpo sem pesCod (400)', async () => {
+        container.registerInstance(ClienteFiltroRepository, {
+            upsertClienteFiltro: jest.fn(),
+        } as never);
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/cliente-filtro`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ importador: 'sem pesCod' }),
+            });
+            expect(res.status).toBe(400);
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('DELETE remove pelo pesCod', async () => {
+        const deleteByPesCod = jest.fn().mockResolvedValue(1);
+        container.registerInstance(ClienteFiltroRepository, { deleteByPesCod } as never);
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/cliente-filtro/191`, {
+                method: 'DELETE',
+            });
+            expect(res.status).toBe(200);
+            expect(deleteByPesCod).toHaveBeenCalledWith('191');
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('requer autenticação (401)', async () => {
+        const server = await listen(buildApp({ authenticated: false }));
+        try {
+            const res = await fetch(`${server.url}/permutas/cliente-filtro`);
+            expect(res.status).toBe(401);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+describe('alocação manual (Fase 2)', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    it('GET /invoices/buscar exige priCod + filCod e devolve as invoices', async () => {
+        const buscarInvoices = jest
+            .fn()
+            .mockResolvedValue([{ docCod: 'I7', priCod: '510', filCod: 2, temDi: true }]);
+        container.registerInstance(AlocacaoPermutasService, { buscarInvoices } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const ok = await fetch(`${server.url}/permutas/invoices/buscar?priCod=510&filCod=2`);
+            const body = await readJson(ok);
+            expect(ok.status).toBe(200);
+            expect(body.invoices[0]).toMatchObject({ docCod: 'I7', temDi: true });
+            expect(buscarInvoices).toHaveBeenCalledWith('510', 2);
+
+            // sem filCod → 400 (priCod sozinho é insuficiente).
+            const bad = await fetch(`${server.url}/permutas/invoices/buscar?priCod=510`);
+            expect(bad.status).toBe(400);
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('POST /alocacoes grava com o usuário autenticado', async () => {
+        const alocar = jest.fn().mockResolvedValue(undefined);
+        container.registerInstance(AlocacaoPermutasService, { alocar } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/adiantamentos/A9/alocacoes`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                    invoiceDocCod: 'I7',
+                    invoicePriCod: '510',
+                    valorAlocado: 600,
+                }),
+            });
+            expect(res.status).toBe(200);
+            expect(alocar).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    adiantamentoDocCod: 'A9',
+                    invoiceDocCod: 'I7',
+                    invoicePriCod: '510',
+                    valorAlocado: 600,
+                    criadoPor: 'user-abc',
+                }),
+            );
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('POST /alocacoes → 422 quando excede saldo', async () => {
+        const alocar = jest
+            .fn()
+            .mockRejectedValue(
+                new AlocacaoSaldoError({ lado: 'invoice', disponivel: 800, pedido: 900 }),
+            );
+        container.registerInstance(AlocacaoPermutasService, { alocar } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/adiantamentos/A9/alocacoes`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                    invoiceDocCod: 'I7',
+                    invoicePriCod: '510',
+                    valorAlocado: 900,
+                }),
+            });
+            const body = await readJson(res);
+            expect(res.status).toBe(422);
+            expect(body.error).toBe('ALOCACAO_EXCEDE_SALDO');
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('POST /alocacoes rejeita valor não-positivo (400)', async () => {
+        container.registerInstance(AlocacaoPermutasService, { alocar: jest.fn() } as never);
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/adiantamentos/A9/alocacoes`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                    invoiceDocCod: 'I7',
+                    invoicePriCod: '510',
+                    valorAlocado: 0,
+                }),
+            });
+            expect(res.status).toBe(400);
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('DELETE /alocacoes remove pelo par', async () => {
+        const remover = jest.fn().mockResolvedValue(undefined);
+        container.registerInstance(AlocacaoPermutasService, { remover } as never);
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/adiantamentos/A9/alocacoes/I7`, {
+                method: 'DELETE',
+            });
+            expect(res.status).toBe(200);
+            expect(remover).toHaveBeenCalledWith('A9', 'I7');
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('requer autenticação (401)', async () => {
+        const server = await listen(buildApp({ authenticated: false }));
+        try {
+            const res = await fetch(`${server.url}/permutas/invoices/buscar?priCod=510`);
+            expect(res.status).toBe(401);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+describe('GET /permutas/importadores', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    it('lista importadores distintos do backlog', async () => {
+        const listImportadores = jest
+            .fn()
+            .mockResolvedValue([{ pesCod: '191', importador: 'INOX-TECH', qtdAdtos: 290 }]);
+        container.registerInstance(PermutaRelationalRepository, { listImportadores } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/importadores`);
+            const body = await readJson(res);
+            expect(res.status).toBe(200);
+            expect(body.importadores[0]).toMatchObject({ pesCod: '191', qtdAdtos: 290 });
         } finally {
             await server.close();
         }

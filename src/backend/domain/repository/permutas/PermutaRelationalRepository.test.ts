@@ -54,6 +54,10 @@ const adiantamento: AdiantamentoRow = {
     moedaNegociada: 'USD',
     estadoElegibilidade: 'elegivel',
     agingDays: 30,
+    valorTotal: 1000,
+    valorAberto: 400,
+    pesCod: '191',
+    importador: 'INOX-TECH',
 };
 const invoice: InvoiceRow = {
     docCod: 'I1',
@@ -131,6 +135,32 @@ describe('PermutaRelationalRepository', () => {
         expect(sql).toContain('moeda_negociada');
         expect(params.moeda_0).toBe('BRL');
         expect(params.moedaNegociada_0).toBe('USD');
+        // Progresso de pagamento: face + saldo em aberto, parametrizados (Rule #5).
+        expect(sql).toContain('valor_total');
+        expect(sql).toContain('valor_aberto');
+        expect(params.valorTotal_0).toBe(1000);
+        expect(params.valorAberto_0).toBe(400);
+        // Importador (cliente-filtro) persistido, parametrizado.
+        expect(sql).toContain('pes_cod');
+        expect(sql).toContain('importador');
+        expect(params.pesCod_0).toBe('191');
+        expect(params.importador_0).toBe('INOX-TECH');
+    });
+
+    it('listImportadores: distinct pes_cod/importador do backlog ativo, parametrizado', async () => {
+        const tx = buildTx();
+        const db = buildDb(tx);
+        (db.selectMany as jest.Mock).mockResolvedValue([
+            { pes_cod: '191', importador: 'INOX-TECH', qtd: 290 },
+        ]);
+        const repo = new PermutaRelationalRepository(db);
+
+        const list = await repo.listImportadores();
+
+        const sql = (db.selectMany as jest.Mock).mock.calls[0][0] as string;
+        expect(sql).toContain('FROM permuta_adiantamento');
+        expect(sql).toContain('GROUP BY pes_cod, importador');
+        expect(list[0]).toEqual({ pesCod: '191', importador: 'INOX-TECH', qtdAdtos: 290 });
     });
 
     it('upsertAdiantamentos chunks into multi-row inserts of 500', async () => {

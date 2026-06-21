@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import type { TransactionClient } from '../../client/database/PostgreeDatabaseClient.js';
+import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import {
     ESTADO_ELEGIBILIDADE,
     MOTIVO_BLOQUEIO,
@@ -102,6 +103,25 @@ const casamentoManual: PermutaCandidata = {
     },
     estadoElegibilidade: ESTADO_ELEGIBILIDADE.CASAMENTO_MANUAL,
     motivoBloqueio: MOTIVO_BLOQUEIO.COMPOSTO_NM,
+    gatesAvaliados: [],
+};
+
+const permutaManual: PermutaCandidata = {
+    priCod: '1153',
+    adiantamento: {
+        docCod: 'A9',
+        priCod: '1153',
+        filCod: 2,
+        dataEmissao: new Date('2026-02-23'),
+        valor: 5910,
+        moeda: 'USD',
+        pago: true,
+        valorPermutar: 1100,
+        pesCod: '191',
+        importador: 'INOX-TECH',
+    },
+    estadoElegibilidade: ESTADO_ELEGIBILIDADE.PERMUTA_MANUAL,
+    motivoBloqueio: MOTIVO_BLOQUEIO.CLIENTE_FILTRO,
     gatesAvaliados: [],
 };
 
@@ -243,6 +263,45 @@ describe('IngestaoPermutasService', () => {
         expect(nmRow?.motivoBloqueio).toBe('composto-nm');
         // N:M não vira casamento automático (só elegível com invoice casada).
         expect(repo.replaceAutoCasamentos.mock.calls[0][2]).toHaveLength(1);
+    });
+
+    it('lock busy: rethrows IngestLockBusyError WITHOUT writing an error run (ADR-0006)', async () => {
+        const eleicao = buildEleicao([elegivel]);
+        const { repo } = buildRelational();
+        // Advisory lock held by another ingestion → persistIngestRun rejects.
+        (repo.persistIngestRun as jest.Mock).mockRejectedValue(new IngestLockBusyError());
+        const snapshot = buildSnapshot();
+        const { logService, calls } = buildLogService();
+        const service = new IngestaoPermutasService(eleicao, repo, snapshot, logService);
+
+        await expect(service.executar({ triggeredBy: 'simone' })).rejects.toBeInstanceOf(
+            IngestLockBusyError,
+        );
+
+        // Lock contention is NOT a failure: no error run header, no snapshot, no
+        // error log polluting the audit trail.
+        expect(repo.insertIngestRunHeader).not.toHaveBeenCalled();
+        expect(snapshot.persistRun).not.toHaveBeenCalled();
+        expect(calls.some((c) => c.type === 'FLOW_ERROR')).toBe(false);
+    });
+
+    it('persiste estado permuta-manual + pesCod/importador na row (cliente-filtro)', async () => {
+        const eleicao = buildEleicao([permutaManual]);
+        const { repo } = buildRelational();
+        const service = new IngestaoPermutasService(
+            eleicao,
+            repo,
+            buildSnapshot(),
+            buildLogService().logService,
+        );
+
+        await service.executar({ triggeredBy: 'cron' });
+
+        const rows = repo.upsertAdiantamentos.mock.calls[0][2];
+        const row = rows.find((r) => r.docCod === 'A9');
+        expect(row?.estadoElegibilidade).toBe('permuta-manual');
+        expect(row?.pesCod).toBe('191');
+        expect(row?.importador).toBe('INOX-TECH');
     });
 
     it('on compute failure: ROLLBACK (no write) + error header outside tx, rethrows', async () => {
