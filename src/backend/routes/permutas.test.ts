@@ -15,7 +15,7 @@ import IngestLockBusyError from '../domain/errors/IngestLockBusyError.js';
 import AlocacaoPermutasService from '../domain/service/permutas/AlocacaoPermutasService.js';
 import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasService.js';
 import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasService.js';
-import IngestaoPermutasService from '../domain/service/permutas/IngestaoPermutasService.js';
+import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
 import ClienteFiltroRepository from '../domain/repository/permutas/ClienteFiltroRepository.js';
 import PermutaProcessamentoRepository from '../domain/repository/permutas/PermutaProcessamentoRepository.js';
@@ -126,7 +126,7 @@ describe('POST /permutas/ingestao', () => {
             totalCasamentos: 27,
             totalStale: 4,
         });
-        container.registerInstance(IngestaoPermutasService, { executar } as never);
+        container.registerInstance(IngestaoCoalescerService, { request: executar } as never);
 
         const server = await listen(buildApp({ authenticated: true }));
         try {
@@ -148,7 +148,7 @@ describe('POST /permutas/ingestao', () => {
 
     it('returns 409 (ingestion_in_progress) when the advisory lock is busy', async () => {
         const executar = jest.fn().mockRejectedValue(new IngestLockBusyError());
-        container.registerInstance(IngestaoPermutasService, { executar } as never);
+        container.registerInstance(IngestaoCoalescerService, { request: executar } as never);
 
         const server = await listen(buildApp({ authenticated: true }));
         try {
@@ -164,7 +164,7 @@ describe('POST /permutas/ingestao', () => {
 
     it('lets unexpected errors fall through to the error middleware (500, not 409)', async () => {
         const executar = jest.fn().mockRejectedValue(new Error('boom'));
-        container.registerInstance(IngestaoPermutasService, { executar } as never);
+        container.registerInstance(IngestaoCoalescerService, { request: executar } as never);
 
         const server = await listen(buildApp({ authenticated: true }));
         try {

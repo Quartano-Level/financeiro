@@ -1,5 +1,16 @@
 # Columbia Financeiro — Changelog
 
+## v0.4.2 (2026-06-22) — hardening: coalescing da ingestão + escopo do rate limiter (Lote B do Regis)
+
+- fix(perf): mata o HTTP 429 do fluxo de cliente-filtro (cc-auto-ingest-coalesce).
+  - O `heavyRouteLimiter` (10/min) deixa de cobrir o router `/permutas` inteiro — aplicado por-rota só em
+    `POST /eleicao` e `POST /ingestao`; leituras (gestao/painel/cliente-filtro/importadores) ficam no
+    `globalLimiter` (100/min). Antes o `load()` + painel + ingestão dividiam 10/min → 429.
+  - Novo `IngestaoCoalescerService` (`@singleton`) na frente da ingestão: cliques em sequência coalescem
+    numa rodada + rerun-trailing (inclui a mudança de quem entrou no meio), em vez de disparar fan-out
+    Conexos redundante. Mantém SÍNCRONO (preserva a UX do remover). Contenção cross-instância (cron) segue
+    `IngestLockBusyError` → 409. ADR-0012. READ-ONLY no Conexos.
+
 ## v0.4.1 (2026-06-22) — hardening de API (Lote A dos P0 do Regis-Review)
 
 - fix(security): RBAC server-side nas rotas de mutação de permutas (security-1).

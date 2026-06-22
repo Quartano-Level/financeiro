@@ -84,9 +84,11 @@ app.use('/conexos', heavyRouteLimiter);
 // Example route proving the Conexos ERP integration is live in the skeleton.
 app.use('/conexos', conexosRouter);
 
-// Permutas Frente I — Fatia 1 (READ-ONLY). Heavy fan-out to Conexos on the
-// eleicao trigger → mount under the strict limiter (security-6 / F-security-9).
-app.use('/permutas', heavyRouteLimiter);
+// Permutas Frente I. O `heavyRouteLimiter` (10/min) NÃO cobre o router inteiro —
+// só as rotas de fan-out pesado (`POST /eleicao` e `/ingestao`) o aplicam por-rota
+// (ver routes/permutas.ts). As LEITURAS (gestao/painel/cliente-filtro/importadores)
+// ficam no `globalLimiter` (100/min) — antes o limiter estrito cobria tudo e o
+// fluxo de cliente-filtro (load + ingestão) estourava 429 (card cc-auto-ingest-coalesce).
 app.use('/permutas', permutasRouter);
 
 // Central error-handling middleware — logs full detail server-side, returns

@@ -13,10 +13,11 @@ import PermutaRelationalRepository from '../domain/repository/permutas/PermutaRe
 import PermutaSnapshotRepository from '../domain/repository/permutas/PermutaSnapshotRepository.js';
 import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasService.js';
 import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasService.js';
-import IngestaoPermutasService from '../domain/service/permutas/IngestaoPermutasService.js';
+import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { requireRole } from '../http/auth.js';
+import { heavyRouteLimiter } from '../http/rateLimit.js';
 
 /** Zod no boundary — corpo do POST /processar (Rule: validar inputs externos). */
 const processarBodySchema = z.object({
@@ -73,6 +74,7 @@ const router = Router();
 // middleware global + heavyRouteLimiter (fan-out Conexos pesado).
 router.post(
     '/eleicao',
+    heavyRouteLimiter,
     requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
@@ -99,19 +101,22 @@ router.post(
 );
 
 // POST /permutas/ingestao — dispara a ingestão MANUAL (ADR-0006). Roda o MESMO
-// compute do cron (`IngestaoPermutasService`), alimentando o modelo relacional
-// (`/gestao`) + snapshot. Espera terminar e devolve os totais (a UI aguarda no
-// modal). `triggered_by` = username autenticado (auditoria O6/I5). Se já houver
-// uma ingestão rodando (advisory lock), responde 409 sem disparar fan-out novo.
+// compute do cron, alimentando o modelo relacional (`/gestao`) + snapshot. Espera
+// terminar e devolve os totais (a UI aguarda no modal). `triggered_by` = username
+// autenticado (auditoria O6/I5). Passa pelo `IngestaoCoalescerService` (ADR-0012):
+// cliques em sequência (cliente-filtro add/remove) coalescem numa rodada +
+// rerun-trailing em vez de disparar fan-out redundante / estourar o rate limit.
+// Contenção CROSS-instância (cron) ainda lança `IngestLockBusyError` → 409.
 router.post(
     '/ingestao',
+    heavyRouteLimiter,
     requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const service = container.resolve(IngestaoPermutasService);
+        const service = container.resolve(IngestaoCoalescerService);
         const triggeredBy = req.user?.sub ?? req.user?.email ?? 'unknown';
         try {
-            const result = await service.executar({ triggeredBy });
+            const result = await service.request({ triggeredBy });
             res.json({
                 runId: result.runId,
                 status: result.status,
