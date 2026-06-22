@@ -34,7 +34,7 @@ const readJson = async (res: Response): Promise<Record<string, any>> =>
     (await res.json()) as Record<string, any>;
 
 // Mimics auth: attaches a fake user. Toggled per-test to simulate 401.
-const buildApp = (opts: { authenticated: boolean }): express.Express => {
+const buildApp = (opts: { authenticated: boolean; role?: string }): express.Express => {
     const app = express();
     app.use(express.json());
     app.use(requestIdMiddleware);
@@ -43,7 +43,8 @@ const buildApp = (opts: { authenticated: boolean }): express.Express => {
             res.status(401).json({ error: 'Missing or malformed Authorization header' });
             return;
         }
-        req.user = { sub: 'user-abc', email: 'a@b.com' };
+        // role 'admin' por padrão (rotas de mutação exigem requireRole('admin')).
+        req.user = { sub: 'user-abc', email: 'a@b.com', role: opts.role ?? 'admin' };
         next();
     });
     app.use('/permutas', permutasRouter);
@@ -652,6 +653,40 @@ describe('POST /permutas/adiantamentos/:docCod/processar', () => {
                 method: 'POST',
             });
             expect(res.status).toBe(401);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+describe('RBAC — requireRole nas rotas de mutação (security-1)', () => {
+    it('role não-admin → 403 nas mutações; leituras seguem abertas', async () => {
+        // Usuário autenticado mas role 'authenticated' (não admin).
+        const server = await listen(buildApp({ authenticated: true, role: 'authenticated' }));
+        try {
+            const mutacoes: Array<[string, string]> = [
+                ['POST', '/permutas/eleicao'],
+                ['POST', '/permutas/ingestao'],
+                ['POST', '/permutas/cliente-filtro'],
+                ['DELETE', '/permutas/cliente-filtro/191'],
+                ['POST', '/permutas/adiantamentos/A1/alocacoes'],
+                ['DELETE', '/permutas/adiantamentos/A1/alocacoes/I1'],
+                ['POST', '/permutas/adiantamentos/A1/processar'],
+            ];
+            for (const [method, path] of mutacoes) {
+                const res = await fetch(`${server.url}${path}`, {
+                    method,
+                    headers: { 'content-type': 'application/json' },
+                    body: method === 'DELETE' ? undefined : JSON.stringify({}),
+                });
+                expect(res.status).toBe(403);
+            }
+            // Leitura (GET /painel) NÃO é gateada por role.
+            container.registerInstance(PainelService, {
+                montarPainel: jest.fn().mockResolvedValue({ pendencias: [], totais: {} }),
+            } as never);
+            const leitura = await fetch(`${server.url}/permutas/painel`);
+            expect(leitura.status).not.toBe(403);
         } finally {
             await server.close();
         }
