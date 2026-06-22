@@ -189,9 +189,11 @@ export class AlocacaoExcedeSaldoError extends Error {
 export async function buscarInvoicesPorProcesso(
   priCod: string,
   filCod: number,
+  adtoDocCod?: string,
 ): Promise<InvoiceBuscada[]> {
+  const adtoParam = adtoDocCod ? `&adtoDocCod=${encodeURIComponent(adtoDocCod)}` : ''
   const res = await fetch(
-    `${API}/permutas/invoices/buscar?priCod=${encodeURIComponent(priCod)}&filCod=${encodeURIComponent(filCod)}`,
+    `${API}/permutas/invoices/buscar?priCod=${encodeURIComponent(priCod)}&filCod=${encodeURIComponent(filCod)}${adtoParam}`,
     { headers: await withAuthHeaders() },
   )
   if (!res.ok) throw new Error(`API ${res.status}`)

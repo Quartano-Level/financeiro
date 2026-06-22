@@ -3,6 +3,30 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.2.9 — distribuição greedy N:1 com teto na permuta Simples (2026-06-22, ADR-0010)
+
+Feature: `permutas-distribuicao-simples-greedy` (branch `feat/permutas-multiplas`, verde). Corrige a
+**super-permuta** do auto-casamento Simples (1 invoice : N adiantamentos). READ-ONLY no ERP — corrige só
+o nosso snapshot/cálculo (`permuta_casamento`); a baixa em `fin010` (`reconciliarPermuta`) segue **Fase 3**.
+
+- **Antes:** cada adto do grupo usava o valor **cheio** negociado, sem teto. Caso real **1408** (ZNSHINE,
+  INVOICE 260.064; adtos 11566=668.736, 5751=74.304) somava **"usa 743.040"** (super-permuta de ~483 k).
+- **Agora (4 decisões travadas — ADR-0010):** distribui o **em-aberto vivo da invoice** entre os adtos —
+  (1) **ordenação** maior saldo primeiro; (2) **desempate** mais antigo (aging desc; fallback dataEmissao);
+  (3) **teto** = em-aberto vivo da invoice (`mnyTitAberto / taxaInvoice` via `getDetalheTitulos`), fallback
+  `valorMoedaNegociada`, ausente ⇒ sem teto (legado); (4) **residual** — auto-casamento ficou **parcial**
+  (adto consumido em parte mantém saldo restante em aberto; variação recalculada sobre o valor parcial).
+- **1408 corrigido:** 11566 usa **260.064** (residual 408.672), 5751 usa **0** → "usa 260.064". Caso
+  inverso (Σ adtos < invoice): todos usados por inteiro, invoice parcialmente permutada.
+- **Nova entidade-propriedade `Invoice.valorAbertoNegociado`** (o teto, em moeda negociada) e
+  `CasamentoAdiantamento.saldoRestante` (exposto na aba Simples, coluna "Saldo restante").
+- **Nova business-rule `distribuicao-simples-greedy`** (invariante `I-Permuta-2` aplicada ao
+  auto-casamento) — **primeira regra com teste canônico** (`has_canonical_test: true`). Entidades
+  `Invoice`/`Adiantamento`/`PermutaCandidata`/`Permuta` atualizadas; `_index.json`/`_coverage.json`
+  re-carimbados v0.2.8 → **v0.2.9** (business-rules 4 → 5, com teste 0 → 1).
+- **Moeda diferente** continua bloqueada (regra existente). **Ponto aberto** (watchlist): residual grande
+  num único adto (1408: 408.672) — validar com o time se deve virar caso de **revisão manual**.
+
 ## v0.2.8 — sync ontologia ↔ código deployado (2026-06-21, commit df90fa6)
 
 Curadoria de sincronização (a ontologia havia ficado defasada das 5 features de permutas mergeadas

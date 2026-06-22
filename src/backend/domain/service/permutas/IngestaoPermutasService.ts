@@ -14,6 +14,7 @@ import type { PermutaEleicaoRunInput } from '../../repository/permutas/PermutaSn
 import PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
 import LogService from '../LogService.js';
 import EleicaoPermutasService from './EleicaoPermutasService.js';
+import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
 
 export interface IngestaoParams {
     /** Identidade auditável de quem disparou a ingestão (auditoria O6). */
@@ -59,6 +60,8 @@ export default class IngestaoPermutasService {
         private relationalRepository: PermutaRelationalRepository,
         @inject(PermutaSnapshotRepository)
         private snapshotRepository: PermutaSnapshotRepository,
+        @inject(VariacaoCambialPermutaService)
+        private variacaoCambialService: VariacaoCambialPermutaService,
         @inject(LogService) private logService: LogService,
     ) {}
 
@@ -313,34 +316,102 @@ export default class IngestaoPermutasService {
     private casamentoMoeda = (c: PermutaCandidata): string | undefined =>
         c.invoiceCasada?.moedaNegociada ?? c.adiantamento.moedaNegociada ?? c.invoiceCasada?.moeda;
 
-    /** Casamentos automáticos 1:1 — só candidatas elegíveis com invoice casada. */
+    /** Saldo disponível do adiantamento em moeda NEGOCIADA: `valorPermutar(BRL) /
+     * taxa` (mesmo cálculo do lado manual); fallback ao `valorMoedaNegociada`. */
+    private saldoDisponivelNeg = (c: PermutaCandidata): number => {
+        const a = c.adiantamento;
+        if (a.valorPermutar !== undefined && a.taxa !== undefined && a.taxa > 0) {
+            return a.valorPermutar / a.taxa;
+        }
+        return a.valorMoedaNegociada ?? 0;
+    };
+
+    /**
+     * Casamentos automáticos N:1 (permuta Simples) — distribuição GREEDY com teto.
+     *
+     * Vários adiantamentos ELEGÍVEIS podem casar com a MESMA invoice. Em vez de
+     * cada um usar seu valor cheio (super-permuta), distribui o em-aberto vivo da
+     * invoice (`valorAbertoNegociado`, fallback `valorMoedaNegociada`) entre eles:
+     * do MAIOR saldo p/ o menor (desempate: mais antigo primeiro — maior aging,
+     * fallback dataEmissao). O adiantamento consumido parcialmente mantém o saldo
+     * restante em aberto (`valorASerUsado` parcial). A variação cambial é
+     * recalculada sobre o valor PARCIAL de cada adto. READ-ONLY (só nosso snapshot).
+     */
     private toCasamentoRows = (candidatas: PermutaCandidata[]): CasamentoRow[] => {
-        const rows: CasamentoRow[] = [];
+        // Agrupa as candidatas elegíveis (com invoice casada) por invoice.
+        const byInvoice = new Map<string, PermutaCandidata[]>();
         for (const c of candidatas) {
             if (c.estadoElegibilidade !== ESTADO_ELEGIBILIDADE.ELEGIVEL || !c.invoiceCasada) {
                 continue;
             }
-            const vc = c.variacaoCambial;
-            rows.push({
-                invoiceDocCod: c.invoiceCasada.docCod,
-                adiantamentoDocCod: c.adiantamento.docCod,
-                priCod: c.priCod,
-                ...(c.adiantamento.valorMoedaNegociada !== undefined
-                    ? { valorASerUsado: c.adiantamento.valorMoedaNegociada }
-                    : {}),
-                // Moeda exibida ao lado do `valorASerUsado` (em moeda negociada):
-                // prioriza a sigla NEGOCIADA (USD) sobre a do documento (BRL).
-                ...(this.casamentoMoeda(c) !== undefined ? { moeda: this.casamentoMoeda(c) } : {}),
-                ...(vc?.classificacao !== undefined
-                    ? { variacaoClassificacao: vc.classificacao }
-                    : {}),
-                ...(vc?.resultado !== undefined ? { variacaoResultado: vc.resultado } : {}),
-                ...(vc?.delta !== undefined ? { variacaoDelta: vc.delta } : {}),
-                ...(vc?.taxaAdiantamento !== undefined
-                    ? { taxaAdiantamento: vc.taxaAdiantamento }
-                    : {}),
-                ...(vc?.taxaInvoice !== undefined ? { taxaInvoice: vc.taxaInvoice } : {}),
+            const list = byInvoice.get(c.invoiceCasada.docCod) ?? [];
+            list.push(c);
+            byInvoice.set(c.invoiceCasada.docCod, list);
+        }
+
+        const rows: CasamentoRow[] = [];
+        for (const grupo of byInvoice.values()) {
+            // Teto da invoice (moeda negociada): em-aberto vivo; fallback valor
+            // negociado; se ambos ausentes → undefined (mantém comportamento antigo:
+            // cada adto usa seu saldo cheio, sem capar).
+            const inv = grupo[0]?.invoiceCasada;
+            const teto = inv?.valorAbertoNegociado ?? inv?.valorMoedaNegociada;
+            // Ordena: maior saldo disponível primeiro; desempate mais antigo
+            // (aging desc; fallback dataEmissao asc).
+            const ordenado = [...grupo].sort((x, y) => {
+                const sx = this.saldoDisponivelNeg(x);
+                const sy = this.saldoDisponivelNeg(y);
+                if (sy !== sx) return sy - sx;
+                if (x.aging !== undefined && y.aging !== undefined && x.aging !== y.aging) {
+                    return y.aging - x.aging;
+                }
+                return x.adiantamento.dataEmissao.getTime() - y.adiantamento.dataEmissao.getTime();
             });
+
+            let restante = teto;
+            for (const c of ordenado) {
+                const saldo = this.saldoDisponivelNeg(c);
+                const usado =
+                    restante === undefined ? saldo : Math.min(saldo, Math.max(0, restante));
+                if (restante !== undefined) restante -= usado;
+
+                const vc = c.variacaoCambial;
+                const taxaAdiantamento = vc?.taxaAdiantamento ?? c.adiantamento.taxa;
+                const taxaInvoice = vc?.taxaInvoice;
+                const moeda = this.casamentoMoeda(c);
+                // Variação recalculada sobre o valor PARCIAL (`usado`).
+                const variacao =
+                    taxaAdiantamento !== undefined &&
+                    taxaInvoice !== undefined &&
+                    moeda !== undefined
+                        ? this.variacaoCambialService.calcular({
+                              moeda,
+                              principalMoeda: usado,
+                              taxaAdiantamento,
+                              taxaInvoice,
+                              ...(c.declaracaoImportacao?.dataBase !== undefined
+                                  ? { dataBase: c.declaracaoImportacao.dataBase }
+                                  : {}),
+                          })
+                        : undefined;
+
+                rows.push({
+                    invoiceDocCod: c.invoiceCasada?.docCod ?? '',
+                    adiantamentoDocCod: c.adiantamento.docCod,
+                    priCod: c.priCod,
+                    valorASerUsado: usado,
+                    ...(moeda !== undefined ? { moeda } : {}),
+                    ...(variacao?.classificacao !== undefined
+                        ? { variacaoClassificacao: variacao.classificacao }
+                        : {}),
+                    ...(variacao?.resultado !== undefined
+                        ? { variacaoResultado: variacao.resultado }
+                        : {}),
+                    ...(variacao?.delta !== undefined ? { variacaoDelta: variacao.delta } : {}),
+                    ...(taxaAdiantamento !== undefined ? { taxaAdiantamento } : {}),
+                    ...(taxaInvoice !== undefined ? { taxaInvoice } : {}),
+                });
+            }
         }
         return rows;
     };

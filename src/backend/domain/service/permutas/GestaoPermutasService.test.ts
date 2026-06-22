@@ -9,11 +9,18 @@ import type PermutaRelationalRepository from '../../repository/permutas/PermutaR
 import type PermutaProcessamentoRepository from '../../repository/permutas/PermutaProcessamentoRepository.js';
 import type PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacaoRepository.js';
 import type { AlocacaoRow } from '../../repository/permutas/PermutaAlocacaoRepository.js';
+import type PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
 import type { Processamento } from '../../interface/permutas/Processamento.js';
 import GestaoPermutasService from './GestaoPermutasService.js';
 import type LogService from '../LogService.js';
 
 const buildLog = () => ({ info: jest.fn().mockResolvedValue(undefined) }) as unknown as LogService;
+
+/** Snapshot repo mock — `geradoEm` = finished_at da última ingestão (fixo p/ teste). */
+const buildSnapshot = (finishedAt: Date | null = new Date('2026-06-22T09:00:00Z')) =>
+    ({
+        findLatestIngestFinishedAt: jest.fn().mockResolvedValue(finishedAt),
+    }) as unknown as jest.Mocked<PermutaSnapshotRepository>;
 
 const buildAlocacao = (rows: AlocacaoRow[] = []) =>
     ({
@@ -133,6 +140,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildRelational(),
             buildProcessamento(),
             buildAlocacao(),
+            buildSnapshot(),
             buildLog(),
         );
 
@@ -160,6 +168,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildRelational(),
             buildProcessamento(),
             buildAlocacao(),
+            buildSnapshot(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -177,6 +186,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildRelational(),
             buildProcessamento(),
             buildAlocacao(),
+            buildSnapshot(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -204,6 +214,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildRelational({ adiantamentos: [nm1, nm2] }),
             buildProcessamento(),
             buildAlocacao(),
+            buildSnapshot(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -234,15 +245,21 @@ describe('GestaoPermutasService.exporGestao', () => {
                     invoiceDocCod: 'INV-X',
                     valorAlocado: 300,
                     moeda: 'USD',
+                    taxaAdiantamento: 5.31,
+                    taxaInvoice: 5.19,
                     criadoEm: new Date('2026-06-21T10:00:00Z'),
                 },
             ]),
+            buildSnapshot(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
         const pm = res.pendentes.find((p) => p.docCod === 'M1');
         expect(pm?.alocacoes).toHaveLength(1);
         expect(pm?.saldoRestante).toBeCloseTo(500, 5);
+        // Taxas expostas na alocação → a tela monta a conta do juros/desconto.
+        expect(pm?.alocacoes?.[0].taxaAdiantamento).toBe(5.31);
+        expect(pm?.alocacoes?.[0].taxaInvoice).toBe(5.19);
     });
 
     it('classifica cross-process para permuta-manual (cliente-filtro)', async () => {
@@ -250,6 +267,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildRelational({ adiantamentos: [...adiantamentos, permutaManualAdto] }),
             buildProcessamento(),
             buildAlocacao(),
+            buildSnapshot(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -261,6 +279,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildRelational(),
             buildProcessamento(),
             buildAlocacao(),
+            buildSnapshot(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -321,6 +340,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             }),
             buildProcessamento(),
             buildAlocacao(),
+            buildSnapshot(),
             buildLog(),
         );
 
@@ -337,6 +357,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildRelational(),
             buildProcessamento(),
             buildAlocacao(),
+            buildSnapshot(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -349,6 +370,33 @@ describe('GestaoPermutasService.exporGestao', () => {
             referencia: 'CT/1',
             valorASerUsado: 1000,
         });
+    });
+
+    it('expõe saldoRestante no casamento Simples (saldoNeg − valorASerUsado)', async () => {
+        // adto saldo 3300 BRL / taxa 5.5 = 600 USD; greedy usou 260 → resta 340.
+        const a1Parcial: AdiantamentoAtivo = {
+            ...adiantamentos[0],
+            valorPermutar: 3300,
+            taxa: 5.5,
+        };
+        const casamentoParcial: CasamentoRow = {
+            ...casamentos[0],
+            valorASerUsado: 260,
+        };
+        const service = new GestaoPermutasService(
+            buildRelational({
+                adiantamentos: [a1Parcial],
+                casamentos: [casamentoParcial],
+            }),
+            buildProcessamento(),
+            buildAlocacao(),
+            buildSnapshot(),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+        const adto = res.casamentos[0].adiantamentos[0];
+        expect(adto.valorASerUsado).toBe(260);
+        expect(adto.saldoRestante).toBeCloseTo(340, 5);
     });
 
     it('promotes BLOQUEADA+motivo ja-permutado to its OWN status (out of bloqueadas)', async () => {
@@ -373,6 +421,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildRelational({ adiantamentos: [...adiantamentos, jaPermutado] }),
             buildProcessamento(),
             buildAlocacao(),
+            buildSnapshot(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -412,6 +461,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildRelational({ invoices: candidatasInvoices }),
             buildProcessamento(),
             buildAlocacao(),
+            buildSnapshot(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -441,6 +491,7 @@ describe('GestaoPermutasService.exporGestao', () => {
                     criadoEm: new Date('2026-06-20T10:00:00Z'),
                 },
             ]),
+            buildSnapshot(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -456,6 +507,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildRelational({ adiantamentos: [...adiantamentos, permutaManualAdto] }),
             buildProcessamento(),
             buildAlocacao(),
+            buildSnapshot(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -471,6 +523,7 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildRelational(),
             buildProcessamento(),
             buildAlocacao(),
+            buildSnapshot(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
@@ -502,6 +555,7 @@ describe('GestaoPermutasService.exporGestao', () => {
                 { adiantamentoDocCod: 'A1', status: 'processado', processadoPor: 'u' },
             ]),
             buildAlocacao(),
+            buildSnapshot(),
             buildLog(),
         );
         const res = await service.exporGestao('req-1');

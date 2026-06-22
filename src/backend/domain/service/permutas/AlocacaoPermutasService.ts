@@ -22,6 +22,13 @@ export interface InvoiceBuscada {
     temDi: boolean;
     /** Data-base da D.I (ISO) — âncora da variação/aging. */
     dataBase?: string;
+    /**
+     * Σ já alocado nesta invoice por OUTROS adiantamentos (exclui o adiantamento
+     * que está alocando, quando informado). É o que o saldo da invoice já consumiu
+     * num cenário N:M (invoice compartilhada). `valorMoedaNegociada − jaAlocado` =
+     * disponível desta invoice — espelha o teto aplicado no `alocar`.
+     */
+    jaAlocado: number;
 }
 
 export interface AlocarInput {
@@ -71,8 +78,17 @@ export default class AlocacaoPermutasService {
      * IMPORTANTE: o `priCod` NÃO é único entre filiais (cada filial numera seus
      * processos) — ex.: "523" na filial 4 = ZHEJIANG VOB, "523" na filial 6 = THE
      * ABSOLUT COMPANY. Por isso a busca é SEMPRE escopada à filial do adiantamento.
+     *
+     * `excludeAdtoDocCod` (opcional): ao buscar para um adiantamento específico,
+     * o `jaAlocado` de cada invoice soma o que OUTROS adiantamentos já alocaram
+     * nela (excluindo este) — assim a UI mostra o disponível real da invoice
+     * compartilhada (N:M), idêntico ao teto que o `alocar` aplica.
      */
-    public buscarInvoices = async (priCod: string, filCod: number): Promise<InvoiceBuscada[]> => {
+    public buscarInvoices = async (
+        priCod: string,
+        filCod: number,
+        excludeAdtoDocCod?: string,
+    ): Promise<InvoiceBuscada[]> => {
         const { invoices: todas } = await this.conexosClient.listFinanceiroAPagar({
             priCods: [priCod],
             docTip: 'INVOICE',
@@ -116,6 +132,12 @@ export default class AlocacaoPermutasService {
                 } catch {
                     // com308 indisponível — segue sem valor/taxa negociada.
                 }
+                // Quanto OUTROS adiantamentos já alocaram nesta invoice (N:M): o
+                // disponível mostrado na UI = valorMoedaNegociada − jaAlocado.
+                const jaAlocado = await this.alocacaoRepository.sumByInvoice(
+                    i.docCod,
+                    excludeAdtoDocCod,
+                );
                 return {
                     docCod: i.docCod,
                     priCod: i.priCod,
@@ -130,6 +152,7 @@ export default class AlocacaoPermutasService {
                     ...(taxa !== undefined ? { taxa } : {}),
                     temDi: decl !== undefined,
                     ...(dataBase !== undefined ? { dataBase: dataBase.toISOString() } : {}),
+                    jaAlocado,
                 };
             }),
         );

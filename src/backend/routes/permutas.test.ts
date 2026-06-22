@@ -420,7 +420,11 @@ describe('alocação manual (Fase 2)', () => {
             const body = await readJson(ok);
             expect(ok.status).toBe(200);
             expect(body.invoices[0]).toMatchObject({ docCod: 'I7', temDi: true });
-            expect(buscarInvoices).toHaveBeenCalledWith('510', 2);
+            expect(buscarInvoices).toHaveBeenCalledWith('510', 2, undefined);
+
+            // adtoDocCod (opcional) é repassado → exclui o próprio adto do jaAlocado.
+            await fetch(`${server.url}/permutas/invoices/buscar?priCod=510&filCod=2&adtoDocCod=A9`);
+            expect(buscarInvoices).toHaveBeenCalledWith('510', 2, 'A9');
 
             // sem filCod → 400 (priCod sozinho é insuficiente).
             const bad = await fetch(`${server.url}/permutas/invoices/buscar?priCod=510`);

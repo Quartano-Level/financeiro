@@ -1,5 +1,26 @@
 # Columbia Financeiro — Changelog
 
+## v0.4.0 (2026-06-22) — permutas: distribuição greedy Simples + refinos de cliente-filtro/painel
+
+- feat(permutas): distribuição greedy N:1 com teto na permuta Simples (auto-casamento parcial, READ-ONLY).
+  - A aba Simples (1 invoice : N adiantamentos) deixa de usar o valor cheio de cada adto: distribui o
+    em-aberto VIVO da invoice (`getDetalheTitulos.valorAberto`/taxa, novo `Invoice.valorAbertoNegociado`)
+    entre os adtos casados — maior saldo primeiro, desempate por aging, com saldo residual quando sobra
+    (caso 1408: "usa 260.064" em vez de 743.040, 11566 com residual 408.672).
+  - Variação cambial recalculada sobre o valor PARCIAL. `GestaoPermutasService` expõe `saldoRestante` no
+    casamento Simples; frontend ganha a coluna "Saldo restante". Ontologia v0.2.9 (ADR-0010). Baixa real
+    em `fin010` segue Fase 3.
+- feat(permutas): cliente-filtro roteia automaticamente ao adicionar E ao remover.
+  - Adicionar/remover um importador dispara a ingestão (mesmo compute do cron) para alinhar o painel na
+    hora. No remover, o item só sai da lista após a re-ingestão concluir (spinner até o fim); se a
+    ingestão falhar, o filtro é mantido (cadastro coerente com o painel). 409/429 tratados.
+- feat(permutas): transparência na alocação manual e no painel.
+  - Modal de alocação (múltiplas/cross-over/cross-process) mostra a CONTA do juros/desconto
+    (`valor × (taxaAdto − taxaInvoice)`) e o saldo DISPONÍVEL da invoice compartilhada (líquido das
+    alocações de outros adiantamentos, novo `InvoiceBuscada.jaAlocado`).
+  - Painel: badge "fonte: banco" (sem "local") + carimbo "última ingestão" (último run `kind='ingest'`
+    bem-sucedido) em horário de Brasília.
+
 ## v0.3.0 (2026-06-20) — permutas: ingestão manual de dados (Frente I)
 
 - feat(permutas): botão "Ingestão de dados" no painel + modal que roda a pipeline sob demanda.

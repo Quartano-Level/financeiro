@@ -1,10 +1,10 @@
 {
   "_meta": {
-    "generated": "2026-06-21",
-    "version": "0.2.8",
-    "note": "Coverage of ontology entities/actions by implemented code. SYNC 2026-06-21 (commit df90fa6, deployed): the 5 permuta features of this session are live in src/. Previous stamp (v0.2.2) carried ALL artifacts as 'planned' with 0% coverage ('ontology-only proposal') — that is now STALE. Fatia 1 (read/elegibilidade/variação/aging/painel) + the manual N:M allocation (Permuta) are implemented. The ONLY remaining 'planned' work in Frente I is the write-back to fin010 (ação reconciliarPermuta, Fase 3 — risco arquitetural #1): the Permuta entity is 'partial' and reconciliarPermuta is 'planned'. NEW entities Permuta (partial) + ClienteFiltro (implemented); NEW state PERMUTA_MANUAL; derived tipoPermuta (presentation). Gap gate-3-pago-via-detail RESOLVED in impl (getDetalheTitulos).",
+    "generated": "2026-06-22",
+    "version": "0.2.9",
+    "note": "Coverage of ontology entities/actions by implemented code. v0.2.9 (2026-06-22, ADR-0010): NEW business-rule distribuicao-simples-greedy (auto-casamento Simples N:1 = greedy + teto da invoice + parcial; fixes the 1408 super-permuta). business_rules 4→5; first business-rule WITH canonical tests (with_tests 0→1). Invoice gains valorAbertoNegociado (cap). STILL READ-ONLY on Conexos; the only remaining 'planned' work in Frente I is the write-back to fin010 (ação reconciliarPermuta, Fase 3 — risco arquitetural #1): the Permuta entity is 'partial' and reconciliarPermuta is 'planned'. Prior v0.2.8 SYNC (commit df90fa6, deployed): the 5 permuta features live in src/ (ADR-0006..0009).",
     "upstream": "../../produtizacao/nf-projects",
-    "last_feature": "permutas-multiplas (df90fa6, deployed 2026-06-20/21): ADR-0006 ingestão manual + pagamento parcial + ADR-0007 cliente-filtro/permuta-manual + ADR-0008 alocação N:M cross-process + ADR-0009 tipos de permuta (abas). Ontology synced to match deployed code."
+    "last_feature": "permutas-distribuicao-simples-greedy (ADR-0010, branch feat/permutas-multiplas, green): greedy N:1 distribution with teto (invoice live em-aberto) + partial auto-casamento + variação on partial amount. READ-ONLY on Conexos. Prior: permutas-multiplas (df90fa6, ADR-0006..0009)."
   },
   "summary": {
     "entities_total": 7,
@@ -21,9 +21,9 @@
     "actions_partial": 0,
     "actions_planned": 1,
     "actions_coverage_pct": 88,
-    "business_rules_total": 4,
-    "business_rules_implemented": 4,
-    "business_rules_with_tests": 0,
+    "business_rules_total": 5,
+    "business_rules_implemented": 5,
+    "business_rules_with_tests": 1,
     "state_machines_total": 1,
     "state_machines_partial": 1,
     "integrations_total": 1,
@@ -44,7 +44,8 @@
     "elegibilidade-permuta": { "invariant": "I3", "status": "implemented", "has_test": false, "resolved_by": ["P0-6", "P0-5", "gate-3-pago-via-detail"] },
     "di-xor-duimp": { "invariant": "I2", "status": "implemented", "has_test": false, "resolved_by": ["P0-4 (dataBase read + XOR confirmed in real data)"] },
     "classificacao-juros-desconto": { "status": "implemented", "has_test": false, "resolved_by": ["P0-1", "P1-2"] },
-    "aging-anchor": { "status": "implemented", "has_test": false, "resolved_by": ["P0-8", "P0-4 (dataBase wire-field read)"] }
+    "aging-anchor": { "status": "implemented", "has_test": false, "resolved_by": ["P0-8", "P0-4 (dataBase wire-field read)"] },
+    "distribuicao-simples-greedy": { "invariant": "I-Permuta-2", "status": "implemented", "has_test": true, "resolved_by": ["ADR-0010 (greedy N:1 com teto; caso 1408 ZNSHINE)"], "open_gap": ["residual grande num único adto → validar se vira revisão manual"] }
   },
   "health_flags": {
     "p0_inbox_open": 0,
@@ -72,7 +73,8 @@
     "tooling_bootstrapped": true,
     "watchlist": [
       "Fase 3 — ação reconciliarPermuta (write-back fin010) sobre as alocações permuta_alocacao; exige caminho de escrita no ERP (risco arquitetural #1, O3). Permuta segue 'partial' até lá.",
-      "Cobertura de testes — as 4 business-rules seguem sem teste canônico (has_test=false); não-bloqueante, follow-up de testabilidade.",
+      "ADR-0010 ponto aberto — residual grande num único adto no auto-casamento Simples (1408: 408.672 sobra no 11566); validar com o time se um residual muito grande deveria virar caso de revisão manual em vez de auto-distribuído.",
+      "Cobertura de testes — 4 das 5 business-rules seguem sem teste canônico (has_test=false); distribuicao-simples-greedy é a primeira com testes; não-bloqueante, follow-up de testabilidade.",
       "Arquivos de ação dedicados p/ alocarPermuta/buscarInvoiceCrossProcess/reconciliarPermuta — hoje documentados na entity Permuta; criar actions/permuta/*.md numa curadoria futura se a granularidade ajudar."
     ]
   }

@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "generated": "2026-06-21",
-    "version": "0.2.8",
-    "note": "Financeiro ontology — Frente I (Permutas). SYNC 2026-06-21 (commit df90fa6, deployed): the 5 permuta features of this session (ADR-0006 ingestão manual; pagamento parcial; ADR-0007 cliente-filtro + permuta-manual; ADR-0008 alocação N:M cross-process; ADR-0009 tipos de permuta/abas) are now IMPLEMENTED in src/ and mapped below. Previous stamp (v0.2.2, 2026-06-18) said 'no src/ implementation' — that is now stale: Fatia 1 read/elegibilidade + the manual N:M allocation are live. NEW entities: Permuta (consumada/alocação — partial: alocação implementada, write-back fin010 = Fase 3 = planned) and ClienteFiltro (implemented). NEW state PERMUTA_MANUAL in the elegibilidade state-machine; derived tipoPermuta (presentation, not a state). Risco arquitetural #1 (write-back fin010 / ação reconciliarPermuta) remains PLANNED (Fase 3). Open gap gate-3-pago-via-detail RESOLVED in impl (detail endpoint getDetalheTitulos reads mnyTitValor/mnyTitAberto).",
+    "generated": "2026-06-22",
+    "version": "0.2.9",
+    "note": "Financeiro ontology — Frente I (Permutas). v0.2.9 (2026-06-22, ADR-0010): the automatic 'Simples' casamento (1 invoice : N adiantamentos) now does a GREEDY N:1 distribution with TETO (cap) and is PARTIAL — fixes the 1408 super-permuta (was 'usa 743.040', now 'usa 260.064'). Invoice gains valorAbertoNegociado (live em-aberto / taxaInvoice = the cap, fallback valorMoedaNegociada); the auto-casamento keeps residual saldo open (like the manual allocation) and recomputes the variação cambial on the PARTIAL amount. STILL READ-ONLY on Conexos (only our snapshot permuta_casamento). New business-rule distribuicao-simples-greedy. Prior v0.2.8 SYNC (commit df90fa6, deployed): the 5 permuta features (ADR-0006 ingestão manual; pagamento parcial; ADR-0007 cliente-filtro + permuta-manual; ADR-0008 alocação N:M cross-process; ADR-0009 tipos de permuta/abas) IMPLEMENTED in src/. NEW entities: Permuta (consumada/alocação — partial) and ClienteFiltro (implemented). NEW state PERMUTA_MANUAL; derived tipoPermuta (presentation). Risco arquitetural #1 (write-back fin010 / ação reconciliarPermuta) remains PLANNED (Fase 3).",
     "upstream": "../../produtizacao/nf-projects",
     "status_legend": {
       "implemented": "code in src/ implements the entity/action (runs in the current Express/Render stack; DDD service/repo chain)",
@@ -31,11 +31,14 @@
       "status": "implemented",
       "impl_files": [
         "src/backend/domain/client/ConexosClient.ts",
+        "src/backend/domain/interface/permutas/Invoice.ts",
         "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
         "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
+        "src/backend/domain/service/permutas/IngestaoPermutasService.ts",
         "src/backend/domain/repository/permutas/PermutaRelationalRepository.ts",
         "src/backend/migrations/0009_invoice_taxa.sql"
-      ]
+      ],
+      "note": "ADR-0010: nova propriedade valorAbertoNegociado (mnyTitAberto / taxaInvoice via getDetalheTitulos) = TETO do lado-crédito no auto-casamento Simples; fallback valorMoedaNegociada."
     },
     "DeclaracaoImportacao": {
       "file": "entities/declaracao-importacao.md",
@@ -71,11 +74,12 @@
         "src/backend/domain/repository/permutas/PermutaRelationalRepository.ts",
         "src/backend/domain/repository/permutas/PermutaSnapshotRepository.ts",
         "src/backend/domain/interface/permutas/PermutaCandidata.ts",
+        "src/backend/domain/interface/permutas/Gestao.ts",
         "src/backend/migrations/0012_estado_permuta_manual.sql",
         "src/frontend/app/permutas/page.tsx"
       ],
       "resolved_by": ["P0-6", "P0-8", "P0-5", "P0-4 (aging column read; probe 2026-06-18)"],
-      "note": "Estados: descoberta|elegivel|casamento-manual|permuta-manual|bloqueada (migration 0012). Classificação derivada tipoPermuta (simples/multiplas/cross-over/cross-process, ADR-0009) calculada em GestaoPermutasService — não persiste."
+      "note": "Estados: descoberta|elegivel|casamento-manual|permuta-manual|bloqueada (migration 0012). Classificação derivada tipoPermuta (simples/multiplas/cross-over/cross-process, ADR-0009) calculada em GestaoPermutasService — não persiste. ADR-0010: auto-casamento Simples (toCasamentoRows) ficou PARCIAL — distribuição greedy N:1 com teto da invoice; expõe saldoRestante (CasamentoAdiantamento)."
     },
     "Permuta": {
       "file": "entities/permuta.md",
@@ -120,7 +124,8 @@
     "elegibilidade-permuta": { "file": "business-rules/elegibilidade-permuta.md", "invariant": "I3", "status": "implemented", "has_canonical_test": false, "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts"], "resolved_by": ["P0-6", "P0-5", "gate-3-pago-via-detail"] },
     "di-xor-duimp": { "file": "business-rules/di-xor-duimp.md", "invariant": "I2", "status": "implemented", "has_canonical_test": false, "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts"], "resolved_by": ["P0-4 (dataBase read + XOR confirmed in real data; probe 2026-06-18)"] },
     "classificacao-juros-desconto": { "file": "business-rules/classificacao-juros-desconto.md", "status": "implemented", "has_canonical_test": false, "impl_files": ["src/backend/domain/service/permutas/VariacaoCambialPermutaService.ts"], "resolved_by": ["P0-1", "P1-2"] },
-    "aging-anchor": { "file": "business-rules/aging-anchor.md", "status": "implemented", "has_canonical_test": false, "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts"], "resolved_by": ["P0-8", "P0-4 (dataBase read; probe 2026-06-18)"] }
+    "aging-anchor": { "file": "business-rules/aging-anchor.md", "status": "implemented", "has_canonical_test": false, "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts"], "resolved_by": ["P0-8", "P0-4 (dataBase read; probe 2026-06-18)"] },
+    "distribuicao-simples-greedy": { "file": "business-rules/distribuicao-simples-greedy.md", "invariant": "I-Permuta-2", "status": "implemented", "has_canonical_test": true, "impl_files": ["src/backend/domain/interface/permutas/Invoice.ts", "src/backend/domain/interface/permutas/Gestao.ts", "src/backend/domain/service/permutas/EleicaoPermutasService.ts", "src/backend/domain/service/permutas/IngestaoPermutasService.ts", "src/backend/domain/service/permutas/GestaoPermutasService.ts", "src/frontend/app/permutas/page.tsx"], "resolved_by": ["ADR-0010 (greedy N:1 com teto; caso 1408 ZNSHINE)"], "open_gap": ["residual grande num único adto → validar com o time se vira revisão manual (ADR-0010)"], "note": "Auto-casamento Simples N:1 = greedy (maior saldo primeiro; desempate aging) + teto da invoice (valorAbertoNegociado) + parcial (residual em aberto). READ-ONLY no ERP." }
   },
   "state_machines": {
     "elegibilidade-permuta-candidata": {

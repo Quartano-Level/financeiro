@@ -29,9 +29,10 @@ relationships:
   - "Permuta N—1 Invoice (lado-crédito, via invoiceDocCod — pode ser de OUTRO processo, cross-process)"
   - "Permuta 1—1 VariacaoCambial (derivada pela taxa da invoice sobre o valor PARCIAL alocado)"
   - "Permuta *—1 PermutaCandidata (a candidata em permuta-manual/casamento-manual é a origem da alocação)"
-last_review: 2026-06-21
+last_review: 2026-06-22
 universality_evidence:
   - "ADR-0008 — alocação manual N:M cross-process (a Permuta consumada nasce como ALOCAÇÃO)"
+  - "ADR-0010 — o auto-casamento Simples também ficou PARCIAL (mesma semântica de teto/residual)"
   - "ADR-0004 — a Permuta consumada já era backlog explícito da Fatia 2 (Etapa 6 / BAIXAS PERMUTAS)"
   - "docs-contexto/03_ontologia_financeiro.md §2 Frente I — reconciliação PROFORMA × INVOICE"
   - "ontology/glossary.md — 'Permuta' (reconciliação adiantamento ↔ invoice)"
@@ -67,6 +68,12 @@ Uma `Permuta` é um **link adto↔invoice com valor parcial** em moeda negociada
 reconciliação é **N:M e incremental**: um adiantamento pode abater parte de várias
 invoices; uma invoice pode ser composta por vários adiantamentos. O saldo pode ficar
 **parcialmente em aberto** (alocação incremental — não exige fechamento exato).
+
+> **Nota (ADR-0010):** a semântica **parcial + teto da invoice** deixou de ser exclusiva do fluxo
+> manual (`permuta_alocacao`). O **auto-casamento Simples** (1 invoice : N adtos, `permuta_casamento`,
+> recomputado por run) passou a distribuir o em-aberto vivo da invoice de forma **greedy** com teto e a
+> deixar saldo residual em aberto — ver `entities/permuta-candidata.md` e
+> `business-rules/distribuicao-simples-greedy`. Ambos os fluxos seguem **READ-ONLY** no ERP.
 
 ## Propriedades
 

@@ -38,10 +38,13 @@ const clienteFiltroBodySchema = z.object({
     importador: z.string().trim().min(1).optional(),
 });
 
-/** Zod no boundary — query `?priCod=&filCod=` da busca de invoice (escopada à filial). */
+/** Zod no boundary — query `?priCod=&filCod=&adtoDocCod=` da busca de invoice
+ * (escopada à filial). `adtoDocCod` (opcional) exclui o próprio adiantamento do
+ * `jaAlocado` de cada invoice → disponível real da invoice compartilhada (N:M). */
 const buscarInvoicesQuerySchema = z.object({
     priCod: z.string().trim().min(1),
     filCod: z.coerce.number().int().positive(),
+    adtoDocCod: z.string().trim().min(1).optional(),
 });
 
 /** Zod no boundary — corpo do POST /alocacoes (alocação manual N:M). */
@@ -215,7 +218,11 @@ router.get(
             return;
         }
         const service = container.resolve(AlocacaoPermutasService);
-        const invoices = await service.buscarInvoices(parsed.data.priCod, parsed.data.filCod);
+        const invoices = await service.buscarInvoices(
+            parsed.data.priCod,
+            parsed.data.filCod,
+            parsed.data.adtoDocCod,
+        );
         res.json({ invoices });
     }),
 );

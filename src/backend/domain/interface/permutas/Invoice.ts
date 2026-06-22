@@ -34,4 +34,12 @@ export default interface Invoice {
     moedaNegociada?: string;
     /** Taxa de câmbio negociada do título (`com308` `titFltTaxaMneg`). */
     taxa?: number;
+    /**
+     * Valor EM ABERTO vivo da invoice em moeda NEGOCIADA (`mnyTitAberto` do
+     * detalhe / `taxa`). É o teto da distribuição automática (permuta Simples):
+     * quanto a invoice ainda absorve, já descontadas baixas/permutas feitas por
+     * fora. Opcional — ausente se o detalhe/taxa não estiverem disponíveis (a
+     * distribuição cai no `valorMoedaNegociada`). Read-only.
+     */
+    valorAbertoNegociado?: number;
 }

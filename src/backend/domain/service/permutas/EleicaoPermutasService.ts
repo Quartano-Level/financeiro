@@ -674,7 +674,8 @@ export default class EleicaoPermutasService {
             }
             if (
                 (enriched.valorMoedaNegociadaInvoice !== undefined ||
-                    enriched.moedaNegociadaInvoice !== undefined) &&
+                    enriched.moedaNegociadaInvoice !== undefined ||
+                    enriched.valorAbertoNegociadoInvoice !== undefined) &&
                 candidata.invoiceCasada
             ) {
                 candidata.invoiceCasada = {
@@ -684,6 +685,10 @@ export default class EleicaoPermutasService {
                         : {}),
                     ...(enriched.moedaNegociadaInvoice !== undefined
                         ? { moedaNegociada: enriched.moedaNegociadaInvoice }
+                        : {}),
+                    // Teto vivo da invoice p/ a distribuição Simples (greedy N:1).
+                    ...(enriched.valorAbertoNegociadoInvoice !== undefined
+                        ? { valorAbertoNegociado: enriched.valorAbertoNegociadoInvoice }
                         : {}),
                 };
             }
@@ -732,15 +737,27 @@ export default class EleicaoPermutasService {
         valorMoedaNegociadaInvoice?: number;
         moedaNegociadaAdto?: string;
         moedaNegociadaInvoice?: string;
+        valorAbertoNegociadoInvoice?: number;
     }> => {
-        const [titAdto, titInv] = await Promise.all([
+        // `getDetalheTitulos` da invoice traz o EM ABERTO vivo (mnyTitAberto, BRL)
+        // — teto da distribuição Simples. `.catch` → undefined (falha de detalhe
+        // não trava o casamento; a distribuição cai no valorMoedaNegociada).
+        const [titAdto, titInv, detInv] = await Promise.all([
             this.conexosClient.listTitulosAPagar({ docCod: adiantamento.docCod, filCod }),
             this.conexosClient.listTitulosAPagar({ docCod: invoice.docCod, filCod }),
+            this.conexosClient
+                .getDetalheTitulos({ docCod: invoice.docCod, filCod })
+                .catch(() => undefined),
         ]);
         const taxaAdiantamento = titAdto[0]?.taxa;
         const taxaInvoice = titInv[0]?.taxa;
         const valorMoedaNegociadaAdto = somaValorNegociado(titAdto);
         const valorMoedaNegociadaInvoice = somaValorNegociado(titInv);
+        // Em aberto vivo da invoice em moeda negociada (BRL / taxa).
+        const valorAbertoNegociadoInvoice =
+            detInv?.valorAberto !== undefined && taxaInvoice !== undefined && taxaInvoice > 0
+                ? detInv.valorAberto / taxaInvoice
+                : undefined;
         // Moeda NEGOCIADA do título (220=USD / "DOLAR DOS EUA"), distinta da
         // moeda do DOCUMENTO (BRL). Rotula `valorMoedaNegociada` na tela Gestão.
         const moedaNegociadaAdto = siglaMoedaNegociada(titAdto[0]);
@@ -760,11 +777,13 @@ export default class EleicaoPermutasService {
             valorMoedaNegociadaInvoice?: number;
             moedaNegociadaAdto?: string;
             moedaNegociadaInvoice?: string;
+            valorAbertoNegociadoInvoice?: number;
         } = {
             ...(valorMoedaNegociadaAdto !== undefined ? { valorMoedaNegociadaAdto } : {}),
             ...(valorMoedaNegociadaInvoice !== undefined ? { valorMoedaNegociadaInvoice } : {}),
             ...(moedaNegociadaAdto !== undefined ? { moedaNegociadaAdto } : {}),
             ...(moedaNegociadaInvoice !== undefined ? { moedaNegociadaInvoice } : {}),
+            ...(valorAbertoNegociadoInvoice !== undefined ? { valorAbertoNegociadoInvoice } : {}),
         };
         if (
             taxaAdiantamento === undefined ||

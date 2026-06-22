@@ -29,6 +29,16 @@ describe('lib/api — alocação manual', () => {
     expect(fetchMock.mock.calls[0][0]).toContain('/permutas/invoices/buscar?priCod=510&filCod=2')
   })
 
+  it('buscarInvoicesPorProcesso repassa adtoDocCod (exclui o próprio adto do jaAlocado)', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ invoices: [] }),
+    })
+    const { buscarInvoicesPorProcesso } = await import('@/lib/api')
+    await buscarInvoicesPorProcesso('510', 2, 'A9')
+    expect(fetchMock.mock.calls[0][0]).toContain('adtoDocCod=A9')
+  })
+
   it('criarAlocacao faz POST com o payload', async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
     const { criarAlocacao } = await import('@/lib/api')

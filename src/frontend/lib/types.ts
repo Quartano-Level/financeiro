@@ -66,6 +66,9 @@ export interface InvoiceBuscada {
   /** O processo da invoice tem D.I/DUIMP? (a alocação exige `true`). */
   temDi: boolean
   dataBase?: string
+  /** Σ já alocado nesta invoice por OUTROS adiantamentos (N:M). Disponível =
+   * `valorMoedaNegociada − jaAlocado`. Default 0. */
+  jaAlocado?: number
 }
 
 /** Uma alocação manual adto↔invoice (Fase 2), exibida na linha do permuta-manual. */
@@ -76,6 +79,10 @@ export interface AlocacaoDetalhe {
   moeda?: string
   variacaoClassificacao?: string
   variacaoResultado?: number
+  /** Taxas do adiantamento e da invoice — montam a conta do juros/desconto na
+   * tela: `valorAlocado × (taxaAdiantamento − taxaInvoice) = resultado`. */
+  taxaAdiantamento?: number
+  taxaInvoice?: number
   criadoPor?: string
   criadoEm: string
 }
@@ -160,6 +167,10 @@ export interface CasamentoAdiantamento {
   referencia: string
   valorASerUsado: number
   moeda: string
+  /** Saldo restante do adiantamento (moeda negociada) após a distribuição greedy:
+   * `valorPermutar/taxa − valorASerUsado`. Quando o maior adto cobre a invoice
+   * sozinho, o restante fica em aberto. Opcional. */
+  saldoRestante?: number
   /** Status do processamento do analista, quando registrado no banco. */
   processamentoStatus?: ProcessamentoStatus
 }

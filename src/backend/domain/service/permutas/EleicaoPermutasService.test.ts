@@ -295,6 +295,90 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
         expect(c.invoiceCasada?.moedaNegociada).toBe('USD');
     });
 
+    it('hidrata valorAbertoNegociado na invoice casável (em-aberto vivo / taxa)', async () => {
+        // Detalhe da invoice traz valorAberto 5000 BRL; taxa negociada 5.0 → 1000 USD
+        // (teto vivo da distribuição Simples).
+        const conexos = buildConexos({
+            listAdiantamentosProforma: jest
+                .fn()
+                .mockResolvedValue({ adiantamentos: [adiantamento], capHit: false }),
+            listFinanceiroAPagar: jest
+                .fn()
+                .mockResolvedValue({ proformas: [], invoices: [invoice] }),
+            listTitulosAPagar: jest.fn().mockResolvedValue([
+                {
+                    titCod: 'T1',
+                    valorNegociado: 1100,
+                    taxa: 5.0,
+                    moedaCod: 220,
+                    moedaNome: 'DOLAR DOS EUA',
+                },
+            ]),
+            getDetalheTitulos: jest
+                .fn()
+                .mockResolvedValue({ valorPermutar: 1000, pago: true, valorAberto: 5000 }),
+        } as Partial<jest.Mocked<ConexosClient>>);
+        const repo = buildRepo();
+        const { logService } = buildLogService();
+        const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } = realServices();
+        const service = new EleicaoPermutasService(
+            conexos,
+            elegibilidade,
+            variacao,
+            aging,
+            repo as unknown as PermutaSnapshotRepository,
+            logService,
+            concurrency,
+            db,
+            clienteFiltro,
+        );
+
+        const result = await service.executar({ triggeredBy: 'user-123' });
+        const c = result.candidatas[0];
+        expect(c.estadoElegibilidade).toBe(ESTADO_ELEGIBILIDADE.ELEGIVEL);
+        expect(c.invoiceCasada?.valorAbertoNegociado).toBeCloseTo(1000, 4);
+    });
+
+    it('sem valorAberto no detalhe → invoice fica SEM valorAbertoNegociado (fallback ao negociado)', async () => {
+        // getDetalheTitulos default (sem valorAberto) → distribuição cai no valorMoedaNegociada.
+        const conexos = buildConexos({
+            listAdiantamentosProforma: jest
+                .fn()
+                .mockResolvedValue({ adiantamentos: [adiantamento], capHit: false }),
+            listFinanceiroAPagar: jest
+                .fn()
+                .mockResolvedValue({ proformas: [], invoices: [invoice] }),
+            listTitulosAPagar: jest.fn().mockResolvedValue([
+                {
+                    titCod: 'T1',
+                    valorNegociado: 1100,
+                    taxa: 5.0,
+                    moedaCod: 220,
+                    moedaNome: 'DOLAR DOS EUA',
+                },
+            ]),
+        } as Partial<jest.Mocked<ConexosClient>>);
+        const repo = buildRepo();
+        const { logService } = buildLogService();
+        const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } = realServices();
+        const service = new EleicaoPermutasService(
+            conexos,
+            elegibilidade,
+            variacao,
+            aging,
+            repo as unknown as PermutaSnapshotRepository,
+            logService,
+            concurrency,
+            db,
+            clienteFiltro,
+        );
+
+        const result = await service.executar({ triggeredBy: 'user-123' });
+        const c = result.candidatas[0];
+        expect(c.invoiceCasada?.valorAbertoNegociado).toBeUndefined();
+        expect(c.invoiceCasada?.valorMoedaNegociada).toBe(1100);
+    });
+
     it('is idempotent: two runs produce the same candidate set', async () => {
         const conexos = buildConexos({
             listAdiantamentosProforma: jest

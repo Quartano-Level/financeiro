@@ -19,17 +19,19 @@ properties:
   - moeda
   - pago
   - exportador
+  - valorAbertoNegociado
 relationships:
   - "Invoice N—1 Adiantamento (mesmo priCod; casamento via casarInvoice)"
   - "Invoice 1—1 PermutaCandidata (lado-crédito da candidata, quando casada)"
   - "Invoice 1—N Permuta (lado-crédito da alocação; pode ser cross-process, ADR-0008)"
-last_review: 2026-06-21
+last_review: 2026-06-22
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente I (adiantamento ↔ invoice)"
   - "docs-contexto/03_ontologia_financeiro.md §2 Frente I"
   - "ontology/glossary.md — 'Invoice / Fatura'"
   - "Columbia (priCod=1153): com298 tpdCod=128"
   - "Conceito universal de comex: fatura definitiva do exportador (lado-crédito)"
+  - "ADR-0010 — valorAbertoNegociado é o TETO do lado-crédito no auto-casamento Simples"
 ---
 
 # Invoice (Fatura)
@@ -55,6 +57,7 @@ processo — não há baixa/reconciliação.
 | `moeda` | string | sim | `com298.moeEspSigla` | Moeda. |
 | `pago` | boolean | não | derivado | Estado de pagamento (informativo nesta fatia). |
 | `exportador` | string? | não | `com298.dpeNomPessoa` | Exibição. |
+| `valorAbertoNegociado` | number? | não | `getDetalheTitulos` → `mnyTitAberto / taxaInvoice` | **Em-aberto vivo** em moeda negociada (USD) — o **TETO** do lado-crédito no auto-casamento Simples (ADR-0010). Fallback `valorMoedaNegociada`; ausente ⇒ sem teto (comportamento legado). |
 
 ## Discriminador de tipo (INVOICE)
 
@@ -71,6 +74,14 @@ processo — não há baixa/reconciliação.
 ## Fonte de leitura (Conexos)
 
 - `ConexosClient.listFinanceiroAPagar({ docTip: 'INVOICE', priCods: [proc], filCod })` → `tpdCod=128`, FINALIZADO.
+- `getDetalheTitulos` → `mnyTitAberto` (BRL) ÷ `taxaInvoice` = `valorAbertoNegociado` (em-aberto vivo,
+  hidratado na eleição por `EleicaoPermutasService.computeVariacao`).
+
+## Teto do auto-casamento Simples (ADR-0010)
+
+No casamento automático **1 invoice : N adiantamentos** (`tipoPermuta = simples`), `valorAbertoNegociado`
+é o **teto** distribuído entre os adiantamentos casados — Σ valor usado **≤** em-aberto vivo da invoice
+(invariante `I-Permuta-2` aplicada ao auto-casamento). Ver `business-rules/distribuicao-simples-greedy`.
 
 ## Fora de escopo (Fatia 1)
 
