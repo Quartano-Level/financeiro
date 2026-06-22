@@ -10,6 +10,13 @@
     numa rodada + rerun-trailing (inclui a mudança de quem entrou no meio), em vez de disparar fan-out
     Conexos redundante. Mantém SÍNCRONO (preserva a UX do remover). Contenção cross-instância (cron) segue
     `IngestLockBusyError` → 409. ADR-0012. READ-ONLY no Conexos.
+- chore(test): higiene de teste (Lote C do Regis — test-only, sem bump).
+  - testability-1: sandbox do `EnvironmentProvider.test` — mocka o `dotenv` (config no-op) pra o teste
+    não depender do `.env` do dev (antes `CONEXOS_FIL_COD` local contaminava o cenário "ausente" e a
+    suíte tinha 1 falha ambiental). Suíte BE agora 100% verde.
+  - testability-3: `collectCoverageFrom` no frontend — passa a medir TODO o código-fonte (antes ~10 de
+    34 arquivos → número "Potemkin" ~82%). Baseline real ~26.8% lines; floors do `coverageThreshold`
+    recalibrados logo abaixo do real (pega regressão, CI verde). Subir conforme testes forem adicionados.
 
 ## v0.4.1 (2026-06-22) — hardening de API (Lote A dos P0 do Regis-Review)
 
