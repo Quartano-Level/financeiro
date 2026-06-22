@@ -1,5 +1,19 @@
 # Columbia Financeiro — Changelog
 
+## v0.4.1 (2026-06-22) — hardening de API (Lote A dos P0 do Regis-Review)
+
+- fix(security): RBAC server-side nas rotas de mutação de permutas (security-1).
+  - Middleware `requireRole('admin')` (`http/auth.ts`) gateia `POST /eleicao`, `/ingestao`,
+    `POST/DELETE /cliente-filtro`, `POST/DELETE /alocacoes`, `POST /processar`; leituras seguem abertas a
+    qualquer usuário autenticado. Role vem do JWT (`app_user.role`, default `admin`). 401 sem sessão, 403
+    sem role. ADR-0011. Tactic Bass: Authorize Actors.
+- fix(security): redação de campos sensíveis no request/response logger (security-3).
+  - `redactBody()` (`http/redact.ts`) mascara password/token/authorization/secret/api_key antes do
+    `JSON.stringify` — para de vazar a senha do `POST /auth/login` no stdout/log drains. Tactic Bass: Limit Access.
+- nota: o timeout HTTP do Conexos (performance-2) já existia (`services/conexos.ts` `timeout: 40000`) — finding
+  rebaixado (medira o wrapper DDD). Demais P0 (auto-ingest coalescing, sandbox de teste, coverage FE,
+  isolamento Supabase, rollback, rotação de segredos) → Lotes B/C e ops.
+
 ## v0.4.0 (2026-06-22) — permutas: distribuição greedy Simples + refinos de cliente-filtro/painel
 
 - feat(permutas): distribuição greedy N:1 com teto na permuta Simples (auto-casamento parcial, READ-ONLY).

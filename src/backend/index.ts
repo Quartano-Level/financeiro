@@ -7,6 +7,7 @@ import { loadAuthEnv } from './http/authEnv.js';
 import { buildCorsOptions } from './http/cors.js';
 import { errorMiddleware } from './http/errorMiddleware.js';
 import { globalLimiter, heavyRouteLimiter } from './http/rateLimit.js';
+import { redactBody } from './http/redact.js';
 import { requestIdMiddleware } from './middleware/requestId.js';
 import authRouter from './routes/auth.js';
 import conexosRouter from './routes/conexos.js';
@@ -42,13 +43,14 @@ app.use((req: Request, res: Response, next: NextFunction) => {
         `[REQ] ${requestId} ${method} ${url}${Object.keys(query).length ? ` query=${JSON.stringify(query)}` : ''}`,
     );
     if (body && Object.keys(body).length)
-        console.log(`[REQ] ${requestId} body=${JSON.stringify(body)}`);
+        console.log(`[REQ] ${requestId} body=${JSON.stringify(redactBody(body))}`);
 
     const origJson = res.json.bind(res);
     res.json = (data: any) => {
         const ms = Date.now() - start;
         console.log(`[RES] ${requestId} ${method} ${url} → ${res.statusCode} (${ms}ms)`);
-        if (res.statusCode >= 400) console.log(`[RES] ${requestId} body=${JSON.stringify(data)}`);
+        if (res.statusCode >= 400)
+            console.log(`[RES] ${requestId} body=${JSON.stringify(redactBody(data))}`);
         return origJson(data);
     };
 

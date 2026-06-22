@@ -16,6 +16,7 @@ import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasServ
 import IngestaoPermutasService from '../domain/service/permutas/IngestaoPermutasService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
+import { requireRole } from '../http/auth.js';
 
 /** Zod no boundary — corpo do POST /processar (Rule: validar inputs externos). */
 const processarBodySchema = z.object({
@@ -72,6 +73,7 @@ const router = Router();
 // middleware global + heavyRouteLimiter (fan-out Conexos pesado).
 router.post(
     '/eleicao',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(EleicaoPermutasService);
@@ -103,6 +105,7 @@ router.post(
 // uma ingestão rodando (advisory lock), responde 409 sem disparar fan-out novo.
 router.post(
     '/ingestao',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(IngestaoPermutasService);
@@ -163,6 +166,7 @@ router.get(
 // UPSERT por pesCod; `criado_por` = username autenticado (auditoria O6).
 router.post(
     '/cliente-filtro',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = clienteFiltroBodySchema.safeParse(req.body ?? {});
@@ -184,6 +188,7 @@ router.post(
 // DELETE /permutas/cliente-filtro/:pesCod — remove um cliente-filtro.
 router.delete(
     '/cliente-filtro/:pesCod',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const pesCod = String(req.params.pesCod);
@@ -231,6 +236,7 @@ router.get(
 // manual N:M cross-process (rascunho). 422 quando excede o saldo de algum lado.
 router.post(
     '/adiantamentos/:docCod/alocacoes',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = alocacaoBodySchema.safeParse(req.body ?? {});
@@ -272,6 +278,7 @@ router.post(
 // DELETE /permutas/adiantamentos/:docCod/alocacoes/:invoiceDocCod — remove alocação.
 router.delete(
     '/adiantamentos/:docCod/alocacoes/:invoiceDocCod',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(AlocacaoPermutasService);
@@ -300,6 +307,7 @@ router.get(
 // (botão "Processar"). UPSERT status='processado'; sobrevive à re-ingestão.
 router.post(
     '/adiantamentos/:docCod/processar',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = processarBodySchema.safeParse(req.body ?? {});
