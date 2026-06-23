@@ -175,6 +175,10 @@ export default class ReconciliacaoPermutaService {
         const invoiceDocCod = Number(aloc.invoiceDocCod);
         const adiantamentoDocCod = Number(aloc.adiantamentoDocCod);
 
+        // Persiste o borCod ANTES dos POSTs do handshake (Regis F-availability-1/3): se o
+        // processo morrer no meio, a trilha aponta o borderô a conciliar (não fica órfão sem rastro).
+        await this.execucaoRepository.setBorCod(key, borCod);
+
         // Passo 2 — valida a invoice; o ERP devolve o valor a baixar (em-aberto vivo).
         const val2 = await this.conexosClient.validarTituloBaixa({
             filCod,
@@ -182,6 +186,7 @@ export default class ReconciliacaoPermutaService {
             invoiceDocCod,
             titCod: 1,
         });
+        this.assertNoErpError(val2, 'tituloBaixa');
         const bxaMnyValor = val2.responseData?.bxaMnyValor;
         if (bxaMnyValor === undefined || !(bxaMnyValor > 0)) {
             // Em-aberto zero/ausente: nada a baixar (provável já baixado no ERP). Aborta —
@@ -191,6 +196,21 @@ export default class ReconciliacaoPermutaService {
             );
         }
 
+        // I-Write-1 (anti-drift, Regis F-security-4/F-fault-tolerance-4): o valor que o ERP
+        // quer baixar não pode EXCEDER o que o analista alocou (em BRL = valorAlocado × taxaInvoice).
+        // Excesso ⇒ em-aberto do ERP mudou OU é baixa parcial de invoice compartilhada (ainda não
+        // suportada) → ABORTA em vez de super-pagar. Sub-pagamento (ERP < esperado) é permitido.
+        if (aloc.taxaInvoice !== undefined && aloc.taxaInvoice > 0) {
+            const esperadoBrl = aloc.valorAlocado * aloc.taxaInvoice;
+            const tolerancia = Math.max(0.01, esperadoBrl * 0.005);
+            if (bxaMnyValor > esperadoBrl + tolerancia) {
+                throw new Error(
+                    `anti-drift: ERP quer baixar ${bxaMnyValor} (BRL) > esperado ${esperadoBrl.toFixed(2)} ` +
+                        `(alocado ${aloc.valorAlocado} × taxa ${aloc.taxaInvoice}) — baixa parcial/divergente não suportada; conferir manualmente`,
+                );
+            }
+        }
+
         // Passo 3 — valida a permuta (adiantamento); o ERP devolve os dados da permuta.
         const val3 = await this.conexosClient.validarTituloPermuta({
             filCod,
@@ -198,6 +218,7 @@ export default class ReconciliacaoPermutaService {
             adiantamentoDocCod,
             bxaTitCod: 1,
         });
+        this.assertNoErpError(val3, 'tituloPermuta');
         const perm = val3.responseData;
         if (!perm)
             throw new Error(`adiantamento ${adiantamentoDocCod} sem dados de permuta no ERP`);
@@ -218,6 +239,7 @@ export default class ReconciliacaoPermutaService {
             juros,
             desconto,
         });
+        this.assertNoErpError(val4, 'atualizaValorLiquido');
         const bxaMnyLiquido = val4.responseData?.bxaMnyLiquido ?? bxaMnyValor + juros - desconto;
 
         // Passo 5 — payload consolidado e gravação.
@@ -337,6 +359,21 @@ export default class ReconciliacaoPermutaService {
             taxaAdiantamento: aloc.taxaAdiantamento ?? null,
             taxaInvoice: aloc.taxaInvoice ?? null,
         };
+    };
+
+    /**
+     * Lê o envelope `{ messages }` das validações do fin010 (Regis F-integrability-3): um
+     * `valid='ERRO'` chega com HTTP 200 e passaria despercebido. AVISO (ex.:
+     * PESSOA_POSSUI_ADIANTAMENTO) é informativo e segue; ERRO aborta o handshake.
+     */
+    private assertNoErpError = (
+        resp: { messages?: Array<{ valid?: string; message?: string }> },
+        passo: string,
+    ): void => {
+        const erro = resp.messages?.find((m) => m.valid === 'ERRO');
+        if (erro) {
+            throw new Error(`fin010 ${passo} retornou ERRO: ${erro.message ?? 'sem detalhe'}`);
+        }
     };
 
     private idempotencyKey = (adiantamentoDocCod: string, invoiceDocCod: string): string =>

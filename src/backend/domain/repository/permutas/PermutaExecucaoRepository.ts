@@ -120,6 +120,16 @@ export default class PermutaExecucaoRepository {
         return { status, alreadySettled: status === 'settled' };
     };
 
+    /** Persiste o borCod assim que o borderô é criado (recuperação de órfão, Regis F-availability-1). */
+    public setBorCod = async (key: string, borCod: number): Promise<void> => {
+        await this.databaseClient.update(
+            `UPDATE permuta_alocacao_execucao
+             SET bor_cod = $borCod, atualizado_em = now()
+             WHERE idempotency_key = $key`,
+            { key, borCod },
+        );
+    };
+
     public setRequestPayload = async (key: string, payload: unknown): Promise<void> => {
         await this.databaseClient.update(
             `UPDATE permuta_alocacao_execucao

@@ -1466,5 +1466,24 @@ describe('ConexosClient', () => {
                 ConexosError,
             );
         });
+
+        it('does NOT retry the irreversible writes (criarBordero, gravarBaixaPermuta)', async () => {
+            // Regis F-fault-tolerance-1: um retry após timeout-pós-sucesso geraria borderô/baixa
+            // duplicados. As escritas devem ser tentativa única (≠ reads, que retentam 3×).
+            const legacy = buildLegacy();
+            legacy.postGeneric.mockRejectedValue(new Error('upstream timeout'));
+            const client = new ConexosClient(legacy);
+
+            await expect(client.criarBordero({ filCod: 4, dataMovto: 1 })).rejects.toBeInstanceOf(
+                ConexosError,
+            );
+            expect(legacy.postGeneric).toHaveBeenCalledTimes(1);
+
+            legacy.postGeneric.mockClear();
+            await expect(
+                client.gravarBaixaPermuta({ filCod: 4, payload: { borCod: 1 } }),
+            ).rejects.toBeInstanceOf(ConexosError);
+            expect(legacy.postGeneric).toHaveBeenCalledTimes(1);
+        });
     });
 });

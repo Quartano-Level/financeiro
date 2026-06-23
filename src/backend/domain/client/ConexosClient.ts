@@ -996,7 +996,14 @@ export default class ConexosClient {
     // cnx-usncod + retry-em-401) e o RetryExecutor, espelhando o lado de leitura.
     // ────────────────────────────────────────────────────────────────────────
 
-    /** Passo 1 — cria o borderô (tipo permuta) e retorna o `borCod`. */
+    /**
+     * Passo 1 — cria o borderô (tipo permuta) e retorna o `borCod`.
+     *
+     * SEM RetryExecutor (Regis 2026-06-23, F-fault-tolerance-1 / F-availability-2):
+     * é uma ESCRITA não-idempotente. Um retry após timeout-pós-sucesso criaria um
+     * borderô duplicado. Só o 401-retry interno do `authenticatedPost` é aceitável
+     * (a sessão é rejeitada ANTES de o servidor processar a criação). Tentativa única.
+     */
     public criarBordero = async (params: {
         filCod: number;
         /** Data de movimento em epoch-ms (meia-noite UTC do dia). */
@@ -1004,20 +1011,18 @@ export default class ConexosClient {
     }): Promise<BorderoCriado> => {
         const { filCod, dataMovto } = params;
         try {
-            return await this.retryExecutor.execute(async () => {
-                await this.legacy.ensureSid();
-                return this.legacy.postGeneric<BorderoCriado>(
-                    'fin010',
-                    {
-                        filCod,
-                        borVldTipo: 2,
-                        borVldFinalizado: 0,
-                        frontModelName: 'bordero',
-                        borDtaMvto: dataMovto,
-                    },
-                    { filCod },
-                );
-            });
+            await this.legacy.ensureSid();
+            return await this.legacy.postGeneric<BorderoCriado>(
+                'fin010',
+                {
+                    filCod,
+                    borVldTipo: 2,
+                    borVldFinalizado: 0,
+                    frontModelName: 'bordero',
+                    borDtaMvto: dataMovto,
+                },
+                { filCod },
+            );
         } catch (cause) {
             throw new ConexosError({ endpoint: 'fin010', cause });
         }
@@ -1130,6 +1135,12 @@ export default class ConexosClient {
      * Passo 5 — grava a baixa/permuta (o write efetivo). O `payload` é o objeto
      * consolidado dos passos 2/3/4 (montado pelo serviço a partir das respostas
      * do ERP + dados da alocação). Retorna a baixa gravada com `bxaCodSeq`.
+     *
+     * SEM RetryExecutor (Regis 2026-06-23, F-fault-tolerance-1): é a ESCRITA
+     * IRREVERSÍVEL. Um retry após timeout-pós-sucesso gravaria uma baixa DUPLICADA
+     * (super-pagamento, `bxaCodSeq` duplicado) — a chave de idempotência local não
+     * protege dentro de um retry interno. Tentativa única; a falha sobe para o
+     * serviço marcar `error` e o operador conciliar manualmente.
      */
     public gravarBaixaPermuta = async (params: {
         filCod: number;
@@ -1137,9 +1148,9 @@ export default class ConexosClient {
     }): Promise<BaixaGravada> => {
         const { filCod, payload } = params;
         try {
-            return await this.retryExecutor.execute(async () => {
-                await this.legacy.ensureSid();
-                return this.legacy.postGeneric<BaixaGravada>('fin010/baixas', payload, { filCod });
+            await this.legacy.ensureSid();
+            return await this.legacy.postGeneric<BaixaGravada>('fin010/baixas', payload, {
+                filCod,
             });
         } catch (cause) {
             throw new ConexosError({ endpoint: 'fin010/baixas', cause });

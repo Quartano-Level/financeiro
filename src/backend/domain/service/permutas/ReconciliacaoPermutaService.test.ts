@@ -14,7 +14,8 @@ const buildAloc = (over: Partial<Record<string, unknown>> = {}) => ({
     variacaoResultado: 220,
     variacaoDelta: 220,
     taxaAdiantamento: 5.31,
-    taxaInvoice: 5.19,
+    // 7800 × 5.241 = 40 879,8 ≈ bxaMnyValor 40 879,9 do mock → passa o guard anti-drift (I-Write-1).
+    taxaInvoice: 5.241,
     criadoEm: new Date('2026-06-20'),
     ...over,
 });
@@ -45,6 +46,7 @@ const buildDeps = () => {
         beginExecution: jest
             .fn()
             .mockResolvedValue({ status: 'reconciling', alreadySettled: false }),
+        setBorCod: jest.fn().mockResolvedValue(undefined),
         setRequestPayload: jest.fn().mockResolvedValue(undefined),
         markSettled: jest.fn().mockResolvedValue(undefined),
         markError: jest.fn().mockResolvedValue(undefined),
@@ -231,5 +233,61 @@ describe('ReconciliacaoPermutaService', () => {
         const payload = conexosClient.gravarBaixaPermuta.mock.calls[0][0].payload;
         expect(payload.bxaMnyJuros).toBe(0);
         expect(payload.bxaMnyDesconto).toBe(150);
+    });
+
+    it('anti-drift (I-Write-1): aborts when ERP value exceeds allocated expectation', async () => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, conexosClient, execucaoRepository } = buildDeps();
+        // alocado 7800 × 5.241 = 40 879,8 esperado; ERP quer baixar 99 999 (>> esperado) → abort.
+        conexosClient.validarTituloBaixa.mockResolvedValue({
+            responseData: { bxaMnyValor: 99999 },
+        });
+
+        const out = await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        expect(conexosClient.gravarBaixaPermuta).not.toHaveBeenCalled();
+        expect(execucaoRepository.markError).toHaveBeenCalledWith(
+            'permuta:2767:5078',
+            expect.objectContaining({ erroMensagem: expect.stringContaining('anti-drift') }),
+        );
+        expect(out.resultados[0].status).toBe('error');
+    });
+
+    it('aborts when a validacao step returns ERRO in the messages envelope', async () => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, conexosClient } = buildDeps();
+        conexosClient.validarTituloBaixa.mockResolvedValue({
+            messages: [{ valid: 'ERRO', message: 'FIN_XXX.TITULO_BLOQUEADO' }],
+            responseData: { bxaMnyValor: 40879.9 },
+        });
+
+        const out = await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        expect(conexosClient.gravarBaixaPermuta).not.toHaveBeenCalled();
+        expect(out.resultados[0].status).toBe('error');
+    });
+
+    it('persists borCod before the handshake POSTs (orphan recovery)', async () => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, execucaoRepository } = buildDeps();
+
+        await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        expect(execucaoRepository.setBorCod).toHaveBeenCalledWith('permuta:2767:5078', 1999);
     });
 });

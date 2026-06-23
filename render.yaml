@@ -28,8 +28,17 @@ services:
         value: local
       - key: DEV_AUTH_BYPASS
         value: 'false'
+      # Fase 3 (ADR-0013) — guard-rails da ESCRITA no fin010. SEGUROS por padrão:
+      # escrita desligada + dry-run ligado. Para a baixa real (homologação-first):
+      # 1) aponte CONEXOS_BASE_URL p/ ...-hml...; 2) CONEXOS_WRITE_ENABLED=true;
+      # 3) CONEXOS_DRY_RUN=false. Ver docs/runbooks/fin010-write-cutover.md.
+      # `sync:false` no BASE_URL → alterna hml↔prd pelo dashboard sem editar o yaml.
       - key: CONEXOS_BASE_URL
-        value: https://columbiatrading.conexos.cloud/api
+        sync: false
+      - key: CONEXOS_WRITE_ENABLED
+        value: 'false'
+      - key: CONEXOS_DRY_RUN
+        value: 'true'
       # Secrets / per-deploy values — set in the Render dashboard.
       - key: databaseConnectionString
         sync: false
