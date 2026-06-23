@@ -1,5 +1,58 @@
 # Columbia Financeiro — Changelog
 
+## v0.4.2 (2026-06-22) — hardening: coalescing da ingestão + escopo do rate limiter (Lote B do Regis)
+
+- fix(perf): mata o HTTP 429 do fluxo de cliente-filtro (cc-auto-ingest-coalesce).
+  - O `heavyRouteLimiter` (10/min) deixa de cobrir o router `/permutas` inteiro — aplicado por-rota só em
+    `POST /eleicao` e `POST /ingestao`; leituras (gestao/painel/cliente-filtro/importadores) ficam no
+    `globalLimiter` (100/min). Antes o `load()` + painel + ingestão dividiam 10/min → 429.
+  - Novo `IngestaoCoalescerService` (`@singleton`) na frente da ingestão: cliques em sequência coalescem
+    numa rodada + rerun-trailing (inclui a mudança de quem entrou no meio), em vez de disparar fan-out
+    Conexos redundante. Mantém SÍNCRONO (preserva a UX do remover). Contenção cross-instância (cron) segue
+    `IngestLockBusyError` → 409. ADR-0012. READ-ONLY no Conexos.
+- chore(test): higiene de teste (Lote C do Regis — test-only, sem bump).
+  - testability-1: sandbox do `EnvironmentProvider.test` — mocka o `dotenv` (config no-op) pra o teste
+    não depender do `.env` do dev (antes `CONEXOS_FIL_COD` local contaminava o cenário "ausente" e a
+    suíte tinha 1 falha ambiental). Suíte BE agora 100% verde.
+  - testability-3: `collectCoverageFrom` no frontend — passa a medir TODO o código-fonte (antes ~10 de
+    34 arquivos → número "Potemkin" ~82%). Baseline real ~26.8% lines; floors do `coverageThreshold`
+    recalibrados logo abaixo do real (pega regressão, CI verde). Subir conforme testes forem adicionados.
+
+## v0.4.1 (2026-06-22) — hardening de API (Lote A dos P0 do Regis-Review)
+
+- fix(security): RBAC server-side nas rotas de mutação de permutas (security-1).
+  - Middleware `requireRole('admin')` (`http/auth.ts`) gateia `POST /eleicao`, `/ingestao`,
+    `POST/DELETE /cliente-filtro`, `POST/DELETE /alocacoes`, `POST /processar`; leituras seguem abertas a
+    qualquer usuário autenticado. Role vem do JWT (`app_user.role`, default `admin`). 401 sem sessão, 403
+    sem role. ADR-0011. Tactic Bass: Authorize Actors.
+- fix(security): redação de campos sensíveis no request/response logger (security-3).
+  - `redactBody()` (`http/redact.ts`) mascara password/token/authorization/secret/api_key antes do
+    `JSON.stringify` — para de vazar a senha do `POST /auth/login` no stdout/log drains. Tactic Bass: Limit Access.
+- nota: o timeout HTTP do Conexos (performance-2) já existia (`services/conexos.ts` `timeout: 40000`) — finding
+  rebaixado (medira o wrapper DDD). Demais P0 (auto-ingest coalescing, sandbox de teste, coverage FE,
+  isolamento Supabase, rollback, rotação de segredos) → Lotes B/C e ops.
+
+## v0.4.0 (2026-06-22) — permutas: distribuição greedy Simples + refinos de cliente-filtro/painel
+
+- feat(permutas): distribuição greedy N:1 com teto na permuta Simples (auto-casamento parcial, READ-ONLY).
+  - A aba Simples (1 invoice : N adiantamentos) deixa de usar o valor cheio de cada adto: distribui o
+    em-aberto VIVO da invoice (`getDetalheTitulos.valorAberto`/taxa, novo `Invoice.valorAbertoNegociado`)
+    entre os adtos casados — maior saldo primeiro, desempate por aging, com saldo residual quando sobra
+    (caso 1408: "usa 260.064" em vez de 743.040, 11566 com residual 408.672).
+  - Variação cambial recalculada sobre o valor PARCIAL. `GestaoPermutasService` expõe `saldoRestante` no
+    casamento Simples; frontend ganha a coluna "Saldo restante". Ontologia v0.2.9 (ADR-0010). Baixa real
+    em `fin010` segue Fase 3.
+- feat(permutas): cliente-filtro roteia automaticamente ao adicionar E ao remover.
+  - Adicionar/remover um importador dispara a ingestão (mesmo compute do cron) para alinhar o painel na
+    hora. No remover, o item só sai da lista após a re-ingestão concluir (spinner até o fim); se a
+    ingestão falhar, o filtro é mantido (cadastro coerente com o painel). 409/429 tratados.
+- feat(permutas): transparência na alocação manual e no painel.
+  - Modal de alocação (múltiplas/cross-over/cross-process) mostra a CONTA do juros/desconto
+    (`valor × (taxaAdto − taxaInvoice)`) e o saldo DISPONÍVEL da invoice compartilhada (líquido das
+    alocações de outros adiantamentos, novo `InvoiceBuscada.jaAlocado`).
+  - Painel: badge "fonte: banco" (sem "local") + carimbo "última ingestão" (último run `kind='ingest'`
+    bem-sucedido) em horário de Brasília.
+
 ## v0.3.0 (2026-06-20) — permutas: ingestão manual de dados (Frente I)
 
 - feat(permutas): botão "Ingestão de dados" no painel + modal que roda a pipeline sob demanda.

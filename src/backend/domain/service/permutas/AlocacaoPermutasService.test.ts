@@ -122,8 +122,27 @@ describe('AlocacaoPermutasService', () => {
             valorMoedaNegociada: 800,
             taxa: 5.3,
             temDi: true,
+            jaAlocado: 0,
         });
         expect(invoices[0].dataBase).toBeDefined();
+    });
+
+    it('buscarInvoices reporta jaAlocado (consumo de OUTROS adtos) e exclui o próprio', async () => {
+        // 300 já alocados na invoice por outros adiantamentos.
+        const { repo } = buildAlocacaoRepo({ invoice: 300 });
+        const service = new AlocacaoPermutasService(
+            buildConexos(),
+            new VariacaoCambialPermutaService(),
+            repo,
+            buildRelational(),
+            log(),
+        );
+        const invoices = await service.buscarInvoices('510', 2, 'A9');
+        expect(invoices[0].jaAlocado).toBe(300);
+        // disponível = valorMoedaNegociada(800) − jaAlocado(300) = 500.
+        expect((invoices[0].valorMoedaNegociada ?? 0) - invoices[0].jaAlocado).toBe(500);
+        // o próprio adiantamento (A9) é EXCLUÍDO do somatório.
+        expect(repo.sumByInvoice).toHaveBeenCalledWith('I7', 'A9');
     });
 
     it('alocar grava com variação recalculada pela taxa da invoice (valor parcial)', async () => {

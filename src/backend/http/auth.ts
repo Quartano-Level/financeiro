@@ -172,3 +172,29 @@ export const buildAuthMiddleware = (
         }
     };
 };
+
+/**
+ * RBAC server-side (security-1 / Bass: Authorize Actors). Middleware-factory que
+ * exige que o `role` do usuário autenticado (já populado por `buildAuthMiddleware`)
+ * esteja entre os `allowed`. Aplicar APÓS o auth middleware, nas rotas de MUTAÇÃO.
+ * Sem `req.user` → 401 (não autenticado); role fora da lista → 403 (proibido).
+ * Mantém as rotas de LEITURA abertas a qualquer usuário autenticado.
+ */
+export const requireRole = (...allowed: string[]): RequestHandler => {
+    const allowedSet = new Set(allowed);
+    return (req: Request, res: Response, next: NextFunction): void => {
+        const role = req.user?.role;
+        if (!req.user) {
+            res.status(401).json({ error: 'Not authenticated' });
+            return;
+        }
+        if (role === undefined || !allowedSet.has(role)) {
+            console.warn(
+                `[auth] forbidden ${req.method} ${req.originalUrl}: role='${role ?? 'none'}' not in [${allowed.join(', ')}]`,
+            );
+            res.status(403).json({ error: 'Forbidden: insufficient role' });
+            return;
+        }
+        next();
+    };
+};

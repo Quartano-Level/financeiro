@@ -8,7 +8,9 @@ import {
   addClienteFiltro,
   fetchClientesFiltro,
   fetchImportadores,
+  IngestaoEmAndamentoError,
   removeClienteFiltro,
+  runIngestaoManual,
 } from '@/lib/api'
 import type { ClienteFiltro, Importador } from '@/lib/types'
 import { PageHeader } from '@/components/ui/page-header'
@@ -84,12 +86,33 @@ export default function ClientesFiltroPage() {
   const adicionar = React.useCallback(async () => {
     if (!selecionado) return
     const imp = importadores.find((i) => i.pesCod === selecionado)
+    const nome = imp?.importador ?? selecionado
     setAdding(true)
     try {
       await addClienteFiltro(selecionado, imp?.importador)
-      toast.success(`Cliente filtro adicionado: ${imp?.importador ?? selecionado}`)
       setSelecionado('')
       await load()
+      // Roteia AUTOMATICAMENTE os adtos do novo importador para cross-process:
+      // o roteamento permuta-manual só ocorre na ingestão, então dispara uma agora
+      // (mesmo compute do botão "Ingestão de dados") em vez de esperar o próximo cron.
+      try {
+        const r = await runIngestaoManual()
+        toast.success(
+          `Cliente filtro adicionado: ${nome}. Ingestão concluída — ${r.totalAdiantamentos} adiantamento(s) reavaliado(s).`,
+        )
+      } catch (ingErr) {
+        if (ingErr instanceof IngestaoEmAndamentoError) {
+          // Lock ocupado (cron/outra rodada): o filtro já está salvo e será
+          // roteado pela ingestão em andamento / próxima — não é falha.
+          toast.info(
+            `Cliente filtro adicionado: ${nome}. Já há uma ingestão em andamento — o roteamento será aplicado nela.`,
+          )
+        } else {
+          toast.warning(
+            `Cliente filtro adicionado: ${nome}, mas a ingestão automática falhou${ingErr instanceof Error ? ` — ${ingErr.message}` : ''}. Rode "Ingestão de dados" manualmente.`,
+          )
+        }
+      }
     } catch (err) {
       toast.error(`Falha ao adicionar${err instanceof Error ? ` — ${err.message}` : ''}.`)
     } finally {
@@ -99,11 +122,40 @@ export default function ClientesFiltroPage() {
 
   const remover = React.useCallback(
     async (pesCod: string, nome?: string) => {
+      const label = nome ?? pesCod
       setRemoving(pesCod)
       try {
+        // Remove o cadastro PRIMEIRO (a ingestão precisa rodar SEM o filtro pra
+        // des-rotear os adtos). O spinner fica girando e o item PERMANECE na lista
+        // até a re-ingestão concluir de fato — só então `load()` o remove da tela.
         await removeClienteFiltro(pesCod)
-        toast.success(`Cliente filtro removido: ${nome ?? pesCod}`)
-        await load()
+        try {
+          const r = await runIngestaoManual()
+          // Sucesso: dados realinhados (adtos voltam a bloqueada) → agora some da lista.
+          await load()
+          toast.success(
+            `Cliente filtro removido: ${label}. Ingestão concluída — ${r.totalAdiantamentos} adiantamento(s) reavaliado(s).`,
+          )
+        } catch (ingErr) {
+          // Re-ingestão falhou (429/409/erro): os dados do painel NÃO foram
+          // realinhados, então re-adiciona o filtro pra manter o cadastro coerente
+          // com o painel (o importador continua roteado). O operador tenta de novo.
+          try {
+            await addClienteFiltro(pesCod, nome)
+          } catch {
+            // best-effort: se o re-add falhar, o load() abaixo mostra o estado real.
+          }
+          await load()
+          const motivo =
+            ingErr instanceof IngestaoEmAndamentoError
+              ? 'já há uma ingestão em andamento'
+              : ingErr instanceof Error
+                ? ingErr.message
+                : 'falha na ingestão'
+          toast.warning(
+            `Não foi possível remover ${label} agora — ${motivo}. O filtro foi mantido (os dados não foram realinhados). Tente novamente.`,
+          )
+        }
       } catch (err) {
         toast.error(`Falha ao remover${err instanceof Error ? ` — ${err.message}` : ''}.`)
       } finally {
@@ -148,8 +200,13 @@ export default function ClientesFiltroPage() {
                 </SelectContent>
               </Select>
             </div>
-            <Button onClick={() => void adicionar()} disabled={!selecionado || adding}>
-              {adding ? <Spinner /> : <Plus aria-hidden />} Adicionar
+            <Button
+              onClick={() => void adicionar()}
+              disabled={!selecionado || adding}
+              aria-busy={adding}
+            >
+              {adding ? <Spinner /> : <Plus aria-hidden />}{' '}
+              {adding ? 'Adicionando e roteando…' : 'Adicionar'}
             </Button>
           </div>
           {!loading && disponiveis.length === 0 ? (
@@ -194,6 +251,7 @@ export default function ClientesFiltroPage() {
                         variant="ghost"
                         size="sm"
                         disabled={removing === c.pesCod}
+                        aria-busy={removing === c.pesCod}
                         onClick={() => void remover(c.pesCod, c.importador)}
                         aria-label={`Remover ${c.importador ?? c.pesCod}`}
                       >

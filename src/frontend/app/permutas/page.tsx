@@ -103,13 +103,15 @@ function rotuloQuemRodou(triggeredBy: string): string {
   return `analista ${triggeredBy}`
 }
 
-/** Carimbo "21/06/2026 · 10h52" a partir de um ISO timestamp. */
+/** Carimbo "21/06/2026 · 10h52" (horário de Brasília) a partir de um ISO timestamp. */
 function formatRunWhen(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return '—'
-  const data = d.toLocaleDateString('pt-BR')
+  // Fixa o fuso em BRT (America/Sao_Paulo) — independe do fuso do navegador.
+  const tz = 'America/Sao_Paulo'
+  const data = d.toLocaleDateString('pt-BR', { timeZone: tz })
   const hora = d
-    .toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    .toLocaleTimeString('pt-BR', { timeZone: tz, hour: '2-digit', minute: '2-digit' })
     .replace(':', 'h')
   return `${data} · ${hora}`
 }
@@ -623,7 +625,9 @@ export default function GestaoPermutasPage() {
       if (!priCod || filCod == null) return
       setBuscandoInv(true)
       try {
-        setInvoicesBuscadas(await buscarInvoicesPorProcesso(priCod, filCod))
+        // Passa o docCod do adiantamento → o `jaAlocado` de cada invoice exclui
+        // este adto, refletindo o disponível real da invoice compartilhada (N:M).
+        setInvoicesBuscadas(await buscarInvoicesPorProcesso(priCod, filCod, alocando?.docCod))
         setInvoiceAloc('')
       } catch {
         setInvoicesBuscadas([])
@@ -708,6 +712,15 @@ export default function GestaoPermutasPage() {
     (i) => i.temDi && moedaCodigo(i.moeda ?? 'USD') === moedaAdtoAloc,
   )
   const invoicesOcultadas = (invoicesBuscadas?.length ?? 0) - invoicesElegiveis.length
+
+  // Invoice selecionada no modal → aviso de quanto OUTROS adiantamentos já
+  // consumiram dela (N:M) e o disponível restante (espelha o teto do backend).
+  const invoiceSelecionada = invoicesElegiveis.find((i) => i.docCod === invoiceAloc)
+  const jaAlocadoInvoice = invoiceSelecionada?.jaAlocado ?? 0
+  const dispInvoice =
+    invoiceSelecionada?.valorMoedaNegociada != null
+      ? invoiceSelecionada.valorMoedaNegociada - jaAlocadoInvoice
+      : null
 
   // Filiais distintas presentes nos pendentes (para o seletor de filial).
   const filiais = React.useMemo(
@@ -886,12 +899,20 @@ export default function GestaoPermutasPage() {
                 variant="outline"
                 title={
                   data.fonte === 'banco'
-                    ? 'Dados do Postgres local (eleição semeada)'
+                    ? 'Dados do banco (snapshot da última ingestão/eleição)'
                     : 'Dados de demonstração (fixture com valores reais)'
                 }
               >
-                fonte: {data.fonte === 'banco' ? 'banco local' : 'fixture'}
+                fonte: {data.fonte === 'banco' ? 'banco' : 'fixture'}
               </Badge>
+            ) : null}
+            {data?.geradoEm ? (
+              <span
+                className="text-xs text-muted-foreground"
+                title="Conclusão da última ingestão bem-sucedida"
+              >
+                última ingestão: {formatRunWhen(data.geradoEm)}
+              </span>
             ) : null}
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
               <RefreshCw className={cn(loading && 'animate-spin')} aria-hidden /> Atualizar
@@ -1518,6 +1539,7 @@ export default function GestaoPermutasPage() {
                       <TableHead className="text-right">Valor Moeda Negociada</TableHead>
                       <TableHead>Adiantamento</TableHead>
                       <TableHead className="text-right">Valor a ser Usado</TableHead>
+                      <TableHead className="text-right">Saldo restante</TableHead>
                       <TableHead className="text-right">Ação</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1569,7 +1591,7 @@ export default function GestaoPermutasPage() {
                               <Moeda valor={c.invoice.valorMoedaNegociada} moeda={c.invoice.moeda} />
                             </TableCell>
                             <TableCell
-                              colSpan={2}
+                              colSpan={3}
                               className="text-right text-xs text-muted-foreground"
                             >
                               {c.adiantamentos.length} adiantamento
@@ -1605,7 +1627,7 @@ export default function GestaoPermutasPage() {
                           {/* Micro-info da invoice (expandido) */}
                           {abertaInv ? (
                             <TableRow className="bg-muted/30 hover:bg-muted/30">
-                              <TableCell colSpan={6} className="py-4">
+                              <TableCell colSpan={7} className="py-4">
                                 <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
                                   <Campo label="Invoice (código)">{c.invoice.docCod}</Campo>
                                   <Campo label="Referência">{c.invoice.referencia}</Campo>
@@ -1635,7 +1657,7 @@ export default function GestaoPermutasPage() {
                           {/* Adiantamentos (filhos da invoice) */}
                           {c.adiantamentos.length === 0 ? (
                             <TableRow>
-                              <TableCell colSpan={6} className="text-sm text-muted-foreground">
+                              <TableCell colSpan={7} className="text-sm text-muted-foreground">
                                 Sem adiantamento sugerido ainda.
                               </TableCell>
                             </TableRow>
@@ -1648,6 +1670,11 @@ export default function GestaoPermutasPage() {
                                 <TableCell className="font-medium">{adto.docCod}</TableCell>
                                 <TableCell className="text-right">
                                   <Moeda valor={adto.valorASerUsado} moeda={adto.moeda} />
+                                </TableCell>
+                                <TableCell className="text-right text-muted-foreground">
+                                  {adto.saldoRestante != null
+                                    ? `${formatNumber(adto.saldoRestante)} ${moedaCodigo(adto.moeda)}`
+                                    : '—'}
                                 </TableCell>
                                 <TableCell className="text-right">
                                   <ProcessamentoBadge
@@ -1918,9 +1945,22 @@ export default function GestaoPermutasPage() {
                                   {formatNumber(al.valorAlocado)} {moedaCodigo(al.moeda ?? alocandoAtual.moeda)}
                                 </TableCell>
                                 <TableCell className="text-right text-xs">
-                                  {al.variacaoClassificacao && al.variacaoResultado != null
-                                    ? `${al.variacaoClassificacao} · R$ ${formatNumber(al.variacaoResultado)}`
-                                    : '—'}
+                                  {al.variacaoClassificacao && al.variacaoResultado != null ? (
+                                    <div className="flex flex-col items-end">
+                                      <span>
+                                        {al.variacaoClassificacao} · R${' '}
+                                        {formatNumber(al.variacaoResultado)}
+                                      </span>
+                                      {al.taxaAdiantamento != null && al.taxaInvoice != null ? (
+                                        <span className="text-muted-foreground">
+                                          {formatNumber(al.valorAlocado)} ×{' '}
+                                          ({fmtTaxa(al.taxaAdiantamento)} − {fmtTaxa(al.taxaInvoice)})
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  ) : (
+                                    '—'
+                                  )}
                                 </TableCell>
                                 <TableCell className="text-right">
                                   <Button
@@ -1995,15 +2035,25 @@ export default function GestaoPermutasPage() {
                                   <SelectValue placeholder="Escolha uma invoice…" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {invoicesElegiveis.map((i) => (
-                                    <SelectItem key={i.docCod} value={i.docCod}>
-                                      {i.docCod} ·{' '}
-                                      {i.valorMoedaNegociada != null
-                                        ? `${formatNumber(i.valorMoedaNegociada)} ${moedaCodigo(i.moeda ?? 'USD')}`
-                                        : 's/ valor'}
-                                      {i.taxa != null ? ` · taxa ${fmtTaxa(i.taxa)}` : ''}
-                                    </SelectItem>
-                                  ))}
+                                  {invoicesElegiveis.map((i) => {
+                                    const cur = moedaCodigo(i.moeda ?? 'USD')
+                                    const ja = i.jaAlocado ?? 0
+                                    const disp =
+                                      i.valorMoedaNegociada != null
+                                        ? i.valorMoedaNegociada - ja
+                                        : null
+                                    return (
+                                      <SelectItem key={i.docCod} value={i.docCod}>
+                                        {i.docCod} ·{' '}
+                                        {i.valorMoedaNegociada == null
+                                          ? 's/ valor'
+                                          : ja > 0
+                                            ? `resta ${formatNumber(disp ?? 0)} de ${formatNumber(i.valorMoedaNegociada)} ${cur}`
+                                            : `${formatNumber(i.valorMoedaNegociada)} ${cur}`}
+                                        {i.taxa != null ? ` · taxa ${fmtTaxa(i.taxa)}` : ''}
+                                      </SelectItem>
+                                    )
+                                  })}
                                 </SelectContent>
                               </Select>
                             </div>
@@ -2027,6 +2077,18 @@ export default function GestaoPermutasPage() {
                             </Button>
                           </div>
                         )
+                      ) : null}
+                      {invoiceSelecionada && jaAlocadoInvoice > 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                          Invoice {invoiceSelecionada.docCod}:{' '}
+                          {formatNumber(jaAlocadoInvoice)}{' '}
+                          {moedaCodigo(invoiceSelecionada.moeda ?? 'USD')} já alocado(s) por
+                          outro(s) adiantamento(s)
+                          {dispInvoice != null
+                            ? ` · disponível ${formatNumber(dispInvoice)} ${moedaCodigo(invoiceSelecionada.moeda ?? 'USD')}`
+                            : ''}
+                          .
+                        </p>
                       ) : null}
                       {invoicesBuscadas != null && invoicesOcultadas > 0 ? (
                         <p className="text-xs text-muted-foreground">

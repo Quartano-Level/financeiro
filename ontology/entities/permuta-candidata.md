@@ -13,6 +13,7 @@ related_files:
   - src/backend/domain/repository/permutas/PermutaSnapshotRepository.ts
   - src/backend/domain/interface/permutas/PermutaCandidata.ts
   - src/backend/migrations/0012_estado_permuta_manual.sql
+  - src/backend/domain/interface/permutas/Gestao.ts
   - src/frontend/app/permutas/page.tsx
 properties:
   - priCod
@@ -32,12 +33,13 @@ relationships:
   - "PermutaCandidata 1—1 VariacaoCambial (derivada)"
   - "PermutaCandidata 1—* Permuta (alocação consumada; permuta-manual/casamento-manual originam alocações, ADR-0008)"
 state_machine: elegibilidade-permuta-candidata
-last_review: 2026-06-21
+last_review: 2026-06-22
 universality_evidence:
   - "docs-contexto/03_ontologia_financeiro.md §2 Frente I (backlog elegível com aging)"
   - "ontology/glossary.md — 'Backlog elegível' / 'Pendência bloqueada'"
   - "Interview permutas-painel-elegiveis Axis 1 — pendência elegível (NÃO executada nesta fatia)"
   - "Columbia (priCod=1153): PDF processo 2048"
+  - "ADR-0010 — auto-casamento Simples N:1 parcial (greedy + teto da invoice); caso 1408 ZNSHINE"
 ---
 
 # PermutaCandidata
@@ -82,9 +84,13 @@ contada como falha — ver glossary "Pendência bloqueada").
 
 ## Cardinalidade — 1:1 vs N:M (P0-5/P0-6 — RESOLVIDO)
 
-- Esta fatia executa o **auto 1:1 (direto)**: 1 adiantamento PROFORMA ↔ 1 invoice FINALIZADA no
-  processo. `PermutaCandidata` mantém **shape 1:1** no relacional — **NÃO** modelar a alocação
-  N:M agora.
+- O auto-casamento (`tipoPermuta = simples`) executa o **1:1 (direto)** **e** o
+  **1 invoice : N adiantamentos**. Desde **ADR-0010**, o N:1 distribui o **em-aberto vivo da invoice**
+  (`Invoice.valorAbertoNegociado`) entre os adtos casados — **greedy** (maior saldo primeiro; desempate
+  por aging), com **teto** = em-aberto da invoice; o adto consumido em parte mantém o saldo restante em
+  aberto (auto-casamento ficou **parcial**, como o manual). O casamento expõe `saldoRestante`
+  (`CasamentoAdiantamento.saldoRestante`, coluna "Saldo restante" na aba Simples). Ver
+  `business-rules/distribuicao-simples-greedy`. READ-ONLY (só o snapshot `permuta_casamento`).
 - O caso **N:M (composto)** (várias proformas/invoices no mesmo processo) **EXISTE e é
   FREQUENTE**. **ADR-0005:** como passa os 4 gates, deixou de ser `bloqueada` e passou ao estado
   **`casamento-manual`** (motivo informativo `composto-nm` / `multiplas-invoices`) — pronto para o

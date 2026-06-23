@@ -32,7 +32,7 @@ relationships:
   - "Adiantamento 1—1 PermutaCandidata (lado-débito da candidata)"
   - "Adiantamento N—1 ClienteFiltro (via pesCod; roteia o adto para permuta-manual)"
   - "Adiantamento 1—N Permuta (lado-débito da alocação consumada, ADR-0008)"
-last_review: 2026-06-21
+last_review: 2026-06-22
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente I (adiantamento ↔ invoice)"
   - "docs-contexto/03_ontologia_financeiro.md §2 Frente I"
@@ -98,6 +98,15 @@ Esta fatia (Fatia 1, READ-ONLY) apenas **lê e avalia** adiantamentos; não os m
 - **Gate 3 (TOTALMENTE PAGO):** o status pago **não** vem populável no `com298/list`
   (`mnyTitAberto`/`mnyTitPago` = `null`). Provável fonte = endpoint de **detalhe** do adiantamento
   (modal financeiro), a ser confirmado por probe — gap aberto `gate-3-pago-via-detail`.
+
+## Auto-casamento Simples agora é PARCIAL (ADR-0010)
+
+No casamento automático **1 invoice : N adiantamentos** (`tipoPermuta = simples`), o adiantamento já
+**não** usa mais o valor cheio: o em-aberto vivo da invoice (`Invoice.valorAbertoNegociado`) é
+distribuído **greedy** (maior saldo primeiro; desempate por aging) entre os adtos casados. Um adto
+consumido em parte **mantém o saldo restante em aberto** — o auto-casamento ficou **parcial**, como o
+manual (ADR-0008). A variação cambial é recalculada sobre o valor **parcial** usado. Ver
+`business-rules/distribuicao-simples-greedy`. (READ-ONLY no ERP — só o snapshot `permuta_casamento`.)
 
 ## Fora de escopo (Fatia 1)
 

@@ -11,6 +11,10 @@ import type PermutaSnapshotRepository from '../../repository/permutas/PermutaSna
 import type EleicaoPermutasService from './EleicaoPermutasService.js';
 import IngestaoPermutasService, { INGEST_LOCK_KEY } from './IngestaoPermutasService.js';
 import type LogService from '../LogService.js';
+import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
+
+/** Serviço de variação real (puro, sem deps) — recalcula a variação por parcial. */
+const variacao = new VariacaoCambialPermutaService();
 
 type LogCall = { type: string; data?: Record<string, unknown> };
 
@@ -182,7 +186,7 @@ describe('IngestaoPermutasService', () => {
         const { repo } = buildRelational();
         const snapshot = buildSnapshot();
         const { logService } = buildLogService();
-        const service = new IngestaoPermutasService(eleicao, repo, snapshot, logService);
+        const service = new IngestaoPermutasService(eleicao, repo, snapshot, variacao, logService);
 
         const result = await service.executar({ triggeredBy: 'cron' });
 
@@ -213,9 +217,11 @@ describe('IngestaoPermutasService', () => {
             invoiceDocCod: 'I1',
             adiantamentoDocCod: 'A1',
             variacaoClassificacao: 'JUROS',
-            variacaoResultado: 120,
             moeda: 'USD',
         });
+        // Variação RECALCULADA pela distribuição (usado=1000, Δtaxa 0.12) → ~120.
+        expect(casamentoRows[0]?.variacaoResultado).toBeCloseTo(120, 4);
+        expect(casamentoRows[0]?.valorASerUsado).toBeCloseTo(1000, 4);
 
         // moeda NEGOCIADA (USD) maps onto the fact rows distinctly from the doc
         // moeda (BRL), so the Gestão column labels the value as USD.
@@ -235,6 +241,7 @@ describe('IngestaoPermutasService', () => {
             eleicao,
             repo,
             buildSnapshot(),
+            variacao,
             buildLogService().logService,
         );
 
@@ -252,6 +259,7 @@ describe('IngestaoPermutasService', () => {
             eleicao,
             repo,
             buildSnapshot(),
+            variacao,
             buildLogService().logService,
         );
 
@@ -272,7 +280,7 @@ describe('IngestaoPermutasService', () => {
         (repo.persistIngestRun as jest.Mock).mockRejectedValue(new IngestLockBusyError());
         const snapshot = buildSnapshot();
         const { logService, calls } = buildLogService();
-        const service = new IngestaoPermutasService(eleicao, repo, snapshot, logService);
+        const service = new IngestaoPermutasService(eleicao, repo, snapshot, variacao, logService);
 
         await expect(service.executar({ triggeredBy: 'simone' })).rejects.toBeInstanceOf(
             IngestLockBusyError,
@@ -292,6 +300,7 @@ describe('IngestaoPermutasService', () => {
             eleicao,
             repo,
             buildSnapshot(),
+            variacao,
             buildLogService().logService,
         );
 
@@ -312,7 +321,7 @@ describe('IngestaoPermutasService', () => {
         const { repo } = buildRelational();
         const snapshot = buildSnapshot();
         const { logService, calls } = buildLogService();
-        const service = new IngestaoPermutasService(eleicao, repo, snapshot, logService);
+        const service = new IngestaoPermutasService(eleicao, repo, snapshot, variacao, logService);
 
         await expect(service.executar({ triggeredBy: 'cron' })).rejects.toThrow('conexos down');
 
@@ -327,5 +336,152 @@ describe('IngestaoPermutasService', () => {
         // No snapshot on failure.
         expect(snapshot.persistRun).not.toHaveBeenCalled();
         expect(calls.some((c) => c.type !== undefined)).toBe(true);
+    });
+});
+
+// ---- Distribuição greedy N:1 com teto (permuta Simples) ----
+
+/**
+ * Candidata ELEGIVEL casada com uma invoice, com saldo do adto (negociado) e o
+ * teto da invoice (valorAbertoNegociado, fallback valorMoedaNegociada) ajustáveis.
+ * `taxa` omitida → saldoDisponivelNeg cai no valorMoedaNegociada (= saldo).
+ */
+const elegivelGreedy = (over: {
+    docCod: string;
+    saldo: number;
+    invoiceDocCod: string;
+    tetoVivo?: number;
+    tetoNegociado?: number;
+    aging?: number;
+    dataEmissao?: Date;
+}): PermutaCandidata => ({
+    priCod: '1408',
+    adiantamento: {
+        docCod: over.docCod,
+        priCod: '1408',
+        filCod: 4,
+        dataEmissao: over.dataEmissao ?? new Date('2026-03-01'),
+        valor: over.saldo,
+        moeda: 'BRL',
+        moedaNegociada: 'USD',
+        pago: true,
+        valorPermutar: over.saldo,
+        valorMoedaNegociada: over.saldo,
+    },
+    invoiceCasada: {
+        docCod: over.invoiceDocCod,
+        priCod: '1408',
+        dataEmissao: new Date('2026-04-01'),
+        valor: 260064,
+        moeda: 'BRL',
+        moedaNegociada: 'USD',
+        pago: false,
+        valorMoedaNegociada: over.tetoNegociado ?? 260064,
+        ...(over.tetoVivo !== undefined ? { valorAbertoNegociado: over.tetoVivo } : {}),
+    },
+    declaracaoImportacao: { priCod: '1408', variante: 'DI' },
+    estadoElegibilidade: ESTADO_ELEGIBILIDADE.ELEGIVEL,
+    ...(over.aging !== undefined ? { aging: over.aging } : {}),
+    gatesAvaliados: [],
+});
+
+/** Roda a ingestão e devolve as linhas de casamento (replaceAutoCasamentos[2]). */
+const casamentoRowsDe = async (candidatas: PermutaCandidata[]) => {
+    const eleicao = buildEleicao(candidatas);
+    const { repo } = buildRelational();
+    const service = new IngestaoPermutasService(
+        eleicao,
+        repo,
+        buildSnapshot(),
+        variacao,
+        buildLogService().logService,
+    );
+    await service.executar({ triggeredBy: 'cron' });
+    return repo.replaceAutoCasamentos.mock.calls[0][2];
+};
+
+describe('IngestaoPermutasService — distribuição greedy N:1 (Simples)', () => {
+    it('capa no teto e consome o MAIOR saldo primeiro (caso 1408)', async () => {
+        // invoice 260.064; adtos 11566=668.736 (maior) e 5751=74.304.
+        const rows = await casamentoRowsDe([
+            elegivelGreedy({ docCod: '5751', saldo: 74304, invoiceDocCod: 'INV1408' }),
+            elegivelGreedy({ docCod: '11566', saldo: 668736, invoiceDocCod: 'INV1408' }),
+        ]);
+        const a11566 = rows.find((r) => r.adiantamentoDocCod === '11566');
+        const a5751 = rows.find((r) => r.adiantamentoDocCod === '5751');
+        // 11566 (maior) cobre a invoice sozinho → 260.064; 5751 não precisou → 0.
+        expect(a11566?.valorASerUsado).toBeCloseTo(260064, 4);
+        expect(a5751?.valorASerUsado).toBe(0);
+        // Σ usado ≤ teto da invoice.
+        const total = rows.reduce((s, r) => s + (r.valorASerUsado ?? 0), 0);
+        expect(total).toBeCloseTo(260064, 4);
+    });
+
+    it('usa o EM-ABERTO VIVO como teto (menor que o negociado por baixa externa)', async () => {
+        // negociado 260.064, mas vivo 160.064 (100k baixados por fora) → teto 160.064.
+        const rows = await casamentoRowsDe([
+            elegivelGreedy({
+                docCod: '11566',
+                saldo: 668736,
+                invoiceDocCod: 'INV1408',
+                tetoNegociado: 260064,
+                tetoVivo: 160064,
+            }),
+        ]);
+        expect(rows[0]?.valorASerUsado).toBeCloseTo(160064, 4);
+    });
+
+    it('desempate por aging: mais antigo (maior aging) primeiro', async () => {
+        // saldos iguais (150k cada), teto 200k. O mais antigo (aging 90) enche
+        // primeiro (150k), o mais novo (aging 10) leva o restante (50k).
+        const rows = await casamentoRowsDe([
+            elegivelGreedy({
+                docCod: 'NOVO',
+                saldo: 150000,
+                invoiceDocCod: 'INVX',
+                tetoNegociado: 200000,
+                aging: 10,
+            }),
+            elegivelGreedy({
+                docCod: 'ANTIGO',
+                saldo: 150000,
+                invoiceDocCod: 'INVX',
+                tetoNegociado: 200000,
+                aging: 90,
+            }),
+        ]);
+        expect(rows.find((r) => r.adiantamentoDocCod === 'ANTIGO')?.valorASerUsado).toBeCloseTo(
+            150000,
+            4,
+        );
+        expect(rows.find((r) => r.adiantamentoDocCod === 'NOVO')?.valorASerUsado).toBeCloseTo(
+            50000,
+            4,
+        );
+    });
+
+    it('Σ adtos < invoice → todos integrais (invoice fica parcial)', async () => {
+        const rows = await casamentoRowsDe([
+            elegivelGreedy({
+                docCod: 'P1',
+                saldo: 30000,
+                invoiceDocCod: 'INVY',
+                tetoNegociado: 260064,
+            }),
+            elegivelGreedy({
+                docCod: 'P2',
+                saldo: 40000,
+                invoiceDocCod: 'INVY',
+                tetoNegociado: 260064,
+            }),
+        ]);
+        expect(rows.find((r) => r.adiantamentoDocCod === 'P1')?.valorASerUsado).toBeCloseTo(
+            30000,
+            4,
+        );
+        expect(rows.find((r) => r.adiantamentoDocCod === 'P2')?.valorASerUsado).toBeCloseTo(
+            40000,
+            4,
+        );
     });
 });

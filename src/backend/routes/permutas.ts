@@ -13,9 +13,11 @@ import PermutaRelationalRepository from '../domain/repository/permutas/PermutaRe
 import PermutaSnapshotRepository from '../domain/repository/permutas/PermutaSnapshotRepository.js';
 import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasService.js';
 import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasService.js';
-import IngestaoPermutasService from '../domain/service/permutas/IngestaoPermutasService.js';
+import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
+import { requireRole } from '../http/auth.js';
+import { heavyRouteLimiter } from '../http/rateLimit.js';
 
 /** Zod no boundary — corpo do POST /processar (Rule: validar inputs externos). */
 const processarBodySchema = z.object({
@@ -38,10 +40,13 @@ const clienteFiltroBodySchema = z.object({
     importador: z.string().trim().min(1).optional(),
 });
 
-/** Zod no boundary — query `?priCod=&filCod=` da busca de invoice (escopada à filial). */
+/** Zod no boundary — query `?priCod=&filCod=&adtoDocCod=` da busca de invoice
+ * (escopada à filial). `adtoDocCod` (opcional) exclui o próprio adiantamento do
+ * `jaAlocado` de cada invoice → disponível real da invoice compartilhada (N:M). */
 const buscarInvoicesQuerySchema = z.object({
     priCod: z.string().trim().min(1),
     filCod: z.coerce.number().int().positive(),
+    adtoDocCod: z.string().trim().min(1).optional(),
 });
 
 /** Zod no boundary — corpo do POST /alocacoes (alocação manual N:M). */
@@ -69,6 +74,8 @@ const router = Router();
 // middleware global + heavyRouteLimiter (fan-out Conexos pesado).
 router.post(
     '/eleicao',
+    heavyRouteLimiter,
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(EleicaoPermutasService);
@@ -94,18 +101,22 @@ router.post(
 );
 
 // POST /permutas/ingestao — dispara a ingestão MANUAL (ADR-0006). Roda o MESMO
-// compute do cron (`IngestaoPermutasService`), alimentando o modelo relacional
-// (`/gestao`) + snapshot. Espera terminar e devolve os totais (a UI aguarda no
-// modal). `triggered_by` = username autenticado (auditoria O6/I5). Se já houver
-// uma ingestão rodando (advisory lock), responde 409 sem disparar fan-out novo.
+// compute do cron, alimentando o modelo relacional (`/gestao`) + snapshot. Espera
+// terminar e devolve os totais (a UI aguarda no modal). `triggered_by` = username
+// autenticado (auditoria O6/I5). Passa pelo `IngestaoCoalescerService` (ADR-0012):
+// cliques em sequência (cliente-filtro add/remove) coalescem numa rodada +
+// rerun-trailing em vez de disparar fan-out redundante / estourar o rate limit.
+// Contenção CROSS-instância (cron) ainda lança `IngestLockBusyError` → 409.
 router.post(
     '/ingestao',
+    heavyRouteLimiter,
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const service = container.resolve(IngestaoPermutasService);
+        const service = container.resolve(IngestaoCoalescerService);
         const triggeredBy = req.user?.sub ?? req.user?.email ?? 'unknown';
         try {
-            const result = await service.executar({ triggeredBy });
+            const result = await service.request({ triggeredBy });
             res.json({
                 runId: result.runId,
                 status: result.status,
@@ -160,6 +171,7 @@ router.get(
 // UPSERT por pesCod; `criado_por` = username autenticado (auditoria O6).
 router.post(
     '/cliente-filtro',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = clienteFiltroBodySchema.safeParse(req.body ?? {});
@@ -181,6 +193,7 @@ router.post(
 // DELETE /permutas/cliente-filtro/:pesCod — remove um cliente-filtro.
 router.delete(
     '/cliente-filtro/:pesCod',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const pesCod = String(req.params.pesCod);
@@ -215,7 +228,11 @@ router.get(
             return;
         }
         const service = container.resolve(AlocacaoPermutasService);
-        const invoices = await service.buscarInvoices(parsed.data.priCod, parsed.data.filCod);
+        const invoices = await service.buscarInvoices(
+            parsed.data.priCod,
+            parsed.data.filCod,
+            parsed.data.adtoDocCod,
+        );
         res.json({ invoices });
     }),
 );
@@ -224,6 +241,7 @@ router.get(
 // manual N:M cross-process (rascunho). 422 quando excede o saldo de algum lado.
 router.post(
     '/adiantamentos/:docCod/alocacoes',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = alocacaoBodySchema.safeParse(req.body ?? {});
@@ -265,6 +283,7 @@ router.post(
 // DELETE /permutas/adiantamentos/:docCod/alocacoes/:invoiceDocCod — remove alocação.
 router.delete(
     '/adiantamentos/:docCod/alocacoes/:invoiceDocCod',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(AlocacaoPermutasService);
@@ -293,6 +312,7 @@ router.get(
 // (botão "Processar"). UPSERT status='processado'; sobrevive à re-ingestão.
 router.post(
     '/adiantamentos/:docCod/processar',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const parsed = processarBodySchema.safeParse(req.body ?? {});

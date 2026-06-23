@@ -19,6 +19,7 @@ import PermutaRelationalRepository from '../../repository/permutas/PermutaRelati
 import type { AlocacaoRow } from '../../repository/permutas/PermutaAlocacaoRepository.js';
 import PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacaoRepository.js';
 import PermutaProcessamentoRepository from '../../repository/permutas/PermutaProcessamentoRepository.js';
+import PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
 import LogService from '../LogService.js';
 
 /**
@@ -36,19 +37,29 @@ export default class GestaoPermutasService {
         private processamentoRepository: PermutaProcessamentoRepository,
         @inject(PermutaAlocacaoRepository)
         private alocacaoRepository: PermutaAlocacaoRepository,
+        @inject(PermutaSnapshotRepository)
+        private snapshotRepository: PermutaSnapshotRepository,
         @inject(LogService) private logService: LogService,
     ) {}
 
     public exporGestao = async (requestId: string): Promise<GestaoPermutasResponse> => {
-        const [adiantamentos, invoices, casamentos, processamentos, declaracoes, alocacoes] =
-            await Promise.all([
-                this.relationalRepository.listAdiantamentosAtivos(),
-                this.relationalRepository.listInvoicesEmAberto(),
-                this.relationalRepository.listCasamentos(),
-                this.processamentoRepository.listProcessamentos(),
-                this.relationalRepository.listDeclaracoes(),
-                this.alocacaoRepository.listAtivas(),
-            ]);
+        const [
+            adiantamentos,
+            invoices,
+            casamentos,
+            processamentos,
+            declaracoes,
+            alocacoes,
+            ultimaIngestao,
+        ] = await Promise.all([
+            this.relationalRepository.listAdiantamentosAtivos(),
+            this.relationalRepository.listInvoicesEmAberto(),
+            this.relationalRepository.listCasamentos(),
+            this.processamentoRepository.listProcessamentos(),
+            this.relationalRepository.listDeclaracoes(),
+            this.alocacaoRepository.listAtivas(),
+            this.snapshotRepository.findLatestIngestFinishedAt(),
+        ]);
 
         // Alocações manuais (Fase 2) agrupadas por adiantamento.
         const alocacoesByAdto = new Map<string, AlocacaoRow[]>();
@@ -130,7 +141,9 @@ export default class GestaoPermutasService {
         });
 
         return {
-            geradoEm: new Date().toISOString(),
+            // Carimbo da ÚLTIMA INGESTÃO (finished_at do último run bem-sucedido),
+            // não a hora desta requisição — é o que o painel exibe ao analista.
+            ...(ultimaIngestao !== null ? { geradoEm: ultimaIngestao.toISOString() } : {}),
             fonte: 'banco',
             pendentes,
             invoicesEmAberto,
@@ -243,6 +256,8 @@ export default class GestaoPermutasService {
             ? { variacaoClassificacao: al.variacaoClassificacao }
             : {}),
         ...(al.variacaoResultado !== undefined ? { variacaoResultado: al.variacaoResultado } : {}),
+        ...(al.taxaAdiantamento !== undefined ? { taxaAdiantamento: al.taxaAdiantamento } : {}),
+        ...(al.taxaInvoice !== undefined ? { taxaInvoice: al.taxaInvoice } : {}),
         ...(al.criadoPor !== undefined ? { criadoPor: al.criadoPor } : {}),
         criadoEm: al.criadoEm.toISOString(),
     });
@@ -372,13 +387,24 @@ export default class GestaoPermutasService {
             }
             const adto = adiantamentoByDocCod.get(c.adiantamentoDocCod);
             const processamentoStatus = statusByDocCod.get(c.adiantamentoDocCod);
+            const valorASerUsado = c.valorASerUsado ?? adto?.valorMoedaNegociada ?? 0;
+            // Saldo restante do adiantamento na permuta Simples (distribuição greedy
+            // pode consumir só parte do saldo): saldoNeg(valorPermutar/taxa) − usado.
+            // Mesmo cálculo do saldoNeg usado em permuta-manual/casamento-manual.
+            const saldoNeg =
+                adto?.valorPermutar !== undefined && adto?.taxa !== undefined && adto.taxa > 0
+                    ? adto.valorPermutar / adto.taxa
+                    : undefined;
+            const saldoRestante =
+                saldoNeg !== undefined ? Math.max(0, saldoNeg - valorASerUsado) : undefined;
             grupo.adiantamentos.push({
                 docCod: c.adiantamentoDocCod,
                 referencia: adto?.referencia ?? c.adiantamentoDocCod,
-                valorASerUsado: c.valorASerUsado ?? adto?.valorMoedaNegociada ?? 0,
+                valorASerUsado,
                 // Moeda NEGOCIADA do adiantamento (USD). `c.moeda` já é a sigla
                 // negociada (ingestão), mas o `adto` lido é a fonte mais fresca.
                 moeda: adto?.moedaNegociada ?? c.moeda ?? adto?.moeda ?? 'USD',
+                ...(saldoRestante !== undefined ? { saldoRestante } : {}),
                 ...(processamentoStatus !== undefined ? { processamentoStatus } : {}),
             });
         }

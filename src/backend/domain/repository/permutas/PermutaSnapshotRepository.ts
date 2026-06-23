@@ -249,6 +249,25 @@ export default class PermutaSnapshotRepository {
         ...(r.error_message != null ? { errorMessage: String(r.error_message) } : {}),
     });
 
+    /**
+     * `finished_at` da última INGESTÃO bem-sucedida (`kind='ingest'`) — carimbo da
+     * "última ingestão" do painel. Escopa a `kind='ingest'` de propósito: só a
+     * ingestão atualiza o modelo relacional que o `/gestao` lê (uma eleição manual
+     * grava `kind='eleicao'` e NÃO mexe nesses dados — incluí-la faria o carimbo
+     * pular para um horário que não corresponde aos números exibidos). Leve (só o
+     * timestamp, sem snapshot rows).
+     */
+    public findLatestIngestFinishedAt = async (): Promise<Date | null> => {
+        const run = await this.databaseClient.selectFirst<{ finished_at: string | Date }>(
+            `SELECT finished_at FROM permuta_eleicao_run
+             WHERE kind = 'ingest' AND status = $status
+             ORDER BY finished_at DESC
+             LIMIT 1`,
+            { status: 'success' },
+        );
+        return run ? new Date(run.finished_at) : null;
+    };
+
     /** Lê o snapshot de candidatas do último run com status 'success'. */
     public findLatestSnapshot = async (): Promise<{
         runId: string;

@@ -63,6 +63,10 @@ export interface AlocacaoDetalhe {
     moeda?: string;
     variacaoClassificacao?: string;
     variacaoResultado?: number;
+    /** Taxa do adiantamento e da invoice — exibem a CONTA do juros/desconto na
+     * tela: `valorAlocado × (taxaAdiantamento − taxaInvoice) = resultado`. */
+    taxaAdiantamento?: number;
+    taxaInvoice?: number;
     criadoPor?: string;
     criadoEm: string;
 }
@@ -120,6 +124,13 @@ export interface CasamentoAdiantamento {
     referencia: string;
     valorASerUsado: number;
     moeda: string;
+    /**
+     * Saldo restante do adiantamento (em moeda negociada) após a distribuição
+     * Simples: `valorPermutar/taxa − valorASerUsado`. Quando o greedy consome só
+     * parte do saldo (ex.: o maior adto cobre a invoice sozinho), o restante fica
+     * em aberto. Opcional — ausente sem valorPermutar/taxa legíveis.
+     */
+    saldoRestante?: number;
     /** Status do analista (botão "Processar"), quando registrado. */
     processamentoStatus?: ProcessamentoStatus;
 }

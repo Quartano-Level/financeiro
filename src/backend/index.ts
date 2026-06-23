@@ -7,6 +7,7 @@ import { loadAuthEnv } from './http/authEnv.js';
 import { buildCorsOptions } from './http/cors.js';
 import { errorMiddleware } from './http/errorMiddleware.js';
 import { globalLimiter, heavyRouteLimiter } from './http/rateLimit.js';
+import { redactBody } from './http/redact.js';
 import { requestIdMiddleware } from './middleware/requestId.js';
 import authRouter from './routes/auth.js';
 import conexosRouter from './routes/conexos.js';
@@ -42,13 +43,14 @@ app.use((req: Request, res: Response, next: NextFunction) => {
         `[REQ] ${requestId} ${method} ${url}${Object.keys(query).length ? ` query=${JSON.stringify(query)}` : ''}`,
     );
     if (body && Object.keys(body).length)
-        console.log(`[REQ] ${requestId} body=${JSON.stringify(body)}`);
+        console.log(`[REQ] ${requestId} body=${JSON.stringify(redactBody(body))}`);
 
     const origJson = res.json.bind(res);
     res.json = (data: any) => {
         const ms = Date.now() - start;
         console.log(`[RES] ${requestId} ${method} ${url} → ${res.statusCode} (${ms}ms)`);
-        if (res.statusCode >= 400) console.log(`[RES] ${requestId} body=${JSON.stringify(data)}`);
+        if (res.statusCode >= 400)
+            console.log(`[RES] ${requestId} body=${JSON.stringify(redactBody(data))}`);
         return origJson(data);
     };
 
@@ -82,9 +84,11 @@ app.use('/conexos', heavyRouteLimiter);
 // Example route proving the Conexos ERP integration is live in the skeleton.
 app.use('/conexos', conexosRouter);
 
-// Permutas Frente I — Fatia 1 (READ-ONLY). Heavy fan-out to Conexos on the
-// eleicao trigger → mount under the strict limiter (security-6 / F-security-9).
-app.use('/permutas', heavyRouteLimiter);
+// Permutas Frente I. O `heavyRouteLimiter` (10/min) NÃO cobre o router inteiro —
+// só as rotas de fan-out pesado (`POST /eleicao` e `/ingestao`) o aplicam por-rota
+// (ver routes/permutas.ts). As LEITURAS (gestao/painel/cliente-filtro/importadores)
+// ficam no `globalLimiter` (100/min) — antes o limiter estrito cobria tudo e o
+// fluxo de cliente-filtro (load + ingestão) estourava 429 (card cc-auto-ingest-coalesce).
 app.use('/permutas', permutasRouter);
 
 // Central error-handling middleware — logs full detail server-side, returns

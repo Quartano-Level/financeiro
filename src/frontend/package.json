@@ -1,6 +1,6 @@
 {
   "name": "financeiro-frontend",
-  "version": "0.3.0",
+  "version": "0.4.2",
   "private": true,
   "scripts": {
     "dev": "next dev",

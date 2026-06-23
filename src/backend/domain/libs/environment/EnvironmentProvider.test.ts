@@ -9,6 +9,16 @@ jest.mock('@aws-sdk/client-ssm', () => ({
     GetParameterCommand: jest.fn().mockImplementation((input) => input),
 }));
 
+// SANDBOX (testability-1): neutraliza o dotenv. Em produção o `GetLocalEnvironmentVars`
+// chama `dotenv.config()` que recarrega o `.env` do dev — isso re-populava
+// `process.env` e contaminava o teste (CONEXOS_FIL_COD do .env local sobrescrevia o
+// cenário "ausente"). Com o config() no-op, o teste controla 100% o process.env.
+jest.mock('dotenv', () => ({
+    __esModule: true,
+    default: { config: jest.fn() },
+    config: jest.fn(),
+}));
+
 import EnvironmentProvider from './EnvironmentProvider.js';
 
 describe('EnvironmentProvider', () => {
