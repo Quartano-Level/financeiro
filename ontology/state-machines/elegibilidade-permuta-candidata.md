@@ -11,9 +11,9 @@ related_files:
   - src/backend/migrations/0012_estado_permuta_manual.sql
   - src/backend/domain/service/permutas/EleicaoPermutasService.ts
   - src/backend/domain/service/permutas/GestaoPermutasService.ts
-last_review: 2026-06-21
-states: [DESCOBERTA, ELEGIVEL, CASAMENTO_MANUAL, PERMUTA_MANUAL, BLOQUEADA]
-out_of_scope_states: [EXECUTADA]
+last_review: 2026-06-23
+states: [DESCOBERTA, ELEGIVEL, CASAMENTO_MANUAL, PERMUTA_MANUAL, BLOQUEADA, EXECUTADA]
+out_of_scope_states: []
 ---
 
 # Estado de Elegibilidade — PermutaCandidata
@@ -58,11 +58,12 @@ Toda candidata `bloqueada` carrega um **motivo** (`PermutaCandidata.motivoBloque
 > analista (a baixa/escrita final é Fatia 2). Os motivos `composto-nm`/`multiplas-invoices` viram
 > **informativos** (qual sabor de N:M), não bloqueio.
 
-> **`EXECUTADA` está FORA DE ESCOPO.** A entidade `Permuta` consumada **já existe** como
-> **alocação** rascunho (`permuta_alocacao`, ADR-0008) — ver `entities/permuta.md`. O que
-> permanece fora de escopo é a **baixa efetiva na `fin010`** (ação `reconciliarPermuta`,
-> write-back no ERP), que é a **Fase 3** — caminho de escrita não validado (risco #1,
-> ADR-0002/0003 O3). `EXECUTADA` fica em `out_of_scope_states` até a Fase 3.
+> **`EXECUTADA` agora está EM ESCOPO (Fase 3, ADR-0013).** A alocação rascunho
+> (`permuta_alocacao`, ADR-0008) é **consumida** pela ação `reconciliarPermuta`
+> (`ReconciliacaoPermutaService`), que executa a **baixa efetiva na `fin010`** via o handshake
+> de 5 chamadas (`fin010-write-contract.md`). A escrita é **gated** (flags
+> `CONEXOS_WRITE_ENABLED`/`CONEXOS_DRY_RUN`, homologação-first) e idempotente por par adto↔invoice
+> (`permuta_alocacao_execucao`, `idempotencia-reconciliacao.md`). O risco #1 deixa de estar intocado.
 
 ## Transições
 
@@ -72,6 +73,7 @@ Toda candidata `bloqueada` carrega um **motivo** (`PermutaCandidata.motivoBloque
 | T2 | `DESCOBERTA → BLOQUEADA` | `avaliarElegibilidade` / `casarInvoice` | Qualquer gate falho (`falha-gate`), 0 invoice (`sem-invoice`), sem D.I nem DUIMP (`data-base-indisponivel`), ou detalhe da PROFORMA indisponível após retries (`detail-indisponivel`, P0-3 — blip transiente, não reprovação). Anota `motivoBloqueio`. **N:M NÃO entra mais aqui (→ T3).** | 2026-06-18 |
 | T3 | `DESCOBERTA → CASAMENTO_MANUAL` | `avaliarElegibilidade` + `casarInvoice` | **4 gates satisfeitos** mas casamento **N:M** (>1 INVOICE FINALIZADA → `composto-nm` / `multiplas-invoices`) **no mesmo processo**. Falta só o analista alocar a invoice; a baixa é Fase 3. Anota `motivoBloqueio` informativo. **ADR-0005.** | 2026-06-18 |
 | T4 | `DESCOBERTA → PERMUTA_MANUAL` | `elegerAdiantamentos` (override `ClienteFiltro`) | Importador do adto está no cadastro `ClienteFiltro` ativo **E** adto `pago && saldoPermutar > 0` (seria `BLOQUEADA`, mas é cliente-filtro). Gate 4 (D.I) dispensado — a invoice cross-process traz a data-base. Motivo informativo `cliente-filtro`. **ADR-0007.** | 2026-06-20 |
+| T5 | `{ELEGIVEL, CASAMENTO_MANUAL, PERMUTA_MANUAL} → EXECUTADA` | `reconciliarPermuta` | Alocação(ões) do adto baixadas no ERP `fin010` (handshake de 5 chamadas). Por par adto↔invoice; idempotente (par `settled` é pulado). **Gated** por `CONEXOS_WRITE_ENABLED`+`CONEXOS_DRY_RUN`; dry-run não transiciona. **ADR-0013.** | 2026-06-23 |
 
 ```
                   elegerAdiantamentos
@@ -95,7 +97,11 @@ T1 ✓ │     T3 ◐ │   T4 ◓ │         T2 ✗ │             │
    ┊                  (distribui saldo em invoices,
    ┊                   ADR-0008/0009 — Fase 2)
    ▼                       ┊
-[ EXECUTADA → baixa fin010 (ação reconciliarPermuta) — Fase 3, FORA DE ESCOPO ]
+   └────────── T5: reconciliarPermuta (baixa fin010, ADR-0013) ──────────┐
+                                                                          ▼
+                                                                    ┌──────────┐
+                                                                    │ EXECUTADA│  (gated: dry-run ≠ executa)
+                                                                    └──────────┘
 ```
 
 > **CASAMENTO_MANUAL** e **PERMUTA_MANUAL** convergem na **alocação** (entidade `Permuta`,

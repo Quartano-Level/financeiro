@@ -3,6 +3,25 @@
 > Versão **da ontologia** (domínio/regras). NÃO confundir com a versão **do app**
 > (`/CHANGELOG.md` na raiz, FE+BE lockstep). Conceitos separados, cadências próprias.
 
+## v0.3.0 — Fase 3: write-back `fin010` (baixa/permuta efetiva no ERP) (2026-06-23, ADR-0013)
+
+Feature: `permutas-reconciliacao` (branch `feat/permutas-reconciliacao`, verde). A **primeira ESCRITA** do
+sistema no Conexos — o **risco arquitetural #1**. A ação **`reconciliarPermuta`** sai de `planned` →
+`partial`: consome as alocações (`permuta_alocacao`) e executa a baixa no `fin010` **adto a adto**.
+
+- **Contrato (engenharia reversa de HAR real):** a baixa é um **handshake de 5 chamadas** (criar borderô →
+  validar `tituloBaixa` → validar `tituloPermuta` → `atualizaValorLiquido` → gravar `baixas`). O ERP é a
+  fonte da verdade do valor (`bxaMnyValor` do passo 2). Documentado em `business-rules/fin010-write-contract.md`.
+- **Estado `EXECUTADA`** entra na máquina (T5); sai de `out_of_scope_states`. `ConexosClient` ganha métodos
+  de **escrita** (`criarBordero`, `validarTituloBaixa`, `validarTituloPermuta`, `atualizarValorLiquido`,
+  `gravarBaixaPermuta`) via `postGeneric` → `authenticatedPost`.
+- **Guard-rails:** `CONEXOS_WRITE_ENABLED` (default false) + `CONEXOS_DRY_RUN` (default true);
+  **homologação-first**. Dry-run monta/loga o payload sem POST.
+- **Fault-tolerance:** write-ahead + idempotência por par adto↔invoice (`permuta_alocacao_execucao`,
+  `business-rules/idempotencia-reconciliacao.md`). Anti-super-pagamento: em-aberto vivo do ERP ≤ 0 → aborta.
+- **Pendente:** validação em produção do 1º caso real; baixa parcial (invoice N:M); finalização do borderô;
+  caminho `DESCONTO`.
+
 ## v0.2.9 — distribuição greedy N:1 com teto na permuta Simples (2026-06-22, ADR-0010)
 
 Feature: `permutas-distribuicao-simples-greedy` (branch `feat/permutas-multiplas`, verde). Corrige a

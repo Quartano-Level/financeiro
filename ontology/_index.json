@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "generated": "2026-06-22",
-    "version": "0.2.9",
-    "note": "Financeiro ontology — Frente I (Permutas). v0.2.9 (2026-06-22, ADR-0010): the automatic 'Simples' casamento (1 invoice : N adiantamentos) now does a GREEDY N:1 distribution with TETO (cap) and is PARTIAL — fixes the 1408 super-permuta (was 'usa 743.040', now 'usa 260.064'). Invoice gains valorAbertoNegociado (live em-aberto / taxaInvoice = the cap, fallback valorMoedaNegociada); the auto-casamento keeps residual saldo open (like the manual allocation) and recomputes the variação cambial on the PARTIAL amount. STILL READ-ONLY on Conexos (only our snapshot permuta_casamento). New business-rule distribuicao-simples-greedy. Prior v0.2.8 SYNC (commit df90fa6, deployed): the 5 permuta features (ADR-0006 ingestão manual; pagamento parcial; ADR-0007 cliente-filtro + permuta-manual; ADR-0008 alocação N:M cross-process; ADR-0009 tipos de permuta/abas) IMPLEMENTED in src/. NEW entities: Permuta (consumada/alocação — partial) and ClienteFiltro (implemented). NEW state PERMUTA_MANUAL; derived tipoPermuta (presentation). Risco arquitetural #1 (write-back fin010 / ação reconciliarPermuta) remains PLANNED (Fase 3).",
+    "generated": "2026-06-23",
+    "version": "0.3.0",
+    "note": "Financeiro ontology — Frente I (Permutas). v0.3.0 (2026-06-23, ADR-0013): FASE 3 — write-back fin010. A baixa/permuta EFETIVA no ERP (ação reconciliarPermuta, ReconciliacaoPermutaService) saiu de planned → partial: handshake de 5 chamadas (criar borderô → validar tituloBaixa → validar tituloPermuta → atualizaValorLiquido → gravar baixas), contrato em business-rules/fin010-write-contract.md (engenharia reversa de HAR real). Estado EXECUTADA entra na máquina (T5); risco arquitetural #1 deixou de estar intocado. GATED por CONEXOS_WRITE_ENABLED+CONEXOS_DRY_RUN (default dry-run), homologação-first. Write-ahead + idempotência por par adto↔invoice (permuta_alocacao_execucao, business-rules/idempotencia-reconciliacao.md). Novos métodos de ESCRITA no ConexosClient (postGeneric → authenticatedPost). Prévio v0.2.9 (2026-06-22, ADR-0010): the automatic 'Simples' casamento (1 invoice : N adiantamentos) now does a GREEDY N:1 distribution with TETO (cap) and is PARTIAL — fixes the 1408 super-permuta (was 'usa 743.040', now 'usa 260.064'). Invoice gains valorAbertoNegociado (live em-aberto / taxaInvoice = the cap, fallback valorMoedaNegociada); the auto-casamento keeps residual saldo open (like the manual allocation) and recomputes the variação cambial on the PARTIAL amount. STILL READ-ONLY on Conexos (only our snapshot permuta_casamento). New business-rule distribuicao-simples-greedy. Prior v0.2.8 SYNC (commit df90fa6, deployed): the 5 permuta features (ADR-0006 ingestão manual; pagamento parcial; ADR-0007 cliente-filtro + permuta-manual; ADR-0008 alocação N:M cross-process; ADR-0009 tipos de permuta/abas) IMPLEMENTED in src/. NEW entities: Permuta (consumada/alocação — partial) and ClienteFiltro (implemented). NEW state PERMUTA_MANUAL; derived tipoPermuta (presentation). Risco arquitetural #1 (write-back fin010 / ação reconciliarPermuta) remains PLANNED (Fase 3).",
     "upstream": "../../produtizacao/nf-projects",
     "status_legend": {
       "implemented": "code in src/ implements the entity/action (runs in the current Express/Render stack; DDD service/repo chain)",
@@ -93,8 +93,8 @@
         "src/backend/routes/permutas.ts",
         "src/frontend/app/permutas/page.tsx"
       ],
-      "open_gap": ["write-back-fin010 (Fase 3): a baixa efetiva no ERP (ação reconciliarPermuta) não existe — risco arquitetural #1"],
-      "note": "A Permuta consumada nasce como ALOCAÇÃO rascunho (permuta_alocacao, sobrevive à re-ingestão), READ-ONLY no ERP (ADR-0008). Invariantes de saldo (Σ por adto ≤ saldo a permutar; Σ por invoice ≤ valor em aberto), mesma filial, mesma moeda, invoice com D.I. partial: alocação implementada, write-back fin010 = Fase 3 = planned."
+      "open_gap": ["validação em produção do 1º caso real de baixa fin010 (Fase 3 implementada, gated por flags)"],
+      "note": "A Permuta consumada nasce como ALOCAÇÃO rascunho (permuta_alocacao, sobrevive à re-ingestão) e é CONSUMIDA pela ação reconciliarPermuta (ADR-0013), que executa a baixa no ERP fin010 (handshake de 5 chamadas; write-ahead em permuta_alocacao_execucao). GATED (CONEXOS_WRITE_ENABLED+CONEXOS_DRY_RUN, homologação-first). Invariantes de saldo (Σ por adto ≤ saldo a permutar; Σ por invoice ≤ valor em aberto), mesma filial, mesma moeda, invoice com D.I. partial: alocação + write-back implementados; falta validar 1º caso real em produção."
     },
     "ClienteFiltro": {
       "file": "entities/cliente-filtro.md",
@@ -118,7 +118,7 @@
     "exporNoPainel": { "file": "actions/expor-no-painel.md", "entity": "PermutaCandidata", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/GestaoPermutasService.ts", "src/frontend/app/permutas/page.tsx"], "resolved_by": ["P0-8", "P0-4 (aging column populates; probe 2026-06-18)"] },
     "alocarPermuta": { "file": null, "entity": "Permuta", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/AlocacaoPermutasService.ts", "src/backend/domain/repository/permutas/PermutaAlocacaoRepository.ts"], "note": "Implementada (alocação N:M cross-process, ADR-0008). Documentada na entity Permuta; arquivo de ação dedicado a criar numa próxima curadoria se necessário." },
     "buscarInvoiceCrossProcess": { "file": null, "entity": "Permuta", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/AlocacaoPermutasService.ts"], "note": "buscarInvoices(priCod, filCod) — busca LIVE escopada à filial, valida D.I, mesma moeda (ADR-0008/0009)." },
-    "reconciliarPermuta": { "file": null, "entity": "Permuta", "status": "planned", "impl_files": [], "open_gap": ["write-back-fin010 (Fase 3)"], "note": "Baixa efetiva no ERP (fin010) — risco arquitetural #1. NÃO implementada." }
+    "reconciliarPermuta": { "file": "business-rules/fin010-write-contract.md", "entity": "Permuta", "status": "partial", "impl_files": ["src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts", "src/backend/domain/client/ConexosClient.ts", "src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts", "src/backend/migrations/0015_permuta_alocacao_execucao.sql", "src/backend/routes/permutas.ts", "src/frontend/app/permutas/page.tsx"], "open_gap": ["validação em produção do 1º caso real; baixa parcial (invoice N:M); finalização do borderô; caminho DESCONTO"], "note": "Baixa efetiva no ERP (fin010) — Fase 3 (ADR-0013). Handshake de 5 chamadas; write-ahead + idempotência (permuta_alocacao_execucao); GATED por CONEXOS_WRITE_ENABLED+CONEXOS_DRY_RUN; homologação-first. Risco arquitetural #1 deixou de estar intocado." }
   },
   "business_rules": {
     "elegibilidade-permuta": { "file": "business-rules/elegibilidade-permuta.md", "invariant": "I3", "status": "implemented", "has_canonical_test": false, "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts"], "resolved_by": ["P0-6", "P0-5", "gate-3-pago-via-detail"] },
@@ -138,7 +138,7 @@
         "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
         "src/backend/domain/service/permutas/GestaoPermutasService.ts"
       ],
-      "note": "States descoberta|elegivel|casamento-manual|permuta-manual|bloqueada implementados (T1-T4). EXECUTADA (baixa fin010) = Fase 3 = planned → partial."
+      "note": "States descoberta|elegivel|casamento-manual|permuta-manual|bloqueada implementados (T1-T4). EXECUTADA (baixa fin010) = Fase 3 (ADR-0013) = partial: T5 reconciliarPermuta implementada e gated (dry-run não transiciona)."
     }
   },
   "integrations": {

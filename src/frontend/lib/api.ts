@@ -1,12 +1,14 @@
 import { withAuthHeaders } from './auth/token'
 import type {
   ClienteFiltro,
+  ExecucaoPermuta,
   FiliaisResponse,
   GestaoPermutasResponse,
   Importador,
   IngestaoResult,
   InvoiceBuscada,
   PermutaRun,
+  ReconciliarResult,
 } from './types'
 import { gestaoPermutasFixture } from './permutas-fixture'
 
@@ -230,6 +232,48 @@ export async function criarAlocacao(
     } catch {}
     throw new Error(`API ${res.status}${detail}`)
   }
+}
+
+/**
+ * Reconcilia (baixa no ERP `fin010`) as alocações de um adiantamento — Fase 3 (ADR-0013).
+ * `dryRun=true` força o preview (monta/loga o payload, sem POST). O backend é dry-run por
+ * padrão (gated por CONEXOS_WRITE_ENABLED/DRY_RUN); a escrita real exige as flags ligadas.
+ */
+export async function reconciliarAdiantamento(
+  docCod: string,
+  opts?: { dryRun?: boolean; dataMovto?: number },
+): Promise<ReconciliarResult> {
+  const res = await fetch(
+    `${API}/permutas/adiantamentos/${encodeURIComponent(docCod)}/reconciliar`,
+    {
+      method: 'POST',
+      headers: await withAuthHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        ...(opts?.dryRun !== undefined ? { dryRun: opts.dryRun } : {}),
+        ...(opts?.dataMovto !== undefined ? { dataMovto: opts.dataMovto } : {}),
+      }),
+    },
+  )
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const j = await res.json()
+      detail = j?.error ? ` — ${j.error}` : ''
+    } catch {}
+    throw new Error(`API ${res.status}${detail}`)
+  }
+  return (await res.json()) as ReconciliarResult
+}
+
+/** Trilha de execução da baixa de um adiantamento (status por par adto↔invoice). */
+export async function fetchExecucoes(docCod: string): Promise<ExecucaoPermuta[]> {
+  const res = await fetch(
+    `${API}/permutas/adiantamentos/${encodeURIComponent(docCod)}/execucoes`,
+    { headers: await withAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  const json = (await res.json()) as { execucoes?: ExecucaoPermuta[] }
+  return json.execucoes ?? []
 }
 
 /** Remove uma alocação manual (par adto↔invoice). */

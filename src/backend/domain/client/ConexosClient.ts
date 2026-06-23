@@ -3,6 +3,13 @@ import ConexosError from '../errors/ConexosError.js';
 import RetryExecutor from '../libs/executor/RetryExecutor.js';
 import type Adiantamento from '../interface/permutas/Adiantamento.js';
 import type { VarianteDeclaracao } from '../interface/permutas/DeclaracaoImportacao.js';
+import type {
+    BaixaGravada,
+    BorderoCriado,
+    Fin010ValidacaoResponse,
+    TituloBaixaValidacao,
+    TituloPermutaValidacao,
+} from '../interface/permutas/Fin010Baixa.js';
 import {
     ADIANTAMENTO_FILTER_KEY,
     ADIANTAMENTO_FILTER_VALUE,
@@ -79,6 +86,18 @@ export interface LegacyConexosShape {
      * Returns the raw envelope (Conexos shape varies per endpoint).
      */
     getGeneric: <T>(path: string, opts?: { filCod?: number }) => Promise<T>;
+    /**
+     * Raw POST passthrough for WRITE endpoints (Fase 3 — baixa/permuta `fin010`).
+     * Unlike `listGeneric`, it does NOT unwrap a `.rows` envelope: write endpoints
+     * answer a plain object (e.g. `{ borCod }`, `{ bxaCodSeq }`, `{ messages, responseData }`).
+     * Same 401-retry + header semantics as the read path (delegates to
+     * `conexosService.authenticatedPost`).
+     */
+    postGeneric: <T>(
+        path: string,
+        body: Record<string, unknown>,
+        opts?: { filCod?: number },
+    ) => Promise<T>;
     getFiliais: () => Promise<Filial[]>;
     getFilCodDefault: () => Promise<number | null>;
 }
@@ -968,6 +987,163 @@ export default class ConexosClient {
             ...(valorTotal !== undefined ? { valorTotal } : {}),
             ...(valorAberto !== undefined ? { valorAberto } : {}),
         };
+    };
+
+    // ────────────────────────────────────────────────────────────────────────
+    // WRITE — fin010 baixa/permuta (Fase 3, risco arquitetural #1).
+    // Handshake de 5 chamadas; ver `business-rules/fin010-write-contract.md`.
+    // Toda escrita reusa o `postGeneric` (authenticatedPost: sid + cnx-filcod +
+    // cnx-usncod + retry-em-401) e o RetryExecutor, espelhando o lado de leitura.
+    // ────────────────────────────────────────────────────────────────────────
+
+    /** Passo 1 — cria o borderô (tipo permuta) e retorna o `borCod`. */
+    public criarBordero = async (params: {
+        filCod: number;
+        /** Data de movimento em epoch-ms (meia-noite UTC do dia). */
+        dataMovto: number;
+    }): Promise<BorderoCriado> => {
+        const { filCod, dataMovto } = params;
+        try {
+            return await this.retryExecutor.execute(async () => {
+                await this.legacy.ensureSid();
+                return this.legacy.postGeneric<BorderoCriado>(
+                    'fin010',
+                    {
+                        filCod,
+                        borVldTipo: 2,
+                        borVldFinalizado: 0,
+                        frontModelName: 'bordero',
+                        borDtaMvto: dataMovto,
+                    },
+                    { filCod },
+                );
+            });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: 'fin010', cause });
+        }
+    };
+
+    /** Passo 2 — valida o título da INVOICE; o ERP devolve `bxaMnyValor` + contas. */
+    public validarTituloBaixa = async (params: {
+        filCod: number;
+        borCod: number;
+        invoiceDocCod: number;
+        titCod: number;
+    }): Promise<Fin010ValidacaoResponse<TituloBaixaValidacao>> => {
+        const { filCod, borCod, invoiceDocCod, titCod } = params;
+        try {
+            return await this.retryExecutor.execute(async () => {
+                await this.legacy.ensureSid();
+                return this.legacy.postGeneric<Fin010ValidacaoResponse<TituloBaixaValidacao>>(
+                    'fin010/baixas/validacao/tituloBaixa',
+                    {
+                        bxaVldSistema: 0,
+                        docTip: 2,
+                        bxaVldCcorrente: 0,
+                        bxaVldCorrenteDc: 1,
+                        filCod,
+                        borCod,
+                        borVldTipo: 2,
+                        bxaVldAdto: 0,
+                        frontModelName: 'baixa',
+                        docCod: invoiceDocCod,
+                        titCod,
+                    },
+                    { filCod },
+                );
+            });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: 'fin010/baixas/validacao/tituloBaixa', cause });
+        }
+    };
+
+    /** Passo 3 — valida o título da PERMUTA (adiantamento); devolve dados da permuta. */
+    public validarTituloPermuta = async (params: {
+        filCod: number;
+        borCod: number;
+        adiantamentoDocCod: number;
+        bxaTitCod: number;
+    }): Promise<Fin010ValidacaoResponse<TituloPermutaValidacao>> => {
+        const { filCod, borCod, adiantamentoDocCod, bxaTitCod } = params;
+        try {
+            return await this.retryExecutor.execute(async () => {
+                await this.legacy.ensureSid();
+                return this.legacy.postGeneric<Fin010ValidacaoResponse<TituloPermutaValidacao>>(
+                    'fin010/baixas/validacao/tituloPermuta',
+                    {
+                        bxaTitCod,
+                        bxaDocCod: adiantamentoDocCod,
+                        bxaDocTip: 2,
+                        borCod,
+                        borVldTipo: 2,
+                        filCod,
+                    },
+                    { filCod },
+                );
+            });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: 'fin010/baixas/validacao/tituloPermuta', cause });
+        }
+    };
+
+    /** Passo 4 — recalcula o valor líquido com o juros informado; devolve `bxaMnyLiquido`. */
+    public atualizarValorLiquido = async (params: {
+        filCod: number;
+        borCod: number;
+        invoiceDocCod: number;
+        titCod: number;
+        valor: number;
+        juros: number;
+        desconto?: number;
+        multa?: number;
+    }): Promise<Fin010ValidacaoResponse<{ bxaMnyLiquido: number }>> => {
+        const { filCod, borCod, invoiceDocCod, titCod, valor, juros } = params;
+        try {
+            return await this.retryExecutor.execute(async () => {
+                await this.legacy.ensureSid();
+                return this.legacy.postGeneric<Fin010ValidacaoResponse<{ bxaMnyLiquido: number }>>(
+                    'fin010/baixas/validacao/atualizaValorLiquido',
+                    {
+                        titCod,
+                        docTip: 2,
+                        docCod: invoiceDocCod,
+                        borCod,
+                        borVldTipo: 2,
+                        filCod,
+                        bxaMnyMulta: params.multa ?? 0,
+                        bxaMnyValor: valor,
+                        bxaMnyDesconto: params.desconto ?? 0,
+                        bxaMnyJuros: juros,
+                    },
+                    { filCod },
+                );
+            });
+        } catch (cause) {
+            throw new ConexosError({
+                endpoint: 'fin010/baixas/validacao/atualizaValorLiquido',
+                cause,
+            });
+        }
+    };
+
+    /**
+     * Passo 5 — grava a baixa/permuta (o write efetivo). O `payload` é o objeto
+     * consolidado dos passos 2/3/4 (montado pelo serviço a partir das respostas
+     * do ERP + dados da alocação). Retorna a baixa gravada com `bxaCodSeq`.
+     */
+    public gravarBaixaPermuta = async (params: {
+        filCod: number;
+        payload: Record<string, unknown>;
+    }): Promise<BaixaGravada> => {
+        const { filCod, payload } = params;
+        try {
+            return await this.retryExecutor.execute(async () => {
+                await this.legacy.ensureSid();
+                return this.legacy.postGeneric<BaixaGravada>('fin010/baixas', payload, { filCod });
+            });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: 'fin010/baixas', cause });
+        }
     };
 
     /**

@@ -82,11 +82,25 @@ export const buildLegacyConexosAdapter = async (_config: {
         return conexosService.authenticatedGet<T>(`/${path}`, opts);
     };
 
+    /**
+     * Raw POST passthrough for WRITE endpoints (Fase 3 — `fin010` baixa/permuta).
+     * Returns the response body as-is (no `.rows` unwrapping) — write endpoints
+     * answer a plain object (`{ borCod }`, `{ bxaCodSeq }`, `{ messages, responseData }`).
+     */
+    const postGeneric = async <T>(
+        path: string,
+        body: Record<string, unknown>,
+        opts?: { filCod?: number },
+    ): Promise<T> => {
+        return conexosService.authenticatedPost<T>(`/${path}`, body, opts);
+    };
+
     return {
         ensureSid: () => conexosService.ensureSid(),
         listGeneric,
         listGenericPaginated,
         getGeneric,
+        postGeneric,
         getFiliais: () => conexosService.getFiliais(),
         getFilCodDefault: () => conexosService.getFilCodDefault(),
     };

@@ -5,6 +5,7 @@ import Link from 'next/link'
 import {
   ArrowLeftRight,
   Ban,
+  Banknote,
   CheckCircle2,
   ChevronRight,
   DatabaseZap,
@@ -21,6 +22,7 @@ import {
   fetchPermutaRuns,
   IngestaoEmAndamentoError,
   processarAdiantamento,
+  reconciliarAdiantamento,
   removerAlocacao,
   runIngestaoManual,
 } from '@/lib/api'
@@ -32,6 +34,7 @@ import type {
   PermutaPendente,
   PermutaRun,
   ProcessamentoStatus,
+  ReconciliarResult,
   StatusElegibilidade,
 } from '@/lib/types'
 import { cn, formatNumber, progressoPagamento } from '@/lib/utils'
@@ -699,6 +702,51 @@ export default function GestaoPermutasPage() {
     [alocando, load],
   )
 
+  // --- Reconciliação / baixa no ERP fin010 (Fase 3, ADR-0013) ---
+  // Abre o modal SEMPRE em dry-run primeiro: o backend monta/loga o payload sem POST
+  // (preview do borderô). A execução real é gated server-side (CONEXOS_WRITE_ENABLED +
+  // CONEXOS_DRY_RUN) — o botão "Executar baixa" só age de verdade quando o backend permite.
+  const [reconcilAdto, setReconcilAdto] = React.useState<PermutaPendente | null>(null)
+  const [reconcilResult, setReconcilResult] = React.useState<ReconciliarResult | null>(null)
+  const [reconcilLoading, setReconcilLoading] = React.useState(false)
+
+  const abrirReconciliar = React.useCallback(async (p: PermutaPendente) => {
+    setReconcilAdto(p)
+    setReconcilResult(null)
+    setReconcilLoading(true)
+    try {
+      const result = await reconciliarAdiantamento(p.docCod, { dryRun: true })
+      setReconcilResult(result)
+    } catch (err) {
+      toast.error(`Falha no preview da baixa${err instanceof Error ? ` — ${err.message}` : ''}.`)
+      setReconcilAdto(null)
+    } finally {
+      setReconcilLoading(false)
+    }
+  }, [])
+
+  const executarReconciliar = React.useCallback(async () => {
+    if (!reconcilAdto) return
+    setReconcilLoading(true)
+    try {
+      const result = await reconciliarAdiantamento(reconcilAdto.docCod, { dryRun: false })
+      setReconcilResult(result)
+      if (result.dryRun) {
+        toast.info('Escrita desabilitada no servidor (dry-run). Payload validado, sem baixa real.')
+      } else {
+        const ok = result.resultados.filter((r) => r.status === 'settled').length
+        const erros = result.resultados.filter((r) => r.status === 'error').length
+        if (erros > 0) toast.error(`${erros} baixa(s) falharam — veja o detalhe.`)
+        if (ok > 0) toast.success(`${ok} baixa(s) gravada(s) no fin010 (borderô ${result.borCod}).`)
+        await load()
+      }
+    } catch (err) {
+      toast.error(`Falha ao executar a baixa${err instanceof Error ? ` — ${err.message}` : ''}.`)
+    } finally {
+      setReconcilLoading(false)
+    }
+  }, [reconcilAdto, load])
+
   // Reflete os dados frescos no modal de alocação após cada load().
   const alocandoAtual =
     alocando != null
@@ -877,9 +925,24 @@ export default function GestaoPermutasPage() {
                 {p.alocacoes?.length ?? 0}
               </TableCell>
               <TableCell className="text-right">
-                <Button size="sm" variant="outline" onClick={() => abrirAlocar(p)}>
-                  <ArrowLeftRight aria-hidden /> Alocar
-                </Button>
+                <div className="flex justify-end gap-2">
+                  <Button size="sm" variant="outline" onClick={() => abrirAlocar(p)}>
+                    <ArrowLeftRight aria-hidden /> Alocar
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={(p.alocacoes?.length ?? 0) === 0}
+                    title={
+                      (p.alocacoes?.length ?? 0) === 0
+                        ? 'Aloque ao menos uma invoice antes de baixar'
+                        : 'Pré-visualizar e baixar no ERP (fin010)'
+                    }
+                    onClick={() => abrirReconciliar(p)}
+                  >
+                    <Banknote aria-hidden /> Baixar
+                  </Button>
+                </div>
               </TableCell>
             </TableRow>
           ))}
@@ -2103,6 +2166,127 @@ export default function GestaoPermutasPage() {
               <DialogFooter>
                 <Button variant="outline" onClick={() => setAlocando(null)}>
                   Fechar
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Baixa no ERP fin010 (Fase 3) — preview (dry-run) → executar */}
+          <Dialog
+            open={reconcilAdto != null}
+            onOpenChange={(open) => {
+              if (!open) {
+                setReconcilAdto(null)
+                setReconcilResult(null)
+              }
+            }}
+          >
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Baixar permuta no ERP (fin010)</DialogTitle>
+                <DialogDescription>
+                  Adiantamento {reconcilAdto?.docCod} · {reconcilAdto?.exportador}. A baixa é
+                  executada par a par (adiantamento → invoice) no borderô do Conexos.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogBody className="space-y-4">
+                {reconcilLoading && !reconcilResult ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Spinner /> Montando o preview do borderô…
+                  </div>
+                ) : null}
+
+                {reconcilResult ? (
+                  <>
+                    <div
+                      className={cn(
+                        'rounded-md border p-3 text-sm',
+                        reconcilResult.dryRun
+                          ? 'border-warning/40 bg-warning-subtle text-warning-foreground'
+                          : 'border-success/40 bg-success-subtle text-success-foreground',
+                      )}
+                    >
+                      {reconcilResult.dryRun ? (
+                        <>
+                          <strong>Pré-visualização (dry-run).</strong> Nenhuma baixa foi gravada
+                          no ERP.{' '}
+                          {!reconcilResult.writeEnabled
+                            ? 'A escrita está DESABILITADA no servidor (CONEXOS_WRITE_ENABLED=false).'
+                            : 'Confira os campos abaixo antes de executar.'}
+                        </>
+                      ) : (
+                        <>
+                          <strong>Baixa executada.</strong> Borderô {reconcilResult.borCod} no
+                          fin010.
+                        </>
+                      )}
+                    </div>
+
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Invoice</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Juros (variação)</TableHead>
+                          <TableHead className="text-right">Conta</TableHead>
+                          <TableHead className="text-right">bxaCodSeq</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {reconcilResult.resultados.map((r) => {
+                          const juros = r.payload?.bxaMnyJuros
+                          const conta = r.payload?.bxaCodGerJuros
+                          return (
+                            <TableRow key={r.invoiceDocCod}>
+                              <TableCell className="font-medium">{r.invoiceDocCod}</TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant={
+                                    r.status === 'settled'
+                                      ? 'default'
+                                      : r.status === 'error'
+                                        ? 'destructive'
+                                        : 'secondary'
+                                  }
+                                >
+                                  {r.status}
+                                </Badge>
+                                {r.erro ? (
+                                  <span className="ml-2 text-xs text-destructive">{r.erro}</span>
+                                ) : null}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {typeof juros === 'number' ? formatNumber(juros) : '—'}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {typeof conta === 'number' ? conta : '—'}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {r.bxaCodSeq ?? '—'}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
+                      </TableBody>
+                    </Table>
+                  </>
+                ) : null}
+              </DialogBody>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setReconcilAdto(null)
+                    setReconcilResult(null)
+                  }}
+                >
+                  Fechar
+                </Button>
+                <Button
+                  disabled={reconcilLoading || reconcilResult == null}
+                  onClick={executarReconciliar}
+                >
+                  {reconcilLoading ? <Spinner /> : <Banknote aria-hidden />} Executar baixa
                 </Button>
               </DialogFooter>
             </DialogContent>

@@ -9,12 +9,14 @@ import { PROCESSAMENTO_STATUS } from '../domain/interface/permutas/Processamento
 import AlocacaoPermutasService from '../domain/service/permutas/AlocacaoPermutasService.js';
 import ClienteFiltroRepository from '../domain/repository/permutas/ClienteFiltroRepository.js';
 import PermutaProcessamentoRepository from '../domain/repository/permutas/PermutaProcessamentoRepository.js';
+import PermutaExecucaoRepository from '../domain/repository/permutas/PermutaExecucaoRepository.js';
 import PermutaRelationalRepository from '../domain/repository/permutas/PermutaRelationalRepository.js';
 import PermutaSnapshotRepository from '../domain/repository/permutas/PermutaSnapshotRepository.js';
 import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasService.js';
 import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasService.js';
 import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
+import ReconciliacaoPermutaService from '../domain/service/permutas/ReconciliacaoPermutaService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { requireRole } from '../http/auth.js';
 import { heavyRouteLimiter } from '../http/rateLimit.js';
@@ -24,6 +26,20 @@ const processarBodySchema = z.object({
     invoiceDocCod: z.string().trim().min(1).optional(),
     observacao: z.string().trim().min(1).optional(),
 });
+
+/** Zod no boundary — corpo do POST /reconciliar (Fase 3 — baixa no ERP). */
+const reconciliarBodySchema = z.object({
+    /** Data de movimento do borderô (epoch-ms). Default: meia-noite UTC de hoje. */
+    dataMovto: z.number().int().positive().optional(),
+    /** Força dry-run (preview sem POST), mesmo com escrita habilitada. */
+    dryRun: z.boolean().optional(),
+});
+
+/** Meia-noite UTC do dia atual em epoch-ms (default do borDtaMvto). */
+const todayUtcMidnightMs = (): number => {
+    const now = new Date();
+    return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+};
 
 /** Quantas runs o modal de auditoria mostra por padrão / no máximo. */
 const RUNS_DEFAULT_LIMIT = 10;
@@ -333,6 +349,46 @@ router.post(
             ...(parsed.data.observacao !== undefined ? { observacao: parsed.data.observacao } : {}),
         });
         res.json({ adiantamentoDocCod: docCod, status: PROCESSAMENTO_STATUS.PROCESSADO });
+    }),
+);
+
+// POST /permutas/adiantamentos/:docCod/reconciliar — Fase 3 (risco #1): executa a BAIXA
+// efetiva no ERP (fin010) a partir das alocações. heavyRouteLimiter (fan-out Conexos) +
+// admin. Guard-rails de escrita (CONEXOS_WRITE_ENABLED/DRY_RUN) vivem no serviço; default
+// é dry-run (monta/loga o payload, sem POST). Ver business-rules/fin010-write-contract.md.
+router.post(
+    '/adiantamentos/:docCod/reconciliar',
+    requireRole('admin'),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = reconciliarBodySchema.safeParse(req.body ?? {});
+        if (!parsed.success) {
+            res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
+            return;
+        }
+        const docCod = String(req.params.docCod);
+        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const service = container.resolve(ReconciliacaoPermutaService);
+        const result = await service.reconciliar({
+            adiantamentoDocCod: docCod,
+            executadoPor,
+            dataMovto: parsed.data.dataMovto ?? todayUtcMidnightMs(),
+            ...(parsed.data.dryRun !== undefined ? { dryRunOverride: parsed.data.dryRun } : {}),
+        });
+        res.json(result);
+    }),
+);
+
+// GET /permutas/adiantamentos/:docCod/execucoes — trilha de execução da baixa (status por par).
+router.get(
+    '/adiantamentos/:docCod/execucoes',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const docCod = String(req.params.docCod);
+        const repository = container.resolve(PermutaExecucaoRepository);
+        const execucoes = await repository.listByAdiantamento(docCod);
+        res.json({ adiantamentoDocCod: docCod, execucoes });
     }),
 );
 

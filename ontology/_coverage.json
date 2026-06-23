@@ -1,10 +1,10 @@
 {
   "_meta": {
-    "generated": "2026-06-22",
-    "version": "0.2.9",
-    "note": "Coverage of ontology entities/actions by implemented code. v0.2.9 (2026-06-22, ADR-0010): NEW business-rule distribuicao-simples-greedy (auto-casamento Simples N:1 = greedy + teto da invoice + parcial; fixes the 1408 super-permuta). business_rules 4→5; first business-rule WITH canonical tests (with_tests 0→1). Invoice gains valorAbertoNegociado (cap). STILL READ-ONLY on Conexos; the only remaining 'planned' work in Frente I is the write-back to fin010 (ação reconciliarPermuta, Fase 3 — risco arquitetural #1): the Permuta entity is 'partial' and reconciliarPermuta is 'planned'. Prior v0.2.8 SYNC (commit df90fa6, deployed): the 5 permuta features live in src/ (ADR-0006..0009).",
+    "generated": "2026-06-23",
+    "version": "0.3.0",
+    "note": "Coverage of ontology entities/actions by implemented code. v0.3.0 (2026-06-23, ADR-0013): FASE 3 — write-back fin010. reconciliarPermuta passou de planned → partial (ReconciliacaoPermutaService + ConexosClient write methods + permuta_alocacao_execucao). NÃO é mais READ-ONLY no Conexos: a baixa efetiva existe (gated por flags, homologação-first, dry-run default). NEW business-rules fin010-write-contract + idempotencia-reconciliacao. Risco arquitetural #1 deixou de estar intocado. Prior v0.2.9 (2026-06-22, ADR-0010): NEW business-rule distribuicao-simples-greedy. business_rules 4→5.",
     "upstream": "../../produtizacao/nf-projects",
-    "last_feature": "permutas-distribuicao-simples-greedy (ADR-0010, branch feat/permutas-multiplas, green): greedy N:1 distribution with teto (invoice live em-aberto) + partial auto-casamento + variação on partial amount. READ-ONLY on Conexos. Prior: permutas-multiplas (df90fa6, ADR-0006..0009)."
+    "last_feature": "permutas-reconciliacao (ADR-0013, branch feat/permutas-reconciliacao, green): write-back fin010 (baixa/permuta), handshake de 5 chamadas, write-ahead + idempotência, GATED (CONEXOS_WRITE_ENABLED+CONEXOS_DRY_RUN). Prior: permutas-distribuicao-simples-greedy (ADR-0010)."
   },
   "summary": {
     "entities_total": 7,

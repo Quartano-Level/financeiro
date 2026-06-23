@@ -108,8 +108,30 @@ Gate 3 é o estrito. Distribuição: 70 NÃO PAGO · 332 TOTALMENTE PAGO · 6 PA
 (`permutar=0`). Hoje o Gate 3 estrito o **BLOQUEIA**. Pendente: confirmar com os analistas se um resíduo
 de centavos conta como TOTALMENTE PAGO e qual o teto de "residual". Ver follow-up no inbox.
 
-## Fora de escopo (Fatia 1)
+## ESCRITA — `fin010` baixa/permuta (Fase 3, ADR-0013)
 
-- **`fin010` (ESCRITA)** — executar permuta / baixa em BAIXAS PERMUTAS. É a Fatia 2; o caminho
-  de **write-back no ERP não existe e não foi validado** (risco arquitetural #1, ADR-0002/0003 O3).
-  Esta integração documenta **só leitura**.
+A **primeira escrita** do sistema no Conexos. Contrato completo (endpoints, payloads, mapeamento) em
+`business-rules/fin010-write-contract.md`; idempotência/fault-tolerance em
+`business-rules/idempotencia-reconciliacao.md`. Não é um POST único — é um **handshake de 5 chamadas**
+(todas `POST`, base `/api`):
+
+| # | Endpoint | Papel |
+|---|----------|-------|
+| 1 | `POST /api/fin010` | cria o borderô → retorna `borCod` |
+| 2 | `POST /api/fin010/baixas/validacao/tituloBaixa` | valida a invoice → ERP devolve `bxaMnyValor` (em-aberto vivo) |
+| 3 | `POST /api/fin010/baixas/validacao/tituloPermuta` | valida o adiantamento → dados da permuta |
+| 4 | `POST /api/fin010/baixas/validacao/atualizaValorLiquido` | recalcula líquido com o juros |
+| 5 | `POST /api/fin010/baixas` | **grava** a baixa/permuta → `bxaCodSeq` (confirmação) |
+
+- **Reuso da infra de leitura:** `ConexosClient.{criarBordero,validarTituloBaixa,validarTituloPermuta,
+  atualizarValorLiquido,gravarBaixaPermuta}` → `postGeneric` → `authenticatedPost` (sid + `cnx-filcod` +
+  `cnx-usncod` + retry-em-401). Mesmo `RetryExecutor`, mesmo `ConexosError`.
+- **Guard-rails:** `CONEXOS_WRITE_ENABLED` (default false) + `CONEXOS_DRY_RUN` (default true);
+  **homologação-first** (`CONEXOS_BASE_URL=https://columbiatrading-hml.conexos.cloud`, mesmas
+  credenciais/`filCod`). Dry-run monta/loga o payload sem POST.
+- **Conta de juros = 131** (VARIAÇÃO CAMBIAL PASSIVA REALIZADA); o ERP é a fonte da verdade do valor
+  (`bxaMnyValor` do passo 2), nunca o nosso `valor_alocado` (anti-super-pagamento).
+
+### Ainda não observado no ERP (follow-up)
+- Baixa **parcial** (invoice compartilhada N:M); finalização do borderô (`borVldFinalizado`); caminho
+  `DESCONTO` (conta gerencial 94). O HAR cobriu 1 adto → 1 invoice cheia, classificação `JUROS`.

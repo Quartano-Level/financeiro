@@ -26,6 +26,15 @@ export default class EnvironmentVars {
     public clientName: string;
     public awsRegion: string;
 
+    /**
+     * Fase 3 (ADR-0013) — guard-rails da ESCRITA no `fin010`. `conexosWriteEnabled`
+     * liga o caminho de escrita (default false); `conexosDryRun` (default true) faz o
+     * serviço montar/logar o payload SEM POST. Escrita real exige write=true E dry=false.
+     * Toggles de deploy (não segredos por-tenant) — lidos de process.env em ambos os modos.
+     */
+    public conexosWriteEnabled: boolean;
+    public conexosDryRun: boolean;
+
     constructor({
         databaseConnectionString,
         conexosLogin,
@@ -39,6 +48,8 @@ export default class EnvironmentVars {
         environment,
         clientName,
         awsRegion,
+        conexosWriteEnabled,
+        conexosDryRun,
     }: {
         databaseConnectionString: string;
         conexosLogin: string;
@@ -52,6 +63,8 @@ export default class EnvironmentVars {
         environment: string;
         clientName: string;
         awsRegion: string;
+        conexosWriteEnabled: boolean;
+        conexosDryRun: boolean;
     }) {
         this.databaseConnectionString = databaseConnectionString;
         this.conexosLogin = conexosLogin;
@@ -65,5 +78,7 @@ export default class EnvironmentVars {
         this.environment = environment;
         this.clientName = clientName;
         this.awsRegion = awsRegion;
+        this.conexosWriteEnabled = conexosWriteEnabled;
+        this.conexosDryRun = conexosDryRun;
     }
 }

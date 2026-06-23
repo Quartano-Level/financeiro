@@ -43,10 +43,13 @@ universality_evidence:
 # Permuta (consumada / alocação)
 
 > A **Permuta consumada**: a reconciliação efetiva entre um `Adiantamento` (PROFORMA,
-> lado-débito) e uma `Invoice` (lado-crédito). Hoje materializada como uma **ALOCAÇÃO
+> lado-débito) e uma `Invoice` (lado-crédito). Materializada como uma **ALOCAÇÃO
 > rascunho** (`permuta_alocacao`) — o analista monta quem-casa-com-quem e por quanto;
-> a **baixa final no ERP** (`fin010`, ação `reconciliarPermuta`) é a **Fase 3** e ainda
-> **não** existe. Por isso `implementation_status: partial`.
+> a **baixa final no ERP** (`fin010`, ação `reconciliarPermuta`) é a **Fase 3** (ADR-0013),
+> agora **implementada** (handshake de 5 chamadas, write-ahead em `permuta_alocacao_execucao`),
+> mas **gated**: roda em **dry-run por padrão** e a escrita real exige `CONEXOS_WRITE_ENABLED`
+> + `CONEXOS_DRY_RUN=false`, validada em homologação primeiro. Segue `implementation_status: partial`
+> até a validação em produção do 1º caso real.
 
 ## Por que "Permuta" e não mais "candidata"
 
@@ -118,9 +121,17 @@ calcula `saldoRestante` (saldo − Σ alocado) e expõe as `alocacoes` por adian
   (escopada à filial), enriquece valor/taxa negociada (`com308`), valida D.I (`imp019`/`imp223`).
 - A alocação em si é persistida **localmente** (`permuta_alocacao`), não no ERP.
 
-## Fora de escopo (Fase 3 — write-back `fin010`)
+## Fase 3 — write-back `fin010` (implementado, gated)
 
 - A **baixa/reconciliação efetiva** no ERP Conexos (`fin010`, BAIXAS PERMUTAS, Etapa 6) é a
-  **Fase 3** — risco arquitetural #1 (caminho de write-back não validado, ADR-0002/0003 O3).
-- A ação **`reconciliarPermuta`** (que consumirá estas alocações e escreverá no ERP) **ainda não
-  existe** — será modelada quando a Fase 3 chegar (`/feature-new permutas` Fase 3).
+  **Fase 3** (ADR-0013) — o risco arquitetural #1. Antes "intocado"; agora **implementado e
+  validado-em-homologação**, ainda **gated** por flags (`CONEXOS_WRITE_ENABLED` + `CONEXOS_DRY_RUN`).
+- A ação **`reconciliarPermuta`** (`ReconciliacaoPermutaService`) consome as alocações de um
+  adiantamento e executa a baixa **adto a adto** via o **handshake de 5 chamadas** do `fin010`
+  (`fin010-write-contract.md`). Write-ahead + idempotência em `permuta_alocacao_execucao`
+  (`idempotencia-reconciliacao.md`).
+- **Anti-super-pagamento:** o valor a baixar vem do **em-aberto vivo do ERP** (passo 2), não do
+  rascunho local; em-aberto ≤ 0 → aborta.
+- **Pendente de validação em produção:** o 1º caso real controlado (reversível, com o analista
+  acompanhando). Casos ainda não observados no ERP: baixa **parcial** (invoice N:M), finalização do
+  borderô, `DESCONTO`.

@@ -65,6 +65,9 @@ export default class EnvironmentProvider {
             environment: this.readEnv('environment', 'local'),
             clientName: this.readEnv('client_name', 'local'),
             awsRegion: this.readEnv('aws_region', this.readEnv('AWS_REGION', 'us-east-1')),
+            // Fase 3 (ADR-0013): escrita fin010 desligada por padrão; dry-run ligado por padrão.
+            conexosWriteEnabled: this.readEnv('CONEXOS_WRITE_ENABLED') === 'true',
+            conexosDryRun: this.readEnv('CONEXOS_DRY_RUN') !== 'false',
         });
     };
 
@@ -89,6 +92,9 @@ export default class EnvironmentProvider {
             environment: this.readEnv('environment'),
             clientName: this.readEnv('client_name'),
             awsRegion: this.readEnv('aws_region', this.readEnv('AWS_REGION', 'us-east-1')),
+            // Fase 3 (ADR-0013): toggles de deploy (env), não segredos por-tenant.
+            conexosWriteEnabled: this.readEnv('CONEXOS_WRITE_ENABLED') === 'true',
+            conexosDryRun: this.readEnv('CONEXOS_DRY_RUN') !== 'false',
         });
     };
 

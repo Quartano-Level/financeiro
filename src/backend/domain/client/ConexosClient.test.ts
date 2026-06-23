@@ -7,6 +7,7 @@ const buildLegacy = (): jest.Mocked<LegacyConexosShape> => ({
     listGeneric: jest.fn(),
     listGenericPaginated: jest.fn().mockResolvedValue({ count: 0, rows: [] }),
     getGeneric: jest.fn().mockResolvedValue({ rows: [] }),
+    postGeneric: jest.fn().mockResolvedValue({}),
     getFiliais: jest.fn().mockResolvedValue([]),
     getFilCodDefault: jest.fn().mockResolvedValue(null),
 });
@@ -1337,6 +1338,133 @@ describe('ConexosClient', () => {
             expect(detail.pago).toBe(true);
             // Quirk path succeeds on the first attempt — no retry.
             expect(legacy.getGeneric).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('fin010 write methods (Fase 3 — baixa/permuta)', () => {
+        it('criarBordero posts the borderô payload and returns borCod', async () => {
+            const legacy = buildLegacy();
+            legacy.postGeneric.mockResolvedValue({
+                borCod: 1999,
+                filCod: 4,
+                borVldTipo: 2,
+                borDtaMvto: 1782172800000,
+            });
+            const client = new ConexosClient(legacy);
+
+            const out = await client.criarBordero({ filCod: 4, dataMovto: 1782172800000 });
+
+            expect(out.borCod).toBe(1999);
+            expect(legacy.postGeneric).toHaveBeenCalledWith(
+                'fin010',
+                {
+                    filCod: 4,
+                    borVldTipo: 2,
+                    borVldFinalizado: 0,
+                    frontModelName: 'bordero',
+                    borDtaMvto: 1782172800000,
+                },
+                { filCod: 4 },
+            );
+        });
+
+        it('validarTituloBaixa sends the invoice docCod and titCod', async () => {
+            const legacy = buildLegacy();
+            legacy.postGeneric.mockResolvedValue({
+                messages: [{ valid: 'AVISO' }],
+                responseData: { bxaMnyValor: 40879.9, bxaCodGerJuros: 58 },
+            });
+            const client = new ConexosClient(legacy);
+
+            const out = await client.validarTituloBaixa({
+                filCod: 4,
+                borCod: 1999,
+                invoiceDocCod: 5078,
+                titCod: 1,
+            });
+
+            expect(out.responseData?.bxaMnyValor).toBe(40879.9);
+            const [path, body] = legacy.postGeneric.mock.calls[0];
+            expect(path).toBe('fin010/baixas/validacao/tituloBaixa');
+            expect(body).toMatchObject({ docCod: 5078, titCod: 1, borCod: 1999, docTip: 2 });
+        });
+
+        it('validarTituloPermuta sends the adiantamento docCod', async () => {
+            const legacy = buildLegacy();
+            legacy.postGeneric.mockResolvedValue({
+                messages: [{ valid: 'SUCESSO' }],
+                responseData: { gerNumPermuta: 198, pesCod: 2658, bxaMnyValorPermuta: 41175.97 },
+            });
+            const client = new ConexosClient(legacy);
+
+            await client.validarTituloPermuta({
+                filCod: 4,
+                borCod: 1999,
+                adiantamentoDocCod: 2767,
+                bxaTitCod: 1,
+            });
+
+            const [path, body] = legacy.postGeneric.mock.calls[0];
+            expect(path).toBe('fin010/baixas/validacao/tituloPermuta');
+            expect(body).toMatchObject({ bxaDocCod: 2767, bxaTitCod: 1, borCod: 1999 });
+        });
+
+        it('atualizarValorLiquido sends valor + juros and returns liquido', async () => {
+            const legacy = buildLegacy();
+            legacy.postGeneric.mockResolvedValue({
+                messages: [{ valid: 'SUCESSO' }],
+                responseData: { bxaMnyLiquido: 41099.9 },
+            });
+            const client = new ConexosClient(legacy);
+
+            const out = await client.atualizarValorLiquido({
+                filCod: 4,
+                borCod: 1999,
+                invoiceDocCod: 5078,
+                titCod: 1,
+                valor: 40879.9,
+                juros: 220,
+            });
+
+            expect(out.responseData?.bxaMnyLiquido).toBe(41099.9);
+            const [, body] = legacy.postGeneric.mock.calls[0];
+            expect(body).toMatchObject({
+                bxaMnyValor: 40879.9,
+                bxaMnyJuros: 220,
+                bxaMnyDesconto: 0,
+            });
+        });
+
+        it('gravarBaixaPermuta posts the consolidated payload and returns bxaCodSeq', async () => {
+            const legacy = buildLegacy();
+            legacy.postGeneric.mockResolvedValue({
+                bxaCodSeq: 1,
+                borCod: 1999,
+                docCod: 5078,
+                bxaDocCod: 2767,
+                bxaMnyValor: 40879.9,
+                bxaMnyJuros: 220,
+                bxaMnyLiquido: 41099.9,
+            });
+            const client = new ConexosClient(legacy);
+
+            const payload = { borCod: 1999, docCod: 5078, bxaDocCod: 2767, bxaMnyJuros: 220 };
+            const out = await client.gravarBaixaPermuta({ filCod: 4, payload });
+
+            expect(out.bxaCodSeq).toBe(1);
+            expect(legacy.postGeneric).toHaveBeenCalledWith('fin010/baixas', payload, {
+                filCod: 4,
+            });
+        });
+
+        it('wraps write failures in ConexosError', async () => {
+            const legacy = buildLegacy();
+            legacy.postGeneric.mockRejectedValue(new Error('upstream 500'));
+            const client = new ConexosClient(legacy);
+
+            await expect(client.criarBordero({ filCod: 4, dataMovto: 1 })).rejects.toBeInstanceOf(
+                ConexosError,
+            );
         });
     });
 });

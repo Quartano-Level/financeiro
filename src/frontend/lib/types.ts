@@ -239,3 +239,44 @@ export interface GestaoPermutasResponse {
     jaPermutado: number
   }
 }
+
+/** Status de execução da baixa no ERP, por par adto↔invoice (Fase 3, ADR-0013). */
+export type ExecucaoStatus = 'pending' | 'reconciling' | 'settled' | 'error'
+
+/** Resultado de UM par adto→invoice numa chamada de reconciliação. */
+export interface ResultadoAlocacao {
+  invoiceDocCod: string
+  status: ExecucaoStatus | 'dry-run' | 'skipped'
+  dryRun: boolean
+  borCod?: number
+  bxaCodSeq?: number
+  valorBaixado?: number
+  erro?: string
+  payload?: Record<string, unknown>
+}
+
+/** Resposta do POST /reconciliar (Fase 3). */
+export interface ReconciliarResult {
+  adiantamentoDocCod: string
+  dryRun: boolean
+  writeEnabled: boolean
+  borCod?: number
+  resultados: ResultadoAlocacao[]
+}
+
+/** Trilha persistida de execução (GET /execucoes). */
+export interface ExecucaoPermuta {
+  idempotencyKey: string
+  adiantamentoDocCod: string
+  invoiceDocCod: string
+  filCod: number
+  status: ExecucaoStatus
+  dryRun: boolean
+  borCod?: number
+  bxaCodSeq?: number
+  valorBaixado?: number
+  erroMensagem?: string
+  executadoPor?: string
+  criadoEm: string
+  atualizadoEm: string
+}
