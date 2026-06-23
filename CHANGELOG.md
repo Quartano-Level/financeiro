@@ -1,5 +1,28 @@
 # Columbia Financeiro — Changelog
 
+## v0.5.0 (2026-06-23) — Fase 3: write-back fin010 (baixa/permuta efetiva no ERP)
+
+A **primeira escrita** do sistema no Conexos — o risco arquitetural #1. A ação `reconciliarPermuta`
+consome as alocações e executa a baixa no `fin010` adto a adto, via o **handshake de 5 chamadas**
+descoberto por engenharia reversa de um HAR real. **Gated** (escrita desligada + dry-run por padrão,
+homologação-first). ADR-0013, ontologia v0.3.0.
+
+- feat(permutas): `ReconciliacaoPermutaService` + métodos de escrita no `ConexosClient`
+  (criarBordero/validarTituloBaixa/validarTituloPermuta/atualizarValorLiquido/gravarBaixaPermuta via
+  `postGeneric` → `authenticatedPost`). Rotas `POST /adiantamentos/:docCod/reconciliar` e `GET .../execucoes`.
+- feat(permutas): write-ahead + idempotência por par adto↔invoice (`permuta_alocacao_execucao`, 0015).
+  Guard-rails via `EnvironmentProvider` (`CONEXOS_WRITE_ENABLED`/`CONEXOS_DRY_RUN`).
+- feat(frontend): ação "Baixar" na aba cross-process → modal de preview (dry-run) + "Executar baixa".
+- fix(permutas): remediação dos P0 do Regis-Review 2026-06-23-1518 (10/10):
+  - escritas (criarBordero/gravarBaixaPermuta) fora do `RetryExecutor` → sem baixa duplicada;
+  - anti-drift I-Write-1 (aborta se o ERP quer baixar > alocado esperado);
+  - `borCod` persistido no write-ahead (recuperação de borderô órfão);
+  - envelope `messages` (`valid='ERRO'` aborta); testes do `PermutaExecucaoRepository`;
+  - flags em `render.yaml`/`.env.example` + runbook `docs/runbooks/fin010-write-cutover.md`.
+- Pendente (P1/P2/P3 → inbox): validar contrato single-HAR em homologação (baixa parcial, DESCONTO,
+  finalização do borderô) antes de `CONEXOS_WRITE_ENABLED=true` em produção; ADR multi-tenant; deadline/cap
+  na rota; separar write client; extrair modal do `page.tsx`.
+
 ## v0.4.2 (2026-06-22) — hardening: coalescing da ingestão + escopo do rate limiter (Lote B do Regis)
 
 - fix(perf): mata o HTTP 429 do fluxo de cliente-filtro (cc-auto-ingest-coalesce).
