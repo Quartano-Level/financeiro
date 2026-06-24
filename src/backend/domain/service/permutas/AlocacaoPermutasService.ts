@@ -337,22 +337,57 @@ export default class AlocacaoPermutasService {
         if (somaInvoices <= 0 || saldoNeg + 1 < somaInvoices) return false;
 
         // Cria as alocações (adto → cada invoice o seu disponível). `alocar` capa no disponível da
-        // invoice e no saldo do adto; como saldoNeg ≥ Σ invoices, tudo cabe.
-        for (const inv of invoices) {
-            const disponivel = (inv.valorMoedaNegociada ?? 0) - inv.jaAlocado;
-            if (disponivel > 0) {
-                await this.alocar({
-                    adiantamentoDocCod,
-                    invoiceDocCod: inv.docCod,
-                    invoicePriCod: adto.priCod,
-                    valorAlocado: disponivel,
-                    criadoPor,
-                });
+        // invoice e no saldo do adto; como saldoNeg ≥ Σ invoices, tudo cabe. ATÔMICO (all-or-nothing).
+        const itens = invoices
+            .map((inv) => ({
+                invoiceDocCod: inv.docCod,
+                invoicePriCod: adto.priCod,
+                valorAlocado: (inv.valorMoedaNegociada ?? 0) - inv.jaAlocado,
+            }))
+            .filter((it) => it.valorAlocado > 0);
+        return this.criarRascunhosAtomico(adiantamentoDocCod, itens, criadoPor);
+    };
+
+    /**
+     * Cria os rascunhos de alocação adto→invoice de forma ATÔMICA (all-or-nothing): se um `alocar`
+     * falhar no meio (ex.: queda do Conexos), REVERTE os já criados nesta chamada — evita rascunho
+     * PARCIAL que viraria meia-permuta no `fin010` na baixa seguinte. Re-lança o erro original.
+     * Retorna `true` só se TODOS foram criados; `false` se a lista veio vazia.
+     */
+    private criarRascunhosAtomico = async (
+        adiantamentoDocCod: string,
+        itens: Array<{ invoiceDocCod: string; invoicePriCod: string; valorAlocado: number }>,
+        criadoPor: string,
+    ): Promise<boolean> => {
+        if (itens.length === 0) return false;
+        const criadas: string[] = [];
+        try {
+            for (const it of itens) {
+                await this.alocar({ adiantamentoDocCod, ...it, criadoPor });
+                criadas.push(it.invoiceDocCod);
             }
+        } catch (err) {
+            // Rollback dos rascunhos criados nesta chamada (compensação — são rascunhos no banco
+            // próprio, sem efeito no ERP ainda). Garante que a baixa não veja alocação parcial.
+            for (const invoiceDocCod of criadas) {
+                try {
+                    await this.remover(adiantamentoDocCod, invoiceDocCod);
+                } catch {
+                    // best-effort: a baixa ainda relê em-aberto vivo e capa por invoice.
+                }
+            }
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message: 'auto-alocação revertida (falha parcial) — nada persistido',
+                data: {
+                    adiantamentoDocCod,
+                    revertidas: criadas.length,
+                    erro: err instanceof Error ? err.message : String(err),
+                },
+            });
+            throw err;
         }
-        return (await this.alocacaoRepository.listAtivas()).some(
-            (a) => a.adiantamentoDocCod === adiantamentoDocCod,
-        );
+        return criadas.length > 0;
     };
 
     /**
@@ -375,20 +410,13 @@ export default class AlocacaoPermutasService {
         );
         if (casamentos.length === 0) return false;
 
-        for (const c of casamentos) {
-            const valor = c.valorASerUsado;
-            if (valor !== undefined && valor > 0) {
-                await this.alocar({
-                    adiantamentoDocCod,
-                    invoiceDocCod: c.invoiceDocCod,
-                    invoicePriCod: c.priCod,
-                    valorAlocado: valor,
-                    criadoPor,
-                });
-            }
-        }
-        return (await this.alocacaoRepository.listAtivas()).some(
-            (a) => a.adiantamentoDocCod === adiantamentoDocCod,
-        );
+        const itens = casamentos
+            .filter((c) => c.valorASerUsado !== undefined && c.valorASerUsado > 0)
+            .map((c) => ({
+                invoiceDocCod: c.invoiceDocCod,
+                invoicePriCod: c.priCod,
+                valorAlocado: c.valorASerUsado as number,
+            }));
+        return this.criarRascunhosAtomico(adiantamentoDocCod, itens, criadoPor);
     };
 }

@@ -422,6 +422,7 @@ router.post(
 // (botão Atualizar) faz refresh ao vivo no ERP antes de ler. Enriquece com a trilha local.
 router.get(
     '/borderos',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(BorderoGestaoService);
@@ -435,6 +436,7 @@ router.get(
 // borderôs lançados direto no Conexos, sem trilha local). On-demand ao expandir.
 router.get(
     '/borderos/:borCod/baixas',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const borCod = Number(req.params.borCod);
@@ -536,29 +538,6 @@ router.delete(
     }),
 );
 
-// DELETE /permutas/borderos/:borCod/trilha — LIBERA o borderô removendo-o só da NOSSA trilha (sem
-// tocar no Conexos). Saída de emergência p/ borderô travado no ERP → reabre a permuta p/ re-lançar.
-router.delete(
-    '/borderos/:borCod/trilha',
-    requireRole('admin'),
-    heavyRouteLimiter,
-    asyncHandler(async (req, res) => {
-        await bootstrapAppContainer();
-        const borCod = Number(req.params.borCod);
-        if (!Number.isFinite(borCod)) {
-            res.status(400).json({ error: 'borCod inválido' });
-            return;
-        }
-        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
-        const service = container.resolve(BorderoGestaoService);
-        try {
-            res.json(await service.removerDaTrilha({ borCod, executadoPor }));
-        } catch (err) {
-            respondActionError(res, err);
-        }
-    }),
-);
-
 // DELETE /permutas/borderos/:borCod/baixas/:invoiceDocCod — exclui UMA baixa do borderô (Fase 3.1)
 // antes de aprovar. Escreve no ERP (fin010) + remove da trilha. Admin + gated por CONEXOS_WRITE_ENABLED.
 router.delete(
@@ -599,6 +578,7 @@ router.get(
 // fin010). Mantém o /gestao rápido (sem ERP) e enriquece os badges da tela depois do load.
 router.get(
     '/status',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(BorderoGestaoService);

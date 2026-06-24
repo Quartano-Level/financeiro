@@ -347,25 +347,6 @@ export async function excluirBorderoInteiro(borCod: number, filCod?: number): Pr
   }
 }
 
-/**
- * LIBERA o borderô removendo-o só da NOSSA trilha (sem tocar no Conexos) — saída de emergência p/
- * borderô travado no ERP. Reabre a permuta vinculada p/ novo lançamento. Fase 3.1.
- */
-export async function liberarBorderoDaTrilha(borCod: number): Promise<void> {
-  const res = await fetch(`${API}/permutas/borderos/${encodeURIComponent(borCod)}/trilha`, {
-    method: 'DELETE',
-    headers: await withAuthHeaders(),
-  })
-  if (!res.ok) {
-    let detail = ''
-    try {
-      const j = await res.json()
-      detail = j?.error ? ` — ${j.error}` : ''
-    } catch {}
-    throw new Error(`API ${res.status}${detail}`)
-  }
-}
-
 /** Ação de borderô (finalizar/aprovar, cancelar ou estornar) via POST. Fase 3.1. */
 async function acaoBordero(
   borCod: number,

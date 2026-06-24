@@ -229,31 +229,6 @@ describe('BorderoGestaoService', () => {
         });
     });
 
-    describe('removerDaTrilha', () => {
-        it('remove só da trilha (sem tocar no ERP) e libera a permuta', async () => {
-            const { service, conexosClient, execucaoRepository } = build(jest.fn());
-            execucaoRepository.listByBorCod.mockResolvedValue([row({ borCod: 14708, filCod: 2 })]);
-            execucaoRepository.deleteByBorCod.mockResolvedValue(2);
-
-            const out = await service.removerDaTrilha({ borCod: 14708, executadoPor: 'yuri' });
-
-            expect(execucaoRepository.deleteByBorCod).toHaveBeenCalledWith(14708);
-            expect(out).toEqual({ borCod: 14708, linhasRemovidas: 2 });
-            // NÃO toca no ERP
-            expect(conexosClient.cancelarBordero).not.toHaveBeenCalled();
-            expect(conexosClient.excluirBordero).not.toHaveBeenCalled();
-        });
-
-        it('FORBIDDEN quando o borderô não é da trilha', async () => {
-            const { service, execucaoRepository } = build(jest.fn());
-            execucaoRepository.listByBorCod.mockResolvedValue([]);
-
-            await expect(
-                service.removerDaTrilha({ borCod: 999, executadoPor: 'yuri' }),
-            ).rejects.toThrow(/FORBIDDEN/);
-        });
-    });
-
     describe('excluirBaixa', () => {
         it('exclui no ERP (filCod/bxaCodSeq da trilha) e remove a linha local', async () => {
             const { service, conexosClient, execucaoRepository } = build(jest.fn());

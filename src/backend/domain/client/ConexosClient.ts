@@ -727,7 +727,10 @@ export default class ConexosClient {
             },
         });
 
-        const invoices = rows.map<InvoiceLancamento>((row) => {
+        // Zod no boundary (Regis P1 integrability): pula rows SEM identidade (docCod/priCod) — evita
+        // doc/pri inválidos contaminando o cache/ingestão. Coerência com `listAdiantamentosProforma`.
+        const invoices = rows.flatMap<InvoiceLancamento>((row) => {
+            if (!com298RowSchema.safeParse(row).success) return [];
             const mapped = this.mapDocPagar(row);
             const invoice: InvoiceLancamento = {
                 docCod: mapped.docCod,
@@ -740,7 +743,7 @@ export default class ConexosClient {
                 faturada: Boolean(row.faturada ?? row.flagFaturada ?? false),
                 ...(mapped.referencia !== undefined ? { referencia: mapped.referencia } : {}),
             };
-            return invoice;
+            return [invoice];
         });
         return { invoices, capHit };
     };
@@ -1178,19 +1181,25 @@ export default class ConexosClient {
                     },
                     { filCod },
                 );
-                return (page.rows ?? []).map((r) => ({
-                    filCod: Number(r.filCod ?? filCod),
-                    docTip: Number(r.docTip ?? 2),
-                    docCod: Number(r.docCod),
-                    titCod: Number(r.titCod ?? 1),
-                    bxaCodSeq: Number(r.bxaCodSeq),
-                    ...(r.bxaMnyLiquidoPermuta != null
-                        ? { bxaMnyLiquidoPermuta: Number(r.bxaMnyLiquidoPermuta) }
-                        : {}),
-                    ...(r.borVldFinalizado != null
-                        ? { borVldFinalizado: Number(r.borVldFinalizado) }
-                        : {}),
-                }));
+                return (
+                    (page.rows ?? [])
+                        .map((r) => ({
+                            filCod: Number(r.filCod ?? filCod),
+                            docTip: Number(r.docTip ?? 2),
+                            docCod: Number(r.docCod),
+                            titCod: Number(r.titCod ?? 1),
+                            bxaCodSeq: Number(r.bxaCodSeq),
+                            ...(r.bxaMnyLiquidoPermuta != null
+                                ? { bxaMnyLiquidoPermuta: Number(r.bxaMnyLiquidoPermuta) }
+                                : {}),
+                            ...(r.borVldFinalizado != null
+                                ? { borVldFinalizado: Number(r.borVldFinalizado) }
+                                : {}),
+                        }))
+                        // Guard de identidade (Regis P1): docCod/bxaCodSeq são usados no DELETE da baixa
+                        // no ERP — um NaN apagaria a baixa errada / quebraria o path. Descarta inválidos.
+                        .filter((b) => Number.isFinite(b.docCod) && Number.isFinite(b.bxaCodSeq))
+                );
             });
         } catch (cause) {
             throw new ConexosError({ endpoint: `fin010/baixas/list/${borCod}`, cause });
@@ -1327,19 +1336,26 @@ export default class ConexosClient {
                     },
                     { filCod },
                 );
-                return (page.rows ?? []).map((r) => ({
-                    borCod: Number(r.borCod),
-                    filCod: Number(r.filCod ?? filCod),
-                    ...(r.borDtaMvto != null ? { borDtaMvto: Number(r.borDtaMvto) } : {}),
-                    ...(r.borVldFinalizado != null
-                        ? { borVldFinalizado: Number(r.borVldFinalizado) }
-                        : {}),
-                    borCodEstornado: r.borCodEstornado != null ? Number(r.borCodEstornado) : null,
-                    ...(r.vlrTotalLiquido != null
-                        ? { vlrTotalLiquido: Number(r.vlrTotalLiquido) }
-                        : {}),
-                    usnDesNomeCad: (r.usnDesNomeCad as string | null) ?? null,
-                }));
+                return (
+                    (page.rows ?? [])
+                        .map((r) => ({
+                            borCod: Number(r.borCod),
+                            filCod: Number(r.filCod ?? filCod),
+                            ...(r.borDtaMvto != null ? { borDtaMvto: Number(r.borDtaMvto) } : {}),
+                            ...(r.borVldFinalizado != null
+                                ? { borVldFinalizado: Number(r.borVldFinalizado) }
+                                : {}),
+                            borCodEstornado:
+                                r.borCodEstornado != null ? Number(r.borCodEstornado) : null,
+                            ...(r.vlrTotalLiquido != null
+                                ? { vlrTotalLiquido: Number(r.vlrTotalLiquido) }
+                                : {}),
+                            usnDesNomeCad: (r.usnDesNomeCad as string | null) ?? null,
+                        }))
+                        // Guard de identidade (Regis P1): descarta rows sem `borCod` numérico — um NaN
+                        // viraria chave inválida no cache `permuta_bordero` / no status permuta→borderô.
+                        .filter((b) => Number.isFinite(b.borCod))
+                );
             });
         } catch (cause) {
             throw new ConexosError({ endpoint: 'fin010/list', cause });

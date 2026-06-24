@@ -245,4 +245,116 @@ describe('AlocacaoPermutasService', () => {
             }),
         ).rejects.toThrow(/D\.I/);
     });
+
+    // ───────────────── Auto-alocação (regra 2026-06-24 — baixa real no fin010) ─────────────────
+    describe('autoAlocarSeElegivel / autoAlocarDeCasamento', () => {
+        const buildAuto = (opts: {
+            valorPermutar?: number;
+            ativas?: Array<{ adiantamentoDocCod: string }>;
+            ativosProcesso?: Array<{ priCod: string; estadoElegibilidade: string }>;
+            casamentos?: Array<{
+                adiantamentoDocCod: string;
+                invoiceDocCod: string;
+                priCod: string;
+                valorASerUsado?: number;
+            }>;
+            conexos?: ConexosClient;
+        }) => {
+            const upsertAlocacao = jest.fn().mockResolvedValue(undefined);
+            const deleteAlocacao = jest.fn().mockResolvedValue(1);
+            const alocacaoRepo = {
+                upsertAlocacao,
+                deleteAlocacao,
+                sumByAdiantamento: jest.fn().mockResolvedValue(0),
+                sumByInvoice: jest.fn().mockResolvedValue(0),
+                listAtivas: jest.fn().mockResolvedValue(opts.ativas ?? []),
+            } as unknown as jest.Mocked<PermutaAlocacaoRepository>;
+            const relational = {
+                findAdiantamento: jest.fn().mockResolvedValue({
+                    docCod: 'A9',
+                    priCod: '510',
+                    filCod: 2,
+                    pago: true,
+                    valorPermutar: opts.valorPermutar ?? 5500, // /5.5 = 1000 USD negociado
+                    taxa: 5.5,
+                    moedaNegociada: 'USD',
+                    estadoElegibilidade: 'casamento-manual',
+                    stale: false,
+                }),
+                listAdiantamentosAtivos: jest
+                    .fn()
+                    .mockResolvedValue(
+                        opts.ativosProcesso ?? [
+                            { priCod: '510', estadoElegibilidade: 'casamento-manual' },
+                        ],
+                    ),
+                listCasamentos: jest.fn().mockResolvedValue(opts.casamentos ?? []),
+            } as unknown as jest.Mocked<PermutaRelationalRepository>;
+            const service = new AlocacaoPermutasService(
+                opts.conexos ?? buildConexos(),
+                new VariacaoCambialPermutaService(),
+                alocacaoRepo,
+                relational,
+                log(),
+            );
+            return { service, upsertAlocacao, deleteAlocacao };
+        };
+
+        it('múltipla automática (saldo cobre as invoices) → aloca e retorna true', async () => {
+            const { service, upsertAlocacao } = buildAuto({ valorPermutar: 5500 }); // 1000 USD ≥ 800
+            const ok = await service.autoAlocarSeElegivel('A9', 'sys');
+            expect(ok).toBe(true);
+            expect(upsertAlocacao).toHaveBeenCalledTimes(1); // I7 (a única em aberto c/ D.I)
+        });
+
+        it('Σ invoices > saldo do adto → NÃO aloca (segue manual, false)', async () => {
+            const { service, upsertAlocacao } = buildAuto({ valorPermutar: 2200 }); // 400 USD < 800
+            const ok = await service.autoAlocarSeElegivel('A9', 'sys');
+            expect(ok).toBe(false);
+            expect(upsertAlocacao).not.toHaveBeenCalled();
+        });
+
+        it('cross-over (>1 casamento-manual no processo) → false', async () => {
+            const { service, upsertAlocacao } = buildAuto({
+                ativosProcesso: [
+                    { priCod: '510', estadoElegibilidade: 'casamento-manual' },
+                    { priCod: '510', estadoElegibilidade: 'casamento-manual' },
+                ],
+            });
+            const ok = await service.autoAlocarSeElegivel('A9', 'sys');
+            expect(ok).toBe(false);
+            expect(upsertAlocacao).not.toHaveBeenCalled();
+        });
+
+        it('idempotente: já tem alocação → true sem recriar', async () => {
+            const { service, upsertAlocacao } = buildAuto({
+                ativas: [{ adiantamentoDocCod: 'A9' }],
+            });
+            const ok = await service.autoAlocarSeElegivel('A9', 'sys');
+            expect(ok).toBe(true);
+            expect(upsertAlocacao).not.toHaveBeenCalled();
+        });
+
+        it('ATÔMICO: falha no meio reverte os rascunhos criados nesta chamada e re-lança', async () => {
+            // 2 casamentos: I7 (existe na busca) e I9 (NÃO existe → alocar lança) → reverte I7.
+            const { service, deleteAlocacao } = buildAuto({
+                casamentos: [
+                    {
+                        adiantamentoDocCod: 'A9',
+                        invoiceDocCod: 'I7',
+                        priCod: '510',
+                        valorASerUsado: 100,
+                    },
+                    {
+                        adiantamentoDocCod: 'A9',
+                        invoiceDocCod: 'I9',
+                        priCod: '510',
+                        valorASerUsado: 100,
+                    },
+                ],
+            });
+            await expect(service.autoAlocarDeCasamento('A9', 'sys')).rejects.toThrow(/I9/);
+            expect(deleteAlocacao).toHaveBeenCalledWith('A9', 'I7'); // rollback do 1º
+        });
+    });
 });

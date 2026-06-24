@@ -459,6 +459,128 @@ describe('GestaoPermutasService.exporGestao', () => {
         expect(byCod.A2?.tipoPermuta).toBe('cross-over');
     });
 
+    it('múltipla AUTOMÁTICA: 1 adto cobre as invoices do processo → autoElegivel + casamentos sintéticos', async () => {
+        // M1 casamento-manual, ÚNICO do processo 700 (→ multiplas), saldo 11000/5.5 = 2000 USD;
+        // invoices do processo somam 1500 (≤ 2000) → automática.
+        const m1: AdiantamentoAtivo = {
+            docCod: 'M1',
+            priCod: '700',
+            filCod: 2,
+            referencia: 'CT/M1',
+            exportador: 'X',
+            valorMoedaNegociada: 2000,
+            moeda: 'USD',
+            pago: true,
+            estadoElegibilidade: 'casamento-manual',
+            valorPermutar: 11000,
+            taxa: 5.5,
+            stale: false,
+        };
+        const invs: InvoiceRow[] = [
+            {
+                docCod: 'IA',
+                priCod: '700',
+                filCod: 2,
+                referencia: 'INV/A',
+                valorMoedaNegociada: 800,
+                moeda: 'USD',
+                pago: false,
+            },
+            {
+                docCod: 'IB',
+                priCod: '700',
+                filCod: 2,
+                referencia: 'INV/B',
+                valorMoedaNegociada: 700,
+                moeda: 'USD',
+                pago: false,
+            },
+        ];
+        const decls: DeclaracaoRow[] = [
+            { priCod: '700', variante: 'DI', dataBase: new Date('2026-03-15') },
+        ];
+        const service = new GestaoPermutasService(
+            buildRelational({
+                adiantamentos: [m1],
+                invoices: invs,
+                casamentos: [],
+                declaracoes: decls,
+            }),
+            buildProcessamento(),
+            buildAlocacao(),
+            buildSnapshot(),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+        const m = res.pendentes.find((p) => p.docCod === 'M1');
+        expect(m?.tipoPermuta).toBe('multiplas');
+        expect(m?.autoElegivel).toBe(true);
+        // Casamentos sintéticos (pré-distribuídos): 1 por invoice do processo, com o adto M1.
+        expect(res.casamentos.some((c) => c.invoice.docCod === 'IA')).toBe(true);
+        expect(res.casamentos.some((c) => c.invoice.docCod === 'IB')).toBe(true);
+        expect(res.casamentos.every((c) => c.adiantamentos.every((a) => a.docCod === 'M1'))).toBe(
+            true,
+        );
+    });
+
+    it('múltipla onde Σ invoices > saldo do adto → NÃO automática (autoElegivel ausente)', async () => {
+        // saldo 5500/5.5 = 1000 USD < Σ invoices 1500 → segue manual (sem autoElegivel).
+        const m1: AdiantamentoAtivo = {
+            docCod: 'M1',
+            priCod: '700',
+            filCod: 2,
+            referencia: 'CT/M1',
+            exportador: 'X',
+            valorMoedaNegociada: 1000,
+            moeda: 'USD',
+            pago: true,
+            estadoElegibilidade: 'casamento-manual',
+            valorPermutar: 5500,
+            taxa: 5.5,
+            stale: false,
+        };
+        const invs: InvoiceRow[] = [
+            {
+                docCod: 'IA',
+                priCod: '700',
+                filCod: 2,
+                referencia: 'INV/A',
+                valorMoedaNegociada: 800,
+                moeda: 'USD',
+                pago: false,
+            },
+            {
+                docCod: 'IB',
+                priCod: '700',
+                filCod: 2,
+                referencia: 'INV/B',
+                valorMoedaNegociada: 700,
+                moeda: 'USD',
+                pago: false,
+            },
+        ];
+        const decls: DeclaracaoRow[] = [
+            { priCod: '700', variante: 'DI', dataBase: new Date('2026-03-15') },
+        ];
+        const service = new GestaoPermutasService(
+            buildRelational({
+                adiantamentos: [m1],
+                invoices: invs,
+                casamentos: [],
+                declaracoes: decls,
+            }),
+            buildProcessamento(),
+            buildAlocacao(),
+            buildSnapshot(),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+        const m = res.pendentes.find((p) => p.docCod === 'M1');
+        expect(m?.tipoPermuta).toBe('multiplas');
+        expect(m?.autoElegivel).toBeUndefined();
+        expect(res.casamentos).toHaveLength(0); // sem casamentos sintéticos
+    });
+
     it('promotes BLOQUEADA+motivo ja-permutado to its OWN status (out of bloqueadas)', async () => {
         // Doc pago + 100% consumido em permuta anterior: gravado como bloqueada
         // com motivo `ja-permutado`. Na tela vira status próprio `ja-permutado`,

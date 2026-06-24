@@ -265,9 +265,17 @@ export default class EleicaoPermutasService {
             const todasInvoicesPorFilial = await this.boundedConcurrency.map(
                 filiais,
                 async (filial) => {
-                    const { invoices } = await this.conexosClient.listInvoicesFinalizadas({
+                    const { invoices, capHit } = await this.conexosClient.listInvoicesFinalizadas({
                         filCod: filial.filCod,
                     });
+                    if (capHit) {
+                        await this.logService.warn({
+                            type: LOG_TYPE.BUSINESS_WARN,
+                            message:
+                                'listInvoicesFinalizadas atingiu o teto de páginas — universo pode estar TRUNCADO',
+                            data: { flowId, filCod: filial.filCod, retornadas: invoices.length },
+                        });
+                    }
                     const priCods = [...new Set(invoices.map((i) => i.priCod))];
                     const processos = await this.conexosClient.listProcessos({
                         filCod: filial.filCod,

@@ -20,7 +20,17 @@
 - **feat(ui):** input monetário com máscara pt-BR + botão "Máx"; moedas com alias ISO no KPI;
   paginação (50/pág) e ordenação mais-novo→mais-velho nos borderôs; saída "Liberar" removida.
 - **fix(permutas):** remoção do botão Estorno; mensagens de erro do fin010 amigáveis.
-- Migrations `0017_invoice_importador`, `0018_permuta_bordero_cache`.
+- Migrations `0017_invoice_importador`, `0018_permuta_bordero_cache`, `0019_permuta_perf_indexes`.
+- **Regis-Review (2026-06-24-2011) — remediação pré-merge dos blockers:**
+  - **P0** removido o endpoint `DELETE /borderos/:borCod/trilha` (`removerDaTrilha`) — sem estorno na UI
+    não há mais borderô travado; era código morto + risco de dupla-baixa.
+  - **P0** testes diretos das regras de saldo automático (`autoAlocarSeElegivel`/`autoAlocarDeCasamento`,
+    `GestaoPermutas.autoElegivel`).
+  - **P1** auto-alocação ATÔMICA (all-or-nothing): falha parcial reverte os rascunhos (sem meia-permuta).
+  - **P1** `requireRole('admin')` nos GETs `/borderos`, `/borderos/:borCod/baixas`, `/status`.
+  - **P1** Zod/guard de identidade nas reads do ERP (`listInvoicesFinalizadas`/`listBorderos`/`listBaixas`)
+    + log de cap-hit (truncamento de paginação).
+  - **P1** índices de performance (migration 0019) p/ o hot path de borderôs.
 
 ## v0.6.1 (2026-06-24) — Regis-Review 2026-06-24-0039: remediação dos P0 de código
 

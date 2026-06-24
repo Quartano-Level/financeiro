@@ -190,28 +190,6 @@ export default class BorderoGestaoService {
     };
 
     /**
-     * LIBERA o borderô removendo-o APENAS da NOSSA trilha (`permuta_alocacao_execucao`) — NÃO toca
-     * no Conexos. Saída de emergência para borderôs TRAVADOS no ERP (ex.: estornados que ficam
-     * "em cadastro" mas o ERP recusa cancelar/excluir): a permuta vinculada volta a "pendente" e
-     * pode ser re-lançada. O borderô no ERP fica intacto — o analista o trata manualmente lá.
-     * NÃO é gated por CONEXOS_WRITE_ENABLED (é operação só-local). Exige borderô da trilha.
-     */
-    public removerDaTrilha = async (params: {
-        borCod: number;
-        executadoPor: string;
-    }): Promise<{ borCod: number; linhasRemovidas: number }> => {
-        const { borCod, executadoPor } = params;
-        await this.requireOwnBorderoFilCod(borCod); // garante que é um borderô NOSSO (da trilha)
-        const linhasRemovidas = await this.execucaoRepository.deleteByBorCod(borCod);
-        await this.logService.info({
-            type: LOG_TYPE.BUSINESS_INFO,
-            message: 'borderô removido da trilha (liberação local — ERP intocado)',
-            data: { borCod, linhasRemovidas, executadoPor },
-        });
-        return { borCod, linhasRemovidas };
-    };
-
-    /**
      * FINALIZA (aprova) o borderô — confirma a baixa no ERP. Gated; só EM CADASTRO. A trilha é
      * preservada (o borderô passa a FINALIZADO na lista, status vivo do ERP).
      */
