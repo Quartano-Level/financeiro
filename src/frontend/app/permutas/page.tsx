@@ -74,12 +74,11 @@ import {
 } from '@/components/ui/dialog'
 
 /**
- * Processamento (baixa/lançamento da permuta) DESABILITADO até existir a
- * integração de write-back no Conexos. Enquanto `false`, todos os botões de
- * Processar/Lançar ficam bloqueados e um aviso é exibido. Religar para `true`
- * quando a publicação dos dados no Conexos estiver pronta.
+ * Processamento (baixa/lançamento da permuta). LIGADO desde a Fase 3 (write-back no `fin010` vivo):
+ * a baixa real é feita pelo fluxo "Baixar" (reconciliação adto→invoice no borderô). Esta flag
+ * libera também os botões legados de Processar/Lançar e remove o aviso de indisponibilidade.
  */
-const PROCESSAMENTO_HABILITADO = false
+const PROCESSAMENTO_HABILITADO = true
 
 /** Rótulos legíveis para os motivos de bloqueio do snapshot. */
 const MOTIVO_LABEL: Record<string, string> = {
