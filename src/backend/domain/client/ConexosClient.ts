@@ -1,4 +1,5 @@
 import { inject, injectable, singleton } from 'tsyringe';
+import { z } from 'zod';
 import ConexosError from '../errors/ConexosError.js';
 import RetryExecutor from '../libs/executor/RetryExecutor.js';
 import type Adiantamento from '../interface/permutas/Adiantamento.js';
@@ -386,6 +387,28 @@ const chunked = <T>(items: readonly T[], size = CHUNK_SIZE): T[][] => {
     }
     return out;
 };
+
+/**
+ * Zod no boundary das ESCRITAS fin010 que viram confirmação persistida (Regis P0 integrability).
+ * O crítico é o identificador que gravamos: `borCod` (borderô criado) e `bxaCodSeq` (baixa gravada).
+ * Demais campos são lenientes (coerce + default) — não bloqueiam, mas o id confirmado é exigido.
+ */
+const BORDERO_CRIADO_SCHEMA = z.object({
+    borCod: z.coerce.number().int().positive(),
+    filCod: z.coerce.number().int().optional().default(0),
+    borVldTipo: z.coerce.number().int().optional().default(2),
+    borDtaMvto: z.coerce.number().optional().default(0),
+});
+
+const BAIXA_GRAVADA_SCHEMA = z.object({
+    bxaCodSeq: z.coerce.number().int().positive(),
+    borCod: z.coerce.number().int().optional().default(0),
+    docCod: z.coerce.number().optional().default(0),
+    bxaDocCod: z.coerce.number().optional().default(0),
+    bxaMnyValor: z.coerce.number().optional().default(0),
+    bxaMnyJuros: z.coerce.number().optional().default(0),
+    bxaMnyLiquido: z.coerce.number().optional().default(0),
+});
 
 /**
  * Domain-shaped Conexos adapter. v0.1 wraps the legacy `ConexosService`
@@ -1016,7 +1039,7 @@ export default class ConexosClient {
         const { filCod, dataMovto } = params;
         try {
             await this.legacy.ensureSid();
-            return await this.legacy.postGeneric<BorderoCriado>(
+            const raw = await this.legacy.postGeneric<unknown>(
                 'fin010',
                 {
                     filCod,
@@ -1027,6 +1050,9 @@ export default class ConexosClient {
                 },
                 { filCod },
             );
+            // Zod no boundary (Regis P0 integrability): a resposta vira confirmação persistida —
+            // sem um `borCod` numérico válido, abortamos (não criamos borderô fantasma na trilha).
+            return BORDERO_CRIADO_SCHEMA.parse(raw);
         } catch (cause) {
             throw new ConexosError({ endpoint: 'fin010', cause });
         }
@@ -1385,9 +1411,12 @@ export default class ConexosClient {
         const { filCod, payload } = params;
         try {
             await this.legacy.ensureSid();
-            return await this.legacy.postGeneric<BaixaGravada>('fin010/baixas', payload, {
+            const raw = await this.legacy.postGeneric<unknown>('fin010/baixas', payload, {
                 filCod,
             });
+            // Zod no boundary (Regis P0 integrability): só marcamos `settled` com um `bxaCodSeq`
+            // numérico confirmado pelo ERP. Resposta sem isso aborta (vira `error` na reconciliação).
+            return BAIXA_GRAVADA_SCHEMA.parse(raw);
         } catch (cause) {
             throw new ConexosError({ endpoint: 'fin010/baixas', cause });
         }

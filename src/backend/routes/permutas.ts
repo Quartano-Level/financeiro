@@ -60,6 +60,19 @@ const erpErrorMessage = (err: unknown): string => {
     return err instanceof Error ? err.message : 'erro ao executar a ação no Conexos';
 };
 
+/**
+ * Mapeia erro de ação de borderô para a resposta HTTP. `FORBIDDEN:` (autorização — borderô não é da
+ * trilha deste sistema) → 403; demais (recusa do ERP, validação) → 400 com mensagem traduzida.
+ */
+const respondActionError = (res: import('express').Response, err: unknown): void => {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.startsWith('FORBIDDEN:')) {
+        res.status(403).json({ error: msg.replace(/^FORBIDDEN:\s*/, '') });
+        return;
+    }
+    res.status(400).json({ error: erpErrorMessage(err) });
+};
+
 /** Meia-noite UTC do dia atual em epoch-ms (default do borDtaMvto). */
 const todayUtcMidnightMs = (): number => {
     const now = new Date();
@@ -430,18 +443,11 @@ router.post(
             return;
         }
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
-        const filCod = Number(req.body?.filCod);
         const service = container.resolve(BorderoGestaoService);
         try {
-            res.json(
-                await service.finalizarBordero({
-                    borCod,
-                    executadoPor,
-                    ...(Number.isFinite(filCod) ? { filCod } : {}),
-                }),
-            );
+            res.json(await service.finalizarBordero({ borCod, executadoPor }));
         } catch (err) {
-            res.status(400).json({ error: erpErrorMessage(err) });
+            respondActionError(res, err);
         }
     }),
 );
@@ -459,18 +465,11 @@ router.post(
             return;
         }
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
-        const filCod = Number(req.body?.filCod);
         const service = container.resolve(BorderoGestaoService);
         try {
-            res.json(
-                await service.cancelarBordero({
-                    borCod,
-                    executadoPor,
-                    ...(Number.isFinite(filCod) ? { filCod } : {}),
-                }),
-            );
+            res.json(await service.cancelarBordero({ borCod, executadoPor }));
         } catch (err) {
-            res.status(400).json({ error: erpErrorMessage(err) });
+            respondActionError(res, err);
         }
     }),
 );
@@ -488,18 +487,11 @@ router.post(
             return;
         }
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
-        const filCod = Number(req.body?.filCod);
         const service = container.resolve(BorderoGestaoService);
         try {
-            res.json(
-                await service.estornarBordero({
-                    borCod,
-                    executadoPor,
-                    ...(Number.isFinite(filCod) ? { filCod } : {}),
-                }),
-            );
+            res.json(await service.estornarBordero({ borCod, executadoPor }));
         } catch (err) {
-            res.status(400).json({ error: erpErrorMessage(err) });
+            respondActionError(res, err);
         }
     }),
 );
@@ -517,17 +509,11 @@ router.delete(
             return;
         }
         const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
-        const filCod = Number(req.query.filCod);
         const service = container.resolve(BorderoGestaoService);
         try {
-            const out = await service.excluirBordero({
-                borCod,
-                executadoPor,
-                ...(Number.isFinite(filCod) ? { filCod } : {}),
-            });
-            res.json(out);
+            res.json(await service.excluirBordero({ borCod, executadoPor }));
         } catch (err) {
-            res.status(400).json({ error: erpErrorMessage(err) });
+            respondActionError(res, err);
         }
     }),
 );
@@ -551,7 +537,7 @@ router.delete(
         try {
             res.json(await service.excluirBaixa({ borCod, invoiceDocCod, executadoPor }));
         } catch (err) {
-            res.status(400).json({ error: erpErrorMessage(err) });
+            respondActionError(res, err);
         }
     }),
 );

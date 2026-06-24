@@ -192,16 +192,14 @@ describe('BorderoGestaoService', () => {
             const { service, conexosClient, execucaoRepository } = build(
                 jest.fn().mockResolvedValue({ borVldFinalizado: 0, borCodEstornado: null }),
             );
+            // filCod vem da TRILHA (autorização server-side), não do request.
+            execucaoRepository.listByBorCod.mockResolvedValue([row({ borCod: 14707, filCod: 2 })]);
             conexosClient.listBaixas.mockResolvedValue([
                 { filCod: 2, docCod: 18779, titCod: 1, bxaCodSeq: 1 },
                 { filCod: 2, docCod: 18780, titCod: 1, bxaCodSeq: 1 },
             ]);
 
-            const out = await service.excluirBordero({
-                borCod: 14707,
-                executadoPor: 'yuri',
-                filCod: 2,
-            });
+            const out = await service.excluirBordero({ borCod: 14707, executadoPor: 'yuri' });
 
             expect(conexosClient.excluirBaixa).toHaveBeenCalledTimes(2);
             expect(conexosClient.excluirBordero).toHaveBeenCalledWith({ filCod: 2, borCod: 14707 });
@@ -209,24 +207,25 @@ describe('BorderoGestaoService', () => {
             expect(out).toMatchObject({ excluido: true, baixasExcluidas: 2 });
         });
 
-        it('excluirBordero: funciona p/ borderô FORA da trilha (filCod do request)', async () => {
-            const { service, conexosClient, execucaoRepository } = build(
-                jest.fn().mockResolvedValue({ borVldFinalizado: 0, borCodEstornado: null }),
-            );
+        it('AUTORIZAÇÃO: borderô FORA da trilha (de terceiro) → FORBIDDEN, nada é escrito', async () => {
+            const { service, conexosClient, execucaoRepository } = build(jest.fn());
+            execucaoRepository.listByBorCod.mockResolvedValue([]); // sem trilha → não é nosso
+
+            await expect(
+                service.excluirBordero({ borCod: 14709, executadoPor: 'admin' }),
+            ).rejects.toThrow(/FORBIDDEN/);
+            expect(conexosClient.excluirBaixa).not.toHaveBeenCalled();
+            expect(conexosClient.excluirBordero).not.toHaveBeenCalled();
+        });
+
+        it('AUTORIZAÇÃO: finalizar borderô de terceiro → FORBIDDEN', async () => {
+            const { service, conexosClient, execucaoRepository } = build(jest.fn());
             execucaoRepository.listByBorCod.mockResolvedValue([]); // sem trilha
-            conexosClient.listBaixas.mockResolvedValue([
-                { filCod: 2, docCod: 18779, titCod: 1, bxaCodSeq: 1 },
-            ]);
 
-            const out = await service.excluirBordero({
-                borCod: 14709,
-                executadoPor: 'admin',
-                filCod: 2,
-            });
-
-            expect(conexosClient.excluirBaixa).toHaveBeenCalledTimes(1);
-            expect(conexosClient.excluirBordero).toHaveBeenCalledWith({ filCod: 2, borCod: 14709 });
-            expect(out).toMatchObject({ excluido: true, baixasExcluidas: 1 });
+            await expect(
+                service.finalizarBordero({ borCod: 14709, executadoPor: 'admin' }),
+            ).rejects.toThrow(/FORBIDDEN/);
+            expect(conexosClient.finalizarBordero).not.toHaveBeenCalled();
         });
 
         it('finalizarBordero: aprova no ERP quando em cadastro', async () => {

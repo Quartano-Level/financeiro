@@ -143,11 +143,10 @@ export default class BorderoGestaoService {
     public excluirBordero = async (params: {
         borCod: number;
         executadoPor: string;
-        filCod?: number;
     }): Promise<{ borCod: number; excluido: boolean; baixasExcluidas: number }> => {
         const { borCod, executadoPor } = params;
         await this.assertWriteEnabled();
-        const filCod = await this.resolveFilCod(borCod, params.filCod);
+        const filCod = await this.requireOwnBorderoFilCod(borCod);
 
         // O estado (em cadastro/finalizado) é validado pela LISTA no front (fonte confiável) e,
         // em última instância, pelo próprio ERP (que recusa excluir baixa de borderô finalizado —
@@ -185,9 +184,8 @@ export default class BorderoGestaoService {
     public finalizarBordero = async (params: {
         borCod: number;
         executadoPor: string;
-        filCod?: number;
     }): Promise<{ borCod: number; finalizado: boolean }> => {
-        const filCod = await this.guardAcaoBordero(params.borCod, params.filCod);
+        const filCod = await this.guardAcaoBordero(params.borCod);
         await this.conexosClient.finalizarBordero({ filCod, borCod: params.borCod });
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
@@ -203,9 +201,8 @@ export default class BorderoGestaoService {
     public cancelarBordero = async (params: {
         borCod: number;
         executadoPor: string;
-        filCod?: number;
     }): Promise<{ borCod: number; cancelado: boolean }> => {
-        const filCod = await this.guardAcaoBordero(params.borCod, params.filCod);
+        const filCod = await this.guardAcaoBordero(params.borCod);
         await this.conexosClient.cancelarBordero({ filCod, borCod: params.borCod });
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
@@ -222,9 +219,8 @@ export default class BorderoGestaoService {
     public estornarBordero = async (params: {
         borCod: number;
         executadoPor: string;
-        filCod?: number;
     }): Promise<{ borCod: number; estornado: boolean }> => {
-        const filCod = await this.guardEstornoBordero(params.borCod, params.filCod);
+        const filCod = await this.guardEstornoBordero(params.borCod);
         await this.conexosClient.estornarBordero({ filCod, borCod: params.borCod });
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
@@ -243,31 +239,33 @@ export default class BorderoGestaoService {
     };
 
     /**
-     * Resolve o filCod de um borderô: usa o `filCod` informado (vem do item da lista do ERP);
-     * cai pra trilha local; e por fim a filial default do ambiente. Permite agir sobre borderôs
-     * que NÃO foram criados por este sistema (sem trilha).
+     * AUTORIZAÇÃO server-side (Regis-Review P0 security — confused-deputy): só age sobre borderôs
+     * CRIADOS POR ESTE SISTEMA (presentes na trilha `permuta_alocacao_execucao`). O `filCod` vem da
+     * TRILHA — nunca do request — então um admin (ou JWT roubado) NÃO consegue mexer em borderô de
+     * terceiro via API passando um filCod arbitrário. Lança erro `FORBIDDEN:` (→ 403 no route).
      */
-    private resolveFilCod = async (borCod: number, filCodParam?: number): Promise<number> => {
-        if (filCodParam !== undefined && Number.isFinite(filCodParam)) return filCodParam;
+    private requireOwnBorderoFilCod = async (borCod: number): Promise<number> => {
         const baixas = await this.execucaoRepository.listByBorCod(borCod);
-        if (baixas[0]?.filCod !== undefined) return baixas[0].filCod;
-        const env = await this.environmentProvider.getEnvironmentVars();
-        if (Number.isFinite(env.conexosFilCod)) return env.conexosFilCod;
-        throw new Error(`não foi possível resolver a filial do borderô ${borCod}`);
+        const filCod = baixas[0]?.filCod;
+        if (filCod === undefined) {
+            throw new Error(
+                `FORBIDDEN: borderô ${borCod} não foi criado por este sistema — ação não permitida`,
+            );
+        }
+        return filCod;
     };
 
     /**
-     * Guard comum de aprovar/cancelar/estornar: escrita habilitada + resolução do filCod. O ESTADO
-     * (em cadastro/finalizado) NÃO é checado via GET de detalhe (incoerente) — quem barra é a LISTA
-     * no front (habilita o botão pela situação) e o próprio ERP (recusa transições inválidas com
-     * mensagem clara, traduzida no route).
+     * Guard comum de aprovar/cancelar/estornar: escrita habilitada + AUTORIZAÇÃO (borderô da trilha)
+     * + filCod da trilha. O ESTADO (em cadastro/finalizado) é validado pela LISTA no front e pelo
+     * próprio ERP (recusa transições inválidas com mensagem clara, traduzida no route).
      */
-    private guardAcaoBordero = (borCod: number, filCodParam?: number): Promise<number> =>
-        this.assertWriteEnabled().then(() => this.resolveFilCod(borCod, filCodParam));
+    private guardAcaoBordero = (borCod: number): Promise<number> =>
+        this.assertWriteEnabled().then(() => this.requireOwnBorderoFilCod(borCod));
 
     /** Guard do estorno — idêntico (o ERP recusa estornar o que não está finalizado). */
-    private guardEstornoBordero = (borCod: number, filCodParam?: number): Promise<number> =>
-        this.guardAcaoBordero(borCod, filCodParam);
+    private guardEstornoBordero = (borCod: number): Promise<number> =>
+        this.guardAcaoBordero(borCod);
 
     /**
      * Lista os borderôs de permuta — FONTE AUTORITATIVA: o ERP (`fin010/list`, borVldTipo=2), assim

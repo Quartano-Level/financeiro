@@ -15,7 +15,7 @@ import UserRepository from '../domain/repository/auth/UserRepository.js';
  * Idempotente (UPSERT por username): re-rodar atualiza a senha. Rodar como
  * pre-deploy (após `npm run migrate`) ou sob demanda. NÃO roda dentro do app.
  */
-const BCRYPT_ROUNDS = 10;
+const BCRYPT_ROUNDS = 12;
 
 const main = async (): Promise<void> => {
     await bootstrapAppContainer();

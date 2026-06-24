@@ -28,15 +28,16 @@ services:
         value: local
       - key: DEV_AUTH_BYPASS
         value: 'false'
-      # Fase 3 (ADR-0013) — ESCRITA no fin010 LIGADA em produção (decisão do Yuri 2026-06-24:
-      # baixa real direto em PRD, sem homologação). CONEXOS_BASE_URL fica no dashboard (sync:false)
-      # e DEVE apontar para a produção. Runbook: docs/runbooks/fin010-write-cutover.md.
+      # Fase 3 (ADR-0013) — ESCRITA no fin010. FONTE ÚNICA = dashboard do Render (sync:false), para
+      # NÃO ter o blueprint sobrescrevendo o dashboard a cada deploy (Regis P0 deployability — yaml
+      # brigando com dashboard). Produção hoje: WRITE_ENABLED=true, DRY_RUN=false, BASE_URL=prd.
+      # Runbook: docs/runbooks/fin010-write-cutover.md.
       - key: CONEXOS_BASE_URL
         sync: false
       - key: CONEXOS_WRITE_ENABLED
-        value: 'true'
+        sync: false
       - key: CONEXOS_DRY_RUN
-        value: 'false'
+        sync: false
       # Secrets / per-deploy values — set in the Render dashboard.
       - key: databaseConnectionString
         sync: false

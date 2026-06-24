@@ -1488,3 +1488,122 @@ describe('ConexosClient', () => {
         });
     });
 });
+
+describe('ConexosClient — fin010 write contract (Fase 3.1)', () => {
+    it('excluirBaixa: 2º segmento do path é o docTip (NÃO o filCod) — regressão do bug docTip-vs-filCod', async () => {
+        const legacy = buildLegacy();
+        const client = new ConexosClient(legacy);
+        // filCod 4 (≠ docTip): o path deve usar docTip=2, e filCod vai no header (opts).
+        await client.excluirBaixa({
+            filCod: 4,
+            borCod: 14709,
+            docTip: 2,
+            invoiceDocCod: 3942,
+            titCod: 1,
+            bxaCodSeq: 1,
+        });
+        expect(legacy.deleteGeneric).toHaveBeenCalledWith('fin010/baixas/14709/2/3942/1/1', {
+            filCod: 4,
+        });
+    });
+
+    it('excluirBaixa: docTip default = 2 (invoice) quando omitido', async () => {
+        const legacy = buildLegacy();
+        const client = new ConexosClient(legacy);
+        await client.excluirBaixa({
+            filCod: 2,
+            borCod: 14707,
+            invoiceDocCod: 18780,
+            titCod: 1,
+            bxaCodSeq: 1,
+        });
+        expect(legacy.deleteGeneric).toHaveBeenCalledWith('fin010/baixas/14707/2/18780/1/1', {
+            filCod: 2,
+        });
+    });
+
+    it('excluirBordero: DELETE fin010/{borCod} (só borCod no path; filCod no header)', async () => {
+        const legacy = buildLegacy();
+        const client = new ConexosClient(legacy);
+        await client.excluirBordero({ filCod: 4, borCod: 14709 });
+        expect(legacy.deleteGeneric).toHaveBeenCalledWith('fin010/14709', { filCod: 4 });
+    });
+
+    it('finalizar/cancelar/estornarBordero: POST fin010/{acao}/{borCod} body vazio + filCod header', async () => {
+        const legacy = buildLegacy();
+        const client = new ConexosClient(legacy);
+        await client.finalizarBordero({ filCod: 2, borCod: 100 });
+        await client.cancelarBordero({ filCod: 2, borCod: 101 });
+        await client.estornarBordero({ filCod: 2, borCod: 102 });
+        expect(legacy.postGeneric).toHaveBeenCalledWith('fin010/finalizar/100', {}, { filCod: 2 });
+        expect(legacy.postGeneric).toHaveBeenCalledWith('fin010/cancelar/101', {}, { filCod: 2 });
+        expect(legacy.postGeneric).toHaveBeenCalledWith('fin010/estornar/102', {}, { filCod: 2 });
+    });
+
+    it('listBaixas: POST fin010/baixas/list/{borCod}; mapeia docTip/docCod/titCod/bxaCodSeq', async () => {
+        const legacy = buildLegacy();
+        legacy.listGenericPaginated.mockResolvedValue({
+            count: 1,
+            rows: [{ filCod: 2, docTip: 2, docCod: 18779, titCod: 1, bxaCodSeq: 1 }],
+        });
+        const client = new ConexosClient(legacy);
+        const out = await client.listBaixas({ filCod: 2, borCod: 14709 });
+        expect(legacy.listGenericPaginated).toHaveBeenCalledWith(
+            'fin010/baixas/list/14709',
+            expect.any(Object),
+            { filCod: 2 },
+        );
+        expect(out[0]).toMatchObject({
+            filCod: 2,
+            docTip: 2,
+            docCod: 18779,
+            titCod: 1,
+            bxaCodSeq: 1,
+        });
+    });
+
+    it('listBorderos: POST fin010/list filtrando borVldTipo=2 (permuta)', async () => {
+        const legacy = buildLegacy();
+        legacy.listGenericPaginated.mockResolvedValue({
+            count: 1,
+            rows: [{ borCod: 14709, filCod: 2, borVldFinalizado: 0, borCodEstornado: null }],
+        });
+        const client = new ConexosClient(legacy);
+        const out = await client.listBorderos({ filCod: 2 });
+        const [path, body, opts] = legacy.listGenericPaginated.mock.calls[0];
+        expect(path).toBe('fin010/list');
+        expect((body as { filterList?: Record<string, unknown> }).filterList).toMatchObject({
+            'borVldTipo#EQ': 2,
+        });
+        expect(opts).toEqual({ filCod: 2 });
+        expect(out[0]).toMatchObject({ borCod: 14709, filCod: 2 });
+    });
+});
+
+describe('ConexosClient — fin010 Zod no boundary (Regis P0 integrability)', () => {
+    it('criarBordero: rejeita resposta sem borCod numérico (não cria borderô fantasma)', async () => {
+        const legacy = buildLegacy();
+        legacy.postGeneric.mockResolvedValue({ filCod: 2 }); // sem borCod
+        const client = new ConexosClient(legacy);
+        await expect(
+            client.criarBordero({ filCod: 2, dataMovto: 1782172800000 }),
+        ).rejects.toBeInstanceOf(ConexosError);
+    });
+
+    it('criarBordero: aceita e coage borCod string→number', async () => {
+        const legacy = buildLegacy();
+        legacy.postGeneric.mockResolvedValue({ borCod: '14709', filCod: 2 });
+        const client = new ConexosClient(legacy);
+        const out = await client.criarBordero({ filCod: 2, dataMovto: 1782172800000 });
+        expect(out.borCod).toBe(14709);
+    });
+
+    it('gravarBaixaPermuta: rejeita resposta sem bxaCodSeq (não marca settled errado)', async () => {
+        const legacy = buildLegacy();
+        legacy.postGeneric.mockResolvedValue({ borCod: 14709 }); // sem bxaCodSeq
+        const client = new ConexosClient(legacy);
+        await expect(
+            client.gravarBaixaPermuta({ filCod: 2, payload: { borCod: 14709 } }),
+        ).rejects.toBeInstanceOf(ConexosError);
+    });
+});

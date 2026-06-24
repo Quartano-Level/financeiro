@@ -1,5 +1,22 @@
 # Columbia Financeiro — Changelog
 
+## v0.6.1 (2026-06-24) — Regis-Review 2026-06-24-0039: remediação dos P0 de código
+
+- **fix(security):** autorização **server-side** nas ações de borderô (confused-deputy). As ações
+  (aprovar/cancelar/estornar/excluir baixa+borderô) só agem sobre borderôs **da trilha deste sistema**;
+  o `filCod` vem da TRILHA, nunca do request → admin/JWT não mexe em borderô de terceiro via API.
+  Erro `FORBIDDEN:` → HTTP 403 no route. Testes de autorização adicionados.
+- **fix(security):** senhas **individuais** para os 4 admins kavex (eram iguais) + bcrypt cost 10→12
+  (seed-admin e os 4 usuários).
+- **fix(integrability):** **Zod no boundary** das escritas fin010 que viram confirmação persistida —
+  `criarBordero` exige `borCod` numérico, `gravarBaixaPermuta` exige `bxaCodSeq` (senão aborta, sem
+  borderô fantasma / settled errado).
+- **test(integrability/testability):** **contract tests** do fin010 no `ConexosClient` (paths/payloads),
+  incluindo a **regressão do bug docTip-vs-filCod** (2º segmento do DELETE baixa é o docTip).
+- **chore(deploy):** flags de escrita (`CONEXOS_WRITE_ENABLED`/`CONEXOS_DRY_RUN`/`CONEXOS_BASE_URL`)
+  passam a ser **fonte única no dashboard do Render** (`sync:false`) — fim do blueprint sobrescrevendo
+  o dashboard a cada deploy.
+
 ## v0.6.0 (2026-06-24) — Fase 3.1: gestão de borderôs (ciclo completo no fin010)
 
 Aba **Borderôs** — revisão e gestão dos borderôs de permuta com **status ao vivo do ERP** (fonte:
