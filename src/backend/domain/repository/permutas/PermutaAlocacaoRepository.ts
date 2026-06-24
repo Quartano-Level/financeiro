@@ -13,8 +13,12 @@ export interface AlocacaoRow {
     variacaoDelta?: number;
     taxaAdiantamento?: number;
     taxaInvoice?: number;
+    /** Data-base da D.I/DUIMP da invoice — vira a Data do borderô na baixa. */
+    dataBase?: Date;
     criadoPor?: string;
     criadoEm: Date;
+    /** Muda a cada re-alocação (upsert) — discrimina a "versão" da alocação p/ idempotência da baixa. */
+    atualizadoEm: Date;
     observacao?: string;
 }
 
@@ -30,6 +34,8 @@ export interface UpsertAlocacaoInput {
     variacaoDelta?: number;
     taxaAdiantamento?: number;
     taxaInvoice?: number;
+    /** Data-base da D.I/DUIMP da invoice — vira a Data do borderô (borDtaMvto) na baixa. */
+    dataBase?: Date;
     criadoPor: string;
     observacao?: string;
 }
@@ -52,11 +58,11 @@ export default class PermutaAlocacaoRepository {
             `INSERT INTO permuta_alocacao (
                 adiantamento_doc_cod, invoice_doc_cod, invoice_pri_cod, valor_alocado, moeda,
                 variacao_classificacao, variacao_resultado, variacao_delta,
-                taxa_adiantamento, taxa_invoice, criado_por, observacao, atualizado_em
+                taxa_adiantamento, taxa_invoice, data_base, criado_por, observacao, atualizado_em
             ) VALUES (
                 $adtoDocCod, $invoiceDocCod, $invoicePriCod, $valorAlocado, $moeda,
                 $varClass, $varResultado, $varDelta,
-                $taxaAdto, $taxaInvoice, $criadoPor, $observacao, now()
+                $taxaAdto, $taxaInvoice, $dataBase, $criadoPor, $observacao, now()
             )
             ON CONFLICT (adiantamento_doc_cod, invoice_doc_cod) DO UPDATE SET
                 invoice_pri_cod = EXCLUDED.invoice_pri_cod,
@@ -67,6 +73,7 @@ export default class PermutaAlocacaoRepository {
                 variacao_delta = EXCLUDED.variacao_delta,
                 taxa_adiantamento = EXCLUDED.taxa_adiantamento,
                 taxa_invoice = EXCLUDED.taxa_invoice,
+                data_base = EXCLUDED.data_base,
                 observacao = EXCLUDED.observacao,
                 atualizado_em = now()`,
             {
@@ -80,6 +87,7 @@ export default class PermutaAlocacaoRepository {
                 varDelta: input.variacaoDelta ?? null,
                 taxaAdto: input.taxaAdiantamento ?? null,
                 taxaInvoice: input.taxaInvoice ?? null,
+                dataBase: input.dataBase ?? null,
                 criadoPor: input.criadoPor,
                 observacao: input.observacao ?? null,
             },
@@ -90,7 +98,8 @@ export default class PermutaAlocacaoRepository {
         const rows = await this.databaseClient.selectMany(
             `SELECT adiantamento_doc_cod, invoice_doc_cod, invoice_pri_cod, valor_alocado, moeda,
                     variacao_classificacao, variacao_resultado, variacao_delta,
-                    taxa_adiantamento, taxa_invoice, criado_por, criado_em, observacao
+                    taxa_adiantamento, taxa_invoice, data_base, criado_por, criado_em,
+                    atualizado_em, observacao
              FROM permuta_alocacao
              ORDER BY adiantamento_doc_cod, criado_em`,
         );
@@ -153,8 +162,10 @@ export default class PermutaAlocacaoRepository {
         ...(r.variacao_delta != null ? { variacaoDelta: Number(r.variacao_delta) } : {}),
         ...(r.taxa_adiantamento != null ? { taxaAdiantamento: Number(r.taxa_adiantamento) } : {}),
         ...(r.taxa_invoice != null ? { taxaInvoice: Number(r.taxa_invoice) } : {}),
+        ...(r.data_base != null ? { dataBase: new Date(r.data_base as string | Date) } : {}),
         ...(r.criado_por != null ? { criadoPor: String(r.criado_por) } : {}),
         criadoEm: new Date(r.criado_em as string | Date),
+        atualizadoEm: new Date((r.atualizado_em ?? r.criado_em) as string | Date),
         ...(r.observacao != null ? { observacao: String(r.observacao) } : {}),
     });
 }

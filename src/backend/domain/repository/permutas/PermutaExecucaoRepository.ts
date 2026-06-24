@@ -79,6 +79,98 @@ export default class PermutaExecucaoRepository {
         return rows.map((r) => this.mapRow(r));
     };
 
+    /** Todas as execuções que geraram borderô (bor_cod não nulo), p/ a tela de gestão de borderôs. */
+    public listComBordero = async (): Promise<ExecucaoRow[]> => {
+        const rows = await this.databaseClient.selectMany(
+            `SELECT idempotency_key, adiantamento_doc_cod, invoice_doc_cod, fil_cod, status, dry_run,
+                    bor_cod, bxa_cod_seq, valor_baixado, juros, conta_juros, erp_response,
+                    erro_mensagem, executado_por, criado_em, atualizado_em
+             FROM permuta_alocacao_execucao
+             WHERE bor_cod IS NOT NULL
+             ORDER BY bor_cod DESC, criado_em`,
+        );
+        return rows.map((r) => this.mapRow(r));
+    };
+
+    /** Busca a execução (baixa) de um borderô por invoice — p/ exclusão da baixa específica. */
+    public findByBorCodInvoice = async (
+        borCod: number,
+        invoiceDocCod: string,
+    ): Promise<ExecucaoRow | null> => {
+        const row = await this.databaseClient.selectFirst<Record<string, unknown>>(
+            `SELECT idempotency_key, adiantamento_doc_cod, invoice_doc_cod, fil_cod, status, dry_run,
+                    bor_cod, bxa_cod_seq, valor_baixado, juros, conta_juros, erp_response,
+                    erro_mensagem, executado_por, criado_em, atualizado_em
+             FROM permuta_alocacao_execucao
+             WHERE bor_cod = $borCod AND invoice_doc_cod = $invoiceDocCod
+             LIMIT 1`,
+            { borCod, invoiceDocCod },
+        );
+        return row ? this.mapRow(row) : null;
+    };
+
+    /** Remove a linha de execução de uma baixa (após excluí-la no ERP). */
+    public deleteByBorCodInvoice = async (
+        borCod: number,
+        invoiceDocCod: string,
+    ): Promise<number> => {
+        return this.databaseClient.update(
+            `DELETE FROM permuta_alocacao_execucao
+             WHERE bor_cod = $borCod AND invoice_doc_cod = $invoiceDocCod`,
+            { borCod, invoiceDocCod },
+        );
+    };
+
+    /** Todas as baixas (linhas) de um borderô — p/ excluir o borderô inteiro. */
+    public listByBorCod = async (borCod: number): Promise<ExecucaoRow[]> => {
+        const rows = await this.databaseClient.selectMany(
+            `SELECT idempotency_key, adiantamento_doc_cod, invoice_doc_cod, fil_cod, status, dry_run,
+                    bor_cod, bxa_cod_seq, valor_baixado, juros, conta_juros, erp_response,
+                    erro_mensagem, executado_por, criado_em, atualizado_em
+             FROM permuta_alocacao_execucao
+             WHERE bor_cod = $borCod
+             ORDER BY criado_em`,
+            { borCod },
+        );
+        return rows.map((r) => this.mapRow(r));
+    };
+
+    /** Quantas baixas o borderô ainda tem na trilha (0 ⇒ borderô vazio → apagar). */
+    public countByBorCod = async (borCod: number): Promise<number> => {
+        const row = await this.databaseClient.selectFirst<{ n: string | number }>(
+            `SELECT count(*) AS n FROM permuta_alocacao_execucao WHERE bor_cod = $borCod`,
+            { borCod },
+        );
+        return row ? Number(row.n) : 0;
+    };
+
+    /** Remove todas as linhas de um borderô (após excluir o borderô no ERP). */
+    public deleteByBorCod = async (borCod: number): Promise<number> => {
+        return this.databaseClient.update(
+            `DELETE FROM permuta_alocacao_execucao WHERE bor_cod = $borCod`,
+            { borCod },
+        );
+    };
+
+    /** Remove a execução por chave de idempotência (libera re-baixa quando o borderô virou nulo). */
+    public deleteByKey = async (idempotencyKey: string): Promise<number> => {
+        return this.databaseClient.update(
+            `DELETE FROM permuta_alocacao_execucao WHERE idempotency_key = $key`,
+            { key: idempotencyKey },
+        );
+    };
+
+    /**
+     * Renomeia a chave de idempotência — libera a chave original para um RELANÇAMENTO sem perder a
+     * linha antiga (o borderô cancelado/estornado continua na trilha p/ histórico).
+     */
+    public renameKey = async (oldKey: string, newKey: string): Promise<number> => {
+        return this.databaseClient.update(
+            `UPDATE permuta_alocacao_execucao SET idempotency_key = $newKey WHERE idempotency_key = $oldKey`,
+            { oldKey, newKey },
+        );
+    };
+
     /**
      * Write-ahead: abre (ou reabre) a execução de um par adto↔invoice.
      * - Linha nova → status `reconciling` (real) ou `pending` (dry-run).

@@ -12,6 +12,32 @@ export interface BorderoCriado {
     borDtaMvto: number;
 }
 
+/** Estado vivo de um borderô (GET /fin010/{filCod}/{borCod}). */
+export interface BorderoDetalhe {
+    borCod: number;
+    filCod: number;
+    borDtaMvto?: number;
+    /** 0 = EM CADASTRO, 1 = FINALIZADO. */
+    borVldFinalizado?: number;
+    /** Se != null, o borderô foi ESTORNADO. */
+    borCodEstornado?: number | null;
+    borDtaFinalizado?: number | null;
+    usnDesNomeCad?: string | null;
+    usnDesNomeFin?: string | null;
+    vldHasBaixa?: number;
+}
+
+/** Item da listagem de borderôs do ERP (`POST /fin010/list`). */
+export interface BorderoListaItem {
+    borCod: number;
+    filCod: number;
+    borDtaMvto?: number;
+    borVldFinalizado?: number;
+    borCodEstornado?: number | null;
+    vlrTotalLiquido?: number;
+    usnDesNomeCad?: string | null;
+}
+
 /** `responseData` do passo 2 (validação do título da invoice). */
 export interface TituloBaixaValidacao {
     /** Valor do título a baixar (fonte da verdade do ERP — moeda do título). */

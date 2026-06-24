@@ -1,5 +1,24 @@
 # Columbia Financeiro — Changelog
 
+## v0.6.0 (2026-06-24) — Fase 3.1: gestão de borderôs (ciclo completo no fin010)
+
+Aba **Borderôs** — revisão e gestão dos borderôs de permuta com **status ao vivo do ERP** (fonte:
+`fin010/list`, `borVldTipo=2`), e o ciclo de vida completo automatizado via o próprio Conexos.
+
+- feat(permutas): `BorderoGestaoService` — listar (do ERP, enriquecido com a trilha), **Aprovar**
+  (`finalizar`), **Cancelar**, **Estornar** (volta p/ em cadastro) e **Excluir** baixa/borderô.
+  Contratos sondados por HAR: `POST /fin010/{finalizar,cancelar,estornar}/{borCod}`,
+  `DELETE /fin010/{borCod}`, `DELETE /fin010/baixas/{borCod}/{docTip}/{docCod}/{titCod}/{bxaCodSeq}`
+  (2º segmento é o **docTip**, não o filCod), `POST /fin010/baixas/list/{borCod}`.
+- feat(frontend): aba `/permutas/borderos` — filtros (borderô, usuário, filial, situação, data),
+  ações com modal de confirmação, situação ao vivo; ações só nos borderôs criados por este sistema.
+- feat(permutas): **data do borderô** escolhida no modal de baixa (default = data da D.I/DUIMP),
+  resolvendo `FIN_010.DATA_BLOQUEADA_PELA_CONTABILIDADE` em períodos fechados.
+- feat(permutas): idempotência **viva** — borderô cancelado/estornado/removido libera o relançamento
+  preservando o histórico (renomeia a chave).
+- fix(permutas): erros do ERP traduzidos para PT (400 com mensagem) em vez de 500 genérico.
+- chore(auth): usuários admin (francinei/grazi/simone/rogerio @kavex.com) no `app_user`.
+
 ## v0.5.0 (2026-06-23) — Fase 3: write-back fin010 (baixa/permuta efetiva no ERP)
 
 A **primeira escrita** do sistema no Conexos — o risco arquitetural #1. A ação `reconciliarPermuta`

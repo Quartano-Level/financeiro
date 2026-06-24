@@ -280,3 +280,39 @@ export interface ExecucaoPermuta {
   criadoEm: string
   atualizadoEm: string
 }
+
+/** Situação viva do borderô no ERP (Fase 3.1 — gestão de borderôs). */
+export type BorderoSituacao =
+  | 'EM_CADASTRO'
+  | 'FINALIZADO'
+  | 'CANCELADO'
+  | 'ESTORNADO'
+  | 'REMOVIDO'
+  | 'INDISPONIVEL'
+
+/** Uma baixa (par adto→invoice) dentro do borderô. */
+export interface BaixaResumo {
+  invoiceDocCod: string
+  adiantamentoDocCod: string
+  status: ExecucaoStatus
+  valorBaixado?: number
+  juros?: number
+  contaJuros?: number
+  bxaCodSeq?: number
+  criadoEm: string
+}
+
+/** Resumo de um borderô para a tela de gestão (trilha local + status vivo do ERP). */
+export interface BorderoResumo {
+  borCod: number
+  filCod: number
+  situacao: BorderoSituacao
+  finalizado: boolean
+  estornado: boolean
+  criadoPor?: string
+  criadoEm: string
+  totalBaixado: number
+  baixas: BaixaResumo[]
+  /** Criado por este sistema (tem trilha)? Habilita as ações de escrita. */
+  daTrilha?: boolean
+}

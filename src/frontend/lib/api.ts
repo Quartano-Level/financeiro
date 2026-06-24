@@ -1,5 +1,6 @@
 import { withAuthHeaders } from './auth/token'
 import type {
+  BorderoResumo,
   ClienteFiltro,
   ExecucaoPermuta,
   FiliaisResponse,
@@ -264,6 +265,78 @@ export async function reconciliarAdiantamento(
   }
   return (await res.json()) as ReconciliarResult
 }
+
+/** Lista os borderôs (Fase 3.1) — trilha local + status vivo do ERP. READ-ONLY. */
+export async function fetchBorderos(): Promise<BorderoResumo[]> {
+  const res = await fetch(`${API}/permutas/borderos`, { headers: await withAuthHeaders() })
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  const json = (await res.json()) as { borderos?: BorderoResumo[] }
+  return json.borderos ?? []
+}
+
+/** Exclui UMA baixa de um borderô em aberto (no ERP + trilha). Fase 3.1. */
+export async function excluirBaixaBordero(borCod: number, invoiceDocCod: string): Promise<void> {
+  const res = await fetch(
+    `${API}/permutas/borderos/${encodeURIComponent(borCod)}/baixas/${encodeURIComponent(invoiceDocCod)}`,
+    { method: 'DELETE', headers: await withAuthHeaders() },
+  )
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const j = await res.json()
+      detail = j?.error ? ` — ${j.error}` : ''
+    } catch {}
+    throw new Error(`API ${res.status}${detail}`)
+  }
+}
+
+/** Exclui o borderô INTEIRO (em cadastro) + todas as baixas (ERP + trilha). Fase 3.1. */
+export async function excluirBorderoInteiro(borCod: number, filCod?: number): Promise<void> {
+  const qs = filCod !== undefined ? `?filCod=${encodeURIComponent(filCod)}` : ''
+  const res = await fetch(`${API}/permutas/borderos/${encodeURIComponent(borCod)}${qs}`, {
+    method: 'DELETE',
+    headers: await withAuthHeaders(),
+  })
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const j = await res.json()
+      detail = j?.error ? ` — ${j.error}` : ''
+    } catch {}
+    throw new Error(`API ${res.status}${detail}`)
+  }
+}
+
+/** Ação de borderô (finalizar/aprovar, cancelar ou estornar) via POST. Fase 3.1. */
+async function acaoBordero(
+  borCod: number,
+  acao: 'finalizar' | 'cancelar' | 'estornar',
+  filCod?: number,
+): Promise<void> {
+  const res = await fetch(`${API}/permutas/borderos/${encodeURIComponent(borCod)}/${acao}`, {
+    method: 'POST',
+    headers: await withAuthHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify(filCod !== undefined ? { filCod } : {}),
+  })
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const j = await res.json()
+      detail = j?.error ? ` — ${j.error}` : ''
+    } catch {}
+    throw new Error(`API ${res.status}${detail}`)
+  }
+}
+
+/** Finaliza/aprova o borderô no ERP. */
+export const finalizarBordero = (borCod: number, filCod?: number) =>
+  acaoBordero(borCod, 'finalizar', filCod)
+/** Cancela o borderô (em cadastro) no ERP. */
+export const cancelarBordero = (borCod: number, filCod?: number) =>
+  acaoBordero(borCod, 'cancelar', filCod)
+/** Estorna o borderô finalizado (volta para em cadastro) no ERP. */
+export const estornarBordero = (borCod: number, filCod?: number) =>
+  acaoBordero(borCod, 'estornar', filCod)
 
 /** Trilha de execução da baixa de um adiantamento (status por par adto↔invoice). */
 export async function fetchExecucoes(docCod: string): Promise<ExecucaoPermuta[]> {

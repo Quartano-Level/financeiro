@@ -6,6 +6,8 @@ import type { VarianteDeclaracao } from '../interface/permutas/DeclaracaoImporta
 import type {
     BaixaGravada,
     BorderoCriado,
+    BorderoDetalhe,
+    BorderoListaItem,
     Fin010ValidacaoResponse,
     TituloBaixaValidacao,
     TituloPermutaValidacao,
@@ -98,6 +100,8 @@ export interface LegacyConexosShape {
         body: Record<string, unknown>,
         opts?: { filCod?: number },
     ) => Promise<T>;
+    /** DELETE passthrough (exclusão de baixa do borderô — Fase 3.1). */
+    deleteGeneric: <T>(path: string, opts?: { filCod?: number }) => Promise<T>;
     getFiliais: () => Promise<Filial[]>;
     getFilCodDefault: () => Promise<number | null>;
 }
@@ -1025,6 +1029,238 @@ export default class ConexosClient {
             );
         } catch (cause) {
             throw new ConexosError({ endpoint: 'fin010', cause });
+        }
+    };
+
+    /**
+     * Lê o estado VIVO de um borderô (`GET /fin010/{filCod}/{borCod}`) — situação
+     * (EM CADASTRO / FINALIZADO / ESTORNADO), datas e usuários. Usado pela tela de
+     * gestão de borderôs. Retorna `null` se o borderô não existe mais (404 — removido).
+     *
+     * SEM RetryExecutor: é uma leitura de STATUS best-effort, chamada N vezes (uma por
+     * borderô) na listagem. Re-tentar 3× cada borderô ausente/com erro deixava a tela MUITO
+     * lenta — aqui falha rápido (o serviço marca INDISPONIVEL e o usuário dá "Atualizar").
+     */
+    public getBordero = async (params: {
+        filCod: number;
+        borCod: number;
+    }): Promise<BorderoDetalhe | null> => {
+        const { filCod, borCod } = params;
+        try {
+            await this.legacy.ensureSid();
+            const d = await this.legacy.getGeneric<Record<string, unknown>>(
+                `fin010/${filCod}/${borCod}`,
+                { filCod },
+            );
+            if (!d || typeof d !== 'object') return null;
+            return {
+                borCod: Number(d.borCod ?? borCod),
+                filCod: Number(d.filCod ?? filCod),
+                ...(d.borDtaMvto != null ? { borDtaMvto: Number(d.borDtaMvto) } : {}),
+                ...(d.borVldFinalizado != null
+                    ? { borVldFinalizado: Number(d.borVldFinalizado) }
+                    : {}),
+                borCodEstornado: d.borCodEstornado != null ? Number(d.borCodEstornado) : null,
+                borDtaFinalizado: d.borDtaFinalizado != null ? Number(d.borDtaFinalizado) : null,
+                usnDesNomeCad: (d.usnDesNomeCad as string | null) ?? null,
+                usnDesNomeFin: (d.usnDesNomeFin as string | null) ?? null,
+                ...(d.vldHasBaixa != null ? { vldHasBaixa: Number(d.vldHasBaixa) } : {}),
+            };
+        } catch (cause) {
+            const status = (cause as { response?: { status?: number } })?.response?.status;
+            if (status === 404) return null; // borderô removido no ERP
+            throw new ConexosError({ endpoint: `fin010/${filCod}/${borCod}`, cause });
+        }
+    };
+
+    /**
+     * Lista as baixas de um borderô — `POST /fin010/baixas/list/{borCod}` (sonda HAR). Fonte da
+     * verdade do que está DENTRO do borderô (mesmo os não criados por nós). Retorna o necessário
+     * para excluir cada baixa (docCod/titCod/bxaCodSeq) + sinais de finalização.
+     */
+    public listBaixas = async (params: {
+        filCod: number;
+        borCod: number;
+    }): Promise<
+        Array<{
+            filCod: number;
+            docTip: number;
+            docCod: number;
+            titCod: number;
+            bxaCodSeq: number;
+            bxaMnyLiquidoPermuta?: number;
+            borVldFinalizado?: number;
+        }>
+    > => {
+        const { filCod, borCod } = params;
+        try {
+            return await this.retryExecutor.execute(async () => {
+                await this.legacy.ensureSid();
+                const page = await this.legacy.listGenericPaginated<Record<string, unknown>>(
+                    `fin010/baixas/list/${borCod}`,
+                    {
+                        fieldList: [],
+                        filterList: {},
+                        pageNumber: 1,
+                        pageSize: 200,
+                        orderList: { orderList: [{ propertyName: 'docCod', order: 'asc' }] },
+                    },
+                    { filCod },
+                );
+                return (page.rows ?? []).map((r) => ({
+                    filCod: Number(r.filCod ?? filCod),
+                    docTip: Number(r.docTip ?? 2),
+                    docCod: Number(r.docCod),
+                    titCod: Number(r.titCod ?? 1),
+                    bxaCodSeq: Number(r.bxaCodSeq),
+                    ...(r.bxaMnyLiquidoPermuta != null
+                        ? { bxaMnyLiquidoPermuta: Number(r.bxaMnyLiquidoPermuta) }
+                        : {}),
+                    ...(r.borVldFinalizado != null
+                        ? { borVldFinalizado: Number(r.borVldFinalizado) }
+                        : {}),
+                }));
+            });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: `fin010/baixas/list/${borCod}`, cause });
+        }
+    };
+
+    /**
+     * Exclui UMA baixa de um borderô EM CADASTRO (antes de finalizar/aprovar).
+     * `DELETE /fin010/baixas/{borCod}/{docTip}/{docCod}/{titCod}/{bxaCodSeq}` — o 2º segmento é o
+     * **docTip** (tipo do documento, 2 = invoice), NÃO o filCod (este vai no header `cnx-filcod`).
+     * A sonda inicial confundiu os dois porque na filial 2 o filCod coincide com o docTip 2.
+     * Tentativa única (DELETE é idempotente; falha sobe pro caller). Lança `ConexosError`.
+     */
+    public excluirBaixa = async (params: {
+        filCod: number;
+        borCod: number;
+        invoiceDocCod: number;
+        titCod: number;
+        bxaCodSeq: number;
+        docTip?: number;
+    }): Promise<void> => {
+        const { filCod, borCod, invoiceDocCod, titCod, bxaCodSeq } = params;
+        const docTip = params.docTip ?? 2; // 2 = título de invoice (default do fluxo de permuta)
+        const path = `fin010/baixas/${borCod}/${docTip}/${invoiceDocCod}/${titCod}/${bxaCodSeq}`;
+        try {
+            await this.legacy.ensureSid();
+            await this.legacy.deleteGeneric<unknown>(path, { filCod });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: path, cause });
+        }
+    };
+
+    /**
+     * Exclui o BORDERÔ inteiro (em cadastro) — `moduleBordero.delete`. Sonda HAR 2026-06-23:
+     * `DELETE /fin010/{borCod}` — só o borCod no path; o filCod vai no header `cnx-filcod`
+     * (≠ do GET, que usa /fin010/{filCod}/{borCod}). Tentativa única; lança `ConexosError`.
+     */
+    public excluirBordero = async (params: { filCod: number; borCod: number }): Promise<void> => {
+        const { filCod, borCod } = params;
+        const path = `fin010/${borCod}`;
+        try {
+            await this.legacy.ensureSid();
+            await this.legacy.deleteGeneric<unknown>(path, { filCod });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: path, cause });
+        }
+    };
+
+    /**
+     * FINALIZA (aprova) o borderô — `moduleBordero.finalizar`. Sonda HAR: `POST /fin010/finalizar/{borCod}`
+     * (body vazio; filCod no header). Tentativa única; lança `ConexosError`.
+     */
+    public finalizarBordero = async (params: { filCod: number; borCod: number }): Promise<void> => {
+        const { filCod, borCod } = params;
+        const path = `fin010/finalizar/${borCod}`;
+        try {
+            await this.legacy.ensureSid();
+            await this.legacy.postGeneric<unknown>(path, {}, { filCod });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: path, cause });
+        }
+    };
+
+    /**
+     * CANCELA o borderô (em cadastro) — `POST /fin010/cancelar/{borCod}` (body vazio; filCod no header).
+     * Tentativa única; lança `ConexosError`.
+     */
+    public cancelarBordero = async (params: { filCod: number; borCod: number }): Promise<void> => {
+        const { filCod, borCod } = params;
+        const path = `fin010/cancelar/${borCod}`;
+        try {
+            await this.legacy.ensureSid();
+            await this.legacy.postGeneric<unknown>(path, {}, { filCod });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: path, cause });
+        }
+    };
+
+    /**
+     * ESTORNA o borderô FINALIZADO — `POST /fin010/estornar/{borCod}` (body vazio; filCod no header).
+     * Desfaz a finalização: o borderô VOLTA para EM CADASTRO. Tentativa única; lança `ConexosError`.
+     */
+    public estornarBordero = async (params: { filCod: number; borCod: number }): Promise<void> => {
+        const { filCod, borCod } = params;
+        const path = `fin010/estornar/${borCod}`;
+        try {
+            await this.legacy.ensureSid();
+            await this.legacy.postGeneric<unknown>(path, {}, { filCod });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: path, cause });
+        }
+    };
+
+    /**
+     * Lista os borderôs de PERMUTA (borVldTipo=2) de uma filial — `POST /fin010/list` (sonda HAR).
+     * Fonte autoritativa da tela de gestão (situação ao vivo: em cadastro/finalizado/cancelado/
+     * estornado vem do próprio registro). Best-effort: erro → lança `ConexosError` (o serviço trata).
+     */
+    public listBorderos = async (params: {
+        filCod: number;
+        pageSize?: number;
+    }): Promise<BorderoListaItem[]> => {
+        const { filCod, pageSize = 200 } = params;
+        try {
+            return await this.retryExecutor.execute(async () => {
+                await this.legacy.ensureSid();
+                const page = await this.legacy.listGenericPaginated<Record<string, unknown>>(
+                    'fin010/list',
+                    {
+                        fieldList: [
+                            'borCod',
+                            'filCod',
+                            'borDtaMvto',
+                            'borVldFinalizado',
+                            'borCodEstornado',
+                            'vlrTotalLiquido',
+                            'usnDesNomeCad',
+                        ],
+                        filterList: { 'borVldTipo#EQ': 2 },
+                        pageNumber: 1,
+                        pageSize,
+                        orderList: { orderList: [{ propertyName: 'borCod', order: 'desc' }] },
+                    },
+                    { filCod },
+                );
+                return (page.rows ?? []).map((r) => ({
+                    borCod: Number(r.borCod),
+                    filCod: Number(r.filCod ?? filCod),
+                    ...(r.borDtaMvto != null ? { borDtaMvto: Number(r.borDtaMvto) } : {}),
+                    ...(r.borVldFinalizado != null
+                        ? { borVldFinalizado: Number(r.borVldFinalizado) }
+                        : {}),
+                    borCodEstornado: r.borCodEstornado != null ? Number(r.borCodEstornado) : null,
+                    ...(r.vlrTotalLiquido != null
+                        ? { vlrTotalLiquido: Number(r.vlrTotalLiquido) }
+                        : {}),
+                    usnDesNomeCad: (r.usnDesNomeCad as string | null) ?? null,
+                }));
+            });
+        } catch (cause) {
+            throw new ConexosError({ endpoint: 'fin010/list', cause });
         }
     };
 

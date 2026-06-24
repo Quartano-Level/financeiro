@@ -272,6 +272,8 @@ export default class AlocacaoPermutasService {
             ...(variacao?.delta !== undefined ? { variacaoDelta: variacao.delta } : {}),
             ...(taxaAdto !== undefined ? { taxaAdiantamento: taxaAdto } : {}),
             ...(invoice.taxa !== undefined ? { taxaInvoice: invoice.taxa } : {}),
+            // Data-base da D.I/DUIMP → vira a Data do borderô (borDtaMvto) na baixa fin010.
+            ...(invoice.dataBase !== undefined ? { dataBase: new Date(invoice.dataBase) } : {}),
             criadoPor: input.criadoPor,
             ...(input.observacao !== undefined ? { observacao: input.observacao } : {}),
         });

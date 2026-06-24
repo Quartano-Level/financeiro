@@ -282,6 +282,32 @@ class ConexosService {
         }
     }
 
+    /**
+     * Generic authenticated DELETE helper. Mirrors `authenticatedGet` (mesmo 401-retry).
+     * Usado pela exclusão de baixa do borderô (`fin010/baixas/{bor}/{fil}/{doc}/{tit}/{seq}`).
+     */
+    async authenticatedDelete<T = unknown>(
+        path: string,
+        opts: { filCod?: number } = {},
+    ): Promise<T> {
+        await this.ensureSid();
+        const url = path.startsWith('/') ? path : `/${path}`;
+        try {
+            const resp = await this.client.delete<T>(url, {
+                headers: this.defaultHeaders(opts.filCod),
+            });
+            return resp.data;
+        } catch (err: unknown) {
+            const status = (err as { response?: { status?: number } }).response?.status;
+            if (status !== 401) throw err;
+            await this.login();
+            const resp = await this.client.delete<T>(url, {
+                headers: this.defaultHeaders(opts.filCod),
+            });
+            return resp.data;
+        }
+    }
+
     private getAuthHeaders() {
         return this.sid ? { Cookie: `sid=${this.sid}` } : {};
     }

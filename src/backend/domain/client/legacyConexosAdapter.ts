@@ -31,6 +31,10 @@ export const buildLegacyConexosAdapter = async (_config: {
                 opts?: { filCod?: number },
             ) => Promise<T>;
             authenticatedGet: <T = unknown>(path: string, opts?: { filCod?: number }) => Promise<T>;
+            authenticatedDelete: <T = unknown>(
+                path: string,
+                opts?: { filCod?: number },
+            ) => Promise<T>;
         };
     };
 
@@ -95,12 +99,18 @@ export const buildLegacyConexosAdapter = async (_config: {
         return conexosService.authenticatedPost<T>(`/${path}`, body, opts);
     };
 
+    /** DELETE passthrough — exclusão de baixa do borderô (`fin010/baixas/...`). */
+    const deleteGeneric = async <T>(path: string, opts?: { filCod?: number }): Promise<T> => {
+        return conexosService.authenticatedDelete<T>(`/${path}`, opts);
+    };
+
     return {
         ensureSid: () => conexosService.ensureSid(),
         listGeneric,
         listGenericPaginated,
         getGeneric,
         postGeneric,
+        deleteGeneric,
         getFiliais: () => conexosService.getFiliais(),
         getFilCodDefault: () => conexosService.getFilCodDefault(),
     };

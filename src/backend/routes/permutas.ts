@@ -17,6 +17,7 @@ import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasServ
 import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
 import ReconciliacaoPermutaService from '../domain/service/permutas/ReconciliacaoPermutaService.js';
+import BorderoGestaoService from '../domain/service/permutas/BorderoGestaoService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { requireRole } from '../http/auth.js';
 import { heavyRouteLimiter } from '../http/rateLimit.js';
@@ -34,6 +35,30 @@ const reconciliarBodySchema = z.object({
     /** Força dry-run (preview sem POST), mesmo com escrita habilitada. */
     dryRun: z.boolean().optional(),
 });
+
+/**
+ * Extrai uma mensagem AMIGÁVEL de um erro vindo do ERP (Conexos). As validações do `fin010`
+ * voltam em `cause.response.data.messages[*].message` (ex.: FIN_IMPOSSIVEL_ALTERAR_REGISTRO
+ * quando o borderô está finalizado). Fallback: a mensagem do próprio Error.
+ */
+const ERP_MESSAGE_PT: Record<string, string> = {
+    'FIN_014.DELETAR_REGISTRO_ESTORNO':
+        'Não é possível excluir: este borderô tem um estorno vinculado no ERP.',
+    'FIN_014.FIN_IMPOSSIVEL_ALTERAR_REGISTRO':
+        'Não é possível alterar: borderô finalizado. Estorne antes de mexer.',
+    'Generic.ERROR_MESSAGE':
+        'O ERP recusou esta operação para o borderô (estado incompatível com a ação).',
+};
+
+const erpErrorMessage = (err: unknown): string => {
+    const cause = (err as { cause?: unknown })?.cause;
+    const data = (cause as { response?: { data?: unknown } })?.response?.data as
+        | { messages?: Array<{ message?: string }> }
+        | undefined;
+    const key = data?.messages?.[0]?.message;
+    if (key) return ERP_MESSAGE_PT[key] ?? String(key);
+    return err instanceof Error ? err.message : 'erro ao executar a ação no Conexos';
+};
 
 /** Meia-noite UTC do dia atual em epoch-ms (default do borDtaMvto). */
 const todayUtcMidnightMs = (): number => {
@@ -377,6 +402,157 @@ router.post(
             ...(parsed.data.dryRun !== undefined ? { dryRunOverride: parsed.data.dryRun } : {}),
         });
         res.json(result);
+    }),
+);
+
+// GET /permutas/borderos — gestão de borderôs (Fase 3.1): borderôs que criamos (trilha local)
+// enriquecidos com o status VIVO do ERP (em aberto / finalizado / estornado / removido). READ-ONLY.
+router.get(
+    '/borderos',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(BorderoGestaoService);
+        const borderos = await service.listarBorderos();
+        res.json({ borderos, geradoEm: new Date().toISOString(), requestId: req.requestId });
+    }),
+);
+
+// POST /permutas/borderos/:borCod/finalizar — finaliza/aprova o borderô no ERP (admin, gated).
+router.post(
+    '/borderos/:borCod/finalizar',
+    requireRole('admin'),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const borCod = Number(req.params.borCod);
+        if (!Number.isFinite(borCod)) {
+            res.status(400).json({ error: 'borCod inválido' });
+            return;
+        }
+        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const filCod = Number(req.body?.filCod);
+        const service = container.resolve(BorderoGestaoService);
+        try {
+            res.json(
+                await service.finalizarBordero({
+                    borCod,
+                    executadoPor,
+                    ...(Number.isFinite(filCod) ? { filCod } : {}),
+                }),
+            );
+        } catch (err) {
+            res.status(400).json({ error: erpErrorMessage(err) });
+        }
+    }),
+);
+
+// POST /permutas/borderos/:borCod/cancelar — cancela o borderô (em cadastro) no ERP (admin, gated).
+router.post(
+    '/borderos/:borCod/cancelar',
+    requireRole('admin'),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const borCod = Number(req.params.borCod);
+        if (!Number.isFinite(borCod)) {
+            res.status(400).json({ error: 'borCod inválido' });
+            return;
+        }
+        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const filCod = Number(req.body?.filCod);
+        const service = container.resolve(BorderoGestaoService);
+        try {
+            res.json(
+                await service.cancelarBordero({
+                    borCod,
+                    executadoPor,
+                    ...(Number.isFinite(filCod) ? { filCod } : {}),
+                }),
+            );
+        } catch (err) {
+            res.status(400).json({ error: erpErrorMessage(err) });
+        }
+    }),
+);
+
+// POST /permutas/borderos/:borCod/estornar — estorna o borderô finalizado (volta p/ em cadastro).
+router.post(
+    '/borderos/:borCod/estornar',
+    requireRole('admin'),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const borCod = Number(req.params.borCod);
+        if (!Number.isFinite(borCod)) {
+            res.status(400).json({ error: 'borCod inválido' });
+            return;
+        }
+        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const filCod = Number(req.body?.filCod);
+        const service = container.resolve(BorderoGestaoService);
+        try {
+            res.json(
+                await service.estornarBordero({
+                    borCod,
+                    executadoPor,
+                    ...(Number.isFinite(filCod) ? { filCod } : {}),
+                }),
+            );
+        } catch (err) {
+            res.status(400).json({ error: erpErrorMessage(err) });
+        }
+    }),
+);
+
+// DELETE /permutas/borderos/:borCod — exclui o borderô INTEIRO (em cadastro) + todas as baixas.
+router.delete(
+    '/borderos/:borCod',
+    requireRole('admin'),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const borCod = Number(req.params.borCod);
+        if (!Number.isFinite(borCod)) {
+            res.status(400).json({ error: 'borCod inválido' });
+            return;
+        }
+        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const filCod = Number(req.query.filCod);
+        const service = container.resolve(BorderoGestaoService);
+        try {
+            const out = await service.excluirBordero({
+                borCod,
+                executadoPor,
+                ...(Number.isFinite(filCod) ? { filCod } : {}),
+            });
+            res.json(out);
+        } catch (err) {
+            res.status(400).json({ error: erpErrorMessage(err) });
+        }
+    }),
+);
+
+// DELETE /permutas/borderos/:borCod/baixas/:invoiceDocCod — exclui UMA baixa do borderô (Fase 3.1)
+// antes de aprovar. Escreve no ERP (fin010) + remove da trilha. Admin + gated por CONEXOS_WRITE_ENABLED.
+router.delete(
+    '/borderos/:borCod/baixas/:invoiceDocCod',
+    requireRole('admin'),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const borCod = Number(req.params.borCod);
+        if (!Number.isFinite(borCod)) {
+            res.status(400).json({ error: 'borCod inválido' });
+            return;
+        }
+        const invoiceDocCod = String(req.params.invoiceDocCod);
+        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const service = container.resolve(BorderoGestaoService);
+        try {
+            res.json(await service.excluirBaixa({ borCod, invoiceDocCod, executadoPor }));
+        } catch (err) {
+            res.status(400).json({ error: erpErrorMessage(err) });
+        }
     }),
 );
 

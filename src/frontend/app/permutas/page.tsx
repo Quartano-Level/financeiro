@@ -709,10 +709,16 @@ export default function GestaoPermutasPage() {
   const [reconcilAdto, setReconcilAdto] = React.useState<PermutaPendente | null>(null)
   const [reconcilResult, setReconcilResult] = React.useState<ReconciliarResult | null>(null)
   const [reconcilLoading, setReconcilLoading] = React.useState(false)
+  // Data do borderô (YYYY-MM-DD). Default = data da D.I/DUIMP; o analista ajusta quando o período
+  // contábil da D.I está fechado (ERP recusa com DATA_BLOQUEADA_PELA_CONTABILIDADE).
+  const [reconcilData, setReconcilData] = React.useState('')
 
   const abrirReconciliar = React.useCallback(async (p: PermutaPendente) => {
     setReconcilAdto(p)
     setReconcilResult(null)
+    setReconcilData(
+      p.detalhe?.declaracao?.dataBase?.slice(0, 10) ?? new Date().toISOString().slice(0, 10),
+    )
     setReconcilLoading(true)
     try {
       const result = await reconciliarAdiantamento(p.docCod, { dryRun: true })
@@ -729,7 +735,16 @@ export default function GestaoPermutasPage() {
     if (!reconcilAdto) return
     setReconcilLoading(true)
     try {
-      const result = await reconciliarAdiantamento(reconcilAdto.docCod, { dryRun: false })
+      // Data do borderô escolhida pelo analista (UTC midnight epoch-ms).
+      const [y, m, d] = reconcilData.split('-').map(Number)
+      const dataMovto =
+        y && m && d ? Date.UTC(y, m - 1, d) : undefined
+      // Idempotência é POR ESTADO DA ALOCAÇÃO (server-side, via atualizado_em): a mesma alocação
+      // já baixada NÃO relança; re-alocar (ou adicionar nova) habilita um novo lançamento.
+      const result = await reconciliarAdiantamento(reconcilAdto.docCod, {
+        dryRun: false,
+        ...(dataMovto !== undefined ? { dataMovto } : {}),
+      })
       setReconcilResult(result)
       if (result.dryRun) {
         toast.info('Escrita desabilitada no servidor (dry-run). Payload validado, sem baixa real.')
@@ -737,7 +752,10 @@ export default function GestaoPermutasPage() {
         const ok = result.resultados.filter((r) => r.status === 'settled').length
         const erros = result.resultados.filter((r) => r.status === 'error').length
         if (erros > 0) toast.error(`${erros} baixa(s) falharam — veja o detalhe.`)
-        if (ok > 0) toast.success(`${ok} baixa(s) gravada(s) no fin010 (borderô ${result.borCod}).`)
+        if (ok > 0)
+          toast.success(
+            `${ok} baixa(s) no borderô ${result.borCod} (EM CADASTRO). Revise e aprove em Borderôs.`,
+          )
         await load()
       }
     } catch (err) {
@@ -745,7 +763,7 @@ export default function GestaoPermutasPage() {
     } finally {
       setReconcilLoading(false)
     }
-  }, [reconcilAdto, load])
+  }, [reconcilAdto, reconcilData, load])
 
   // Reflete os dados frescos no modal de alocação após cada load().
   const alocandoAtual =
@@ -983,6 +1001,11 @@ export default function GestaoPermutasPage() {
             <Button variant="outline" size="sm" asChild>
               <Link href="/permutas/clientes-filtro" title="Cadastrar clientes para permuta manual">
                 <Users aria-hidden /> Clientes filtro
+              </Link>
+            </Button>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/permutas/borderos" title="Gestão de borderôs (revisão / status no ERP)">
+                <Banknote aria-hidden /> Borderôs
               </Link>
             </Button>
             <Button
@@ -2190,6 +2213,20 @@ export default function GestaoPermutasPage() {
                 </DialogDescription>
               </DialogHeader>
               <DialogBody className="space-y-4">
+                <label className="flex flex-col gap-1 text-sm">
+                  <span className="font-medium">Data do borderô</span>
+                  <Input
+                    type="date"
+                    value={reconcilData}
+                    onChange={(e) => setReconcilData(e.target.value)}
+                    className="w-48"
+                    disabled={reconcilLoading}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Sugerida a data da D.I/DUIMP. Ajuste se o período contábil estiver fechado.
+                  </span>
+                </label>
+
                 {reconcilLoading && !reconcilResult ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Spinner /> Montando o preview do borderô…
@@ -2198,35 +2235,67 @@ export default function GestaoPermutasPage() {
 
                 {reconcilResult ? (
                   <>
-                    <div
-                      className={cn(
-                        'rounded-md border p-3 text-sm',
-                        reconcilResult.dryRun
-                          ? 'border-warning/40 bg-warning-subtle text-warning-foreground'
-                          : 'border-success/40 bg-success-subtle text-success-foreground',
-                      )}
-                    >
-                      {reconcilResult.dryRun ? (
-                        <>
-                          <strong>Pré-visualização (dry-run).</strong> Nenhuma baixa foi gravada
-                          no ERP.{' '}
-                          {!reconcilResult.writeEnabled
-                            ? 'A escrita está DESABILITADA no servidor (CONEXOS_WRITE_ENABLED=false).'
-                            : 'Confira os campos abaixo antes de executar.'}
-                        </>
-                      ) : (
-                        <>
-                          <strong>Baixa executada.</strong> Borderô {reconcilResult.borCod} no
-                          fin010.
-                        </>
-                      )}
-                    </div>
+                    {(() => {
+                      const settled = reconcilResult.resultados.filter(
+                        (r) => r.status === 'settled',
+                      ).length
+                      const skipped = reconcilResult.resultados.filter(
+                        (r) => r.status === 'skipped',
+                      ).length
+                      const errors = reconcilResult.resultados.filter(
+                        (r) => r.status === 'error',
+                      ).length
+                      // Tom: dry-run = warning; sucesso = success; só-skipped = neutro; erro = destructive.
+                      const tone = reconcilResult.dryRun
+                        ? 'border-warning/40 bg-warning-subtle text-warning-foreground'
+                        : settled > 0
+                          ? 'border-success/40 bg-success-subtle text-success-foreground'
+                          : errors > 0
+                            ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                            : 'border-border bg-muted text-muted-foreground'
+                      return (
+                        <div className={cn('rounded-md border p-3 text-sm', tone)}>
+                          {reconcilResult.dryRun ? (
+                            <>
+                              <strong>Pré-visualização (dry-run).</strong> Nenhuma baixa foi
+                              gravada no ERP.{' '}
+                              {!reconcilResult.writeEnabled
+                                ? 'A escrita está DESABILITADA no servidor (CONEXOS_WRITE_ENABLED=false).'
+                                : 'Confira os campos abaixo antes de executar.'}
+                            </>
+                          ) : settled > 0 ? (
+                            <>
+                              <strong>Baixa executada.</strong> Borderô {reconcilResult.borCod} no
+                              fin010 — situação <strong>EM CADASTRO</strong>. Para concluir, revise e{' '}
+                              <strong>aprove</strong> em{' '}
+                              <Link
+                                href="/permutas/borderos"
+                                className="font-medium underline underline-offset-2"
+                              >
+                                Borderôs
+                              </Link>
+                              .
+                            </>
+                          ) : skipped > 0 && errors === 0 ? (
+                            <>
+                              <strong>Nada a baixar.</strong> Par(es) já baixado(s) anteriormente
+                              (idempotência) — nenhum borderô novo criado.
+                            </>
+                          ) : (
+                            <>
+                              <strong>Falha na baixa.</strong> Veja o detalhe por invoice abaixo.
+                            </>
+                          )}
+                        </div>
+                      )
+                    })()}
 
                     <Table>
                       <TableHeader>
                         <TableRow>
                           <TableHead>Invoice</TableHead>
                           <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Valor baixado</TableHead>
                           <TableHead className="text-right">Juros (variação)</TableHead>
                           <TableHead className="text-right">Conta</TableHead>
                           <TableHead className="text-right">bxaCodSeq</TableHead>
@@ -2254,6 +2323,11 @@ export default function GestaoPermutasPage() {
                                 {r.erro ? (
                                   <span className="ml-2 text-xs text-destructive">{r.erro}</span>
                                 ) : null}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {typeof r.valorBaixado === 'number'
+                                  ? `${formatNumber(r.valorBaixado)} BRL`
+                                  : '—'}
                               </TableCell>
                               <TableCell className="text-right tabular-nums">
                                 {typeof juros === 'number' ? formatNumber(juros) : '—'}
