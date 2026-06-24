@@ -20,8 +20,8 @@ import {
   criarAlocacao,
   fetchGestaoPermutas,
   fetchPermutaRuns,
+  fetchPermutaStatus,
   IngestaoEmAndamentoError,
-  processarAdiantamento,
   reconciliarAdiantamento,
   removerAlocacao,
   runIngestaoManual,
@@ -31,6 +31,7 @@ import type {
   GestaoPermutasResponse,
   InvoiceBuscada,
   InvoiceEmAberto,
+  PermutaBorderoVinculo,
   PermutaPendente,
   PermutaRun,
   ProcessamentoStatus,
@@ -62,6 +63,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { BorderosPanel } from './BorderosPanel'
 import { Input } from '@/components/ui/input'
 import {
   Dialog,
@@ -219,6 +221,27 @@ function ProcessamentoBadge({ status }: { status: ProcessamentoStatus }) {
   return <Badge variant="outline">{PROCESSAMENTO_LABEL[status]}</Badge>
 }
 
+/**
+ * Badge do status PERMUTA→BORDERÔ (Fase 3.1). Sem vínculo → "Pendente" (executável). Borderô EM
+ * CADASTRO → "Aguardando finalização" (amarelo). Borderô FINALIZADO → "Finalizado" (verde). Mostra
+ * o nº do borderô. (Cancelado/estornado/excluído volta a "pendente" pelo backend → sem vínculo.)
+ */
+function PermutaBorderoBadge({ vinculo }: { vinculo?: PermutaBorderoVinculo }) {
+  if (!vinculo) return <Badge variant="outline">Pendente</Badge>
+  if (vinculo.permutaStatus === 'finalizado') {
+    return (
+      <Badge className="border-transparent bg-success-subtle text-success-foreground">
+        <CheckCircle2 aria-hidden /> Finalizado · borderô {vinculo.borCod}
+      </Badge>
+    )
+  }
+  return (
+    <Badge className="border-transparent bg-warning-subtle text-warning-foreground">
+      Aguardando finalização · borderô {vinculo.borCod}
+    </Badge>
+  )
+}
+
 /** Normaliza o nome de moeda do Conexos (`moedaNome`) para um código curto
  * (ISO quando há). O backend já manda USD/BRL; os demais chegam como nome longo
  * (ex.: "EURO/COM.EUROPEIA") — encurtamos aqui para a UI. */
@@ -226,6 +249,12 @@ const MOEDA_ALIAS: Record<string, string> = {
   'DOLAR DOS EUA': 'USD',
   'EURO/COM.EUROPEIA': 'EUR',
   'RENMINBI HONG KONG': 'CNH',
+  'REAL/BRASIL': 'BRL',
+  'DOLAR CANADENSE': 'CAD',
+  'LIBRA ESTERLINA': 'GBP',
+  'IENE/JAPAO': 'JPY',
+  'FRANCO SUICO': 'CHF',
+  'DOLAR AUSTRALIANO': 'AUD',
 }
 const moedaCodigo = (moeda: string) => MOEDA_ALIAS[moeda] ?? moeda
 
@@ -254,6 +283,61 @@ const fmtTaxa = (t: number) =>
 const parseBrl = (s: string): number => {
   const t = s.trim()
   return t.includes(',') ? Number(t.replace(/\./g, '').replace(',', '.')) : Number(t)
+}
+
+/** Máscara monetária pt-BR no estilo "centavos": os dígitos digitados são lidos como
+ * centavos e formatados com milhar (.) + decimais (,). Ex.: "4336604" → "43.366,04". */
+const maskBrl = (raw: string): string => {
+  const digits = raw.replace(/\D/g, '').replace(/^0+(?=\d)/, '')
+  if (digits === '') return ''
+  return (Number(digits) / 100).toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+}
+
+/** Converte um número (ex.: saldo) para a string mascarada pt-BR ("43.366,04"). */
+const numToMask = (n: number): string => maskBrl(String(Math.round(n * 100)))
+
+/**
+ * Input de valor monetário com máscara pt-BR (milhar `.` / centavos `,`) e botão "Máx"
+ * opcional que preenche o valor total disponível. `value`/`onChange` operam na string
+ * mascarada (parse com `parseBrl`).
+ */
+function MoneyInput({
+  value,
+  onChange,
+  max,
+  className,
+}: {
+  value: string
+  onChange: (masked: string) => void
+  max?: number
+  className?: string
+}) {
+  const temMax = max != null && Number.isFinite(max) && max > 0
+  return (
+    <div className="flex items-center gap-1">
+      <Input
+        value={value}
+        inputMode="decimal"
+        onChange={(e) => onChange(maskBrl(e.target.value))}
+        placeholder="0,00"
+        className={cn('text-right tabular-nums', className)}
+      />
+      {temMax ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          title={`Preencher o máximo disponível (${numToMask(max)})`}
+          onClick={() => onChange(numToMask(max))}
+        >
+          Máx
+        </Button>
+      ) : null}
+    </div>
+  )
 }
 
 /** Campo rótulo/valor do painel de detalhe (expandir linha). `min-w-0` deixa o
@@ -501,6 +585,8 @@ export default function GestaoPermutasPage() {
   const [filtroFilial, setFiltroFilial] = React.useState<string>('todas')
   // Filtro de exportador (busca por trecho do nome, case-insensitive).
   const [filtroExportador, setFiltroExportador] = React.useState<string>('')
+  // Vista de invoices: todas as finalizadas vs. só as "casadas" (processo com adiantamento).
+  const [filtroInvoiceTipo, setFiltroInvoiceTipo] = React.useState<'todas' | 'casadas'>('todas')
   // Paginação da tabela de pendentes (50 por página).
   const [pagina, setPagina] = React.useState(1)
   // Vista da tabela principal: adiantamentos pendentes ou invoices em aberto
@@ -515,6 +601,20 @@ export default function GestaoPermutasPage() {
   // Confirmação de processamento (modal) — o casamento inteiro (invoice + todos
   // os adiantamentos a abater). null = fechado.
   const [confirmacao, setConfirmacao] = React.useState<CasamentoSugerido | null>(null)
+  // Status PERMUTA→BORDERÔ por adiantamento (carga LAZY, status vivo do fin010). Mantém o painel
+  // rápido (o /gestao não bate no ERP) e enriquece os badges depois. {} = sem vínculo (pendente).
+  const [statusPorAdto, setStatusPorAdto] = React.useState<Record<string, PermutaBorderoVinculo>>(
+    {},
+  )
+
+  const carregarStatus = React.useCallback(async () => {
+    try {
+      const r = await fetchPermutaStatus()
+      setStatusPorAdto(r.porAdiantamento ?? {})
+    } catch {
+      // best-effort: badge cai pra "pendente" se o status não vier.
+    }
+  }, [])
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -523,7 +623,8 @@ export default function GestaoPermutasPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+    void carregarStatus()
+  }, [carregarStatus])
 
   // Modal de ingestão manual (ADR-0006): trigger entre os cron jobs + trilha de
   // auditoria das últimas rodadas.
@@ -578,10 +679,11 @@ export default function GestaoPermutasPage() {
       setData(d)
       setLoading(false)
     })
+    void carregarStatus()
     return () => {
       active = false
     }
-  }, [])
+  }, [carregarStatus])
 
   const [processando, setProcessando] = React.useState<string | null>(null)
 
@@ -594,8 +696,9 @@ export default function GestaoPermutasPage() {
   const [valorAloc, setValorAloc] = React.useState<string>('')
   const [salvandoAloc, setSalvandoAloc] = React.useState(false)
 
-  // Processa em LOTE todos os adiantamentos pendentes do casamento confirmado no
-  // modal (1 invoice : N adiantamentos). Os já processados são ignorados.
+  // Processa o casamento confirmado = BAIXA REAL no fin010 (cria borderô), igual aos manuais.
+  // Para cada adiantamento do grupo, chama o reconciliar (que AUTO-ALOCA a partir do casamento) →
+  // borderô em CADASTRO. Os já processados são ignorados. (Regra 2026-06-24: Automáticas baixam.)
   const confirmarProcessamento = React.useCallback(async () => {
     if (!confirmacao) return
     const c = confirmacao
@@ -603,10 +706,28 @@ export default function GestaoPermutasPage() {
     setConfirmacao(null)
     setProcessando(c.invoice.docCod)
     try {
+      let settled = 0
+      let erros = 0
+      let dryRun = false
+      const borderos = new Set<number>()
       for (const adto of pendentes) {
-        await processarAdiantamento(adto.docCod, c.invoice.docCod)
+        const r = await reconciliarAdiantamento(adto.docCod, { dryRun: false })
+        if (r.dryRun) dryRun = true
+        settled += r.resultados.filter((x) => x.status === 'settled').length
+        erros += r.resultados.filter((x) => x.status === 'error').length
+        if (r.borCod !== undefined) borderos.add(r.borCod)
       }
-      toast.success(`Processo ${c.priCod}: ${pendentes.length} adiantamento(s) processado(s)`)
+      if (dryRun) {
+        toast.info('Escrita desabilitada no servidor (dry-run). Payload validado, sem baixa real.')
+      } else {
+        if (erros > 0) toast.error(`${erros} baixa(s) falharam — veja a aba Borderôs.`)
+        if (settled > 0)
+          toast.success(
+            `Processo ${c.priCod}: ${settled} baixa(s) no fin010 (borderô${
+              borderos.size === 1 ? ` ${[...borderos][0]}` : 's'
+            }, EM CADASTRO). Revise e aprove em Borderôs.`,
+          )
+      }
       await load()
     } catch (err) {
       toast.error(
@@ -786,6 +907,11 @@ export default function GestaoPermutasPage() {
     invoiceSelecionada?.valorMoedaNegociada != null
       ? invoiceSelecionada.valorMoedaNegociada - jaAlocadoInvoice
       : null
+  // Máximo alocável NESTA invoice = menor entre o saldo do adto e o disponível da invoice.
+  const maxAlocavel = Math.min(
+    alocandoAtual?.saldoRestante ?? Number.POSITIVE_INFINITY,
+    dispInvoice ?? Number.POSITIVE_INFINITY,
+  )
 
   // Filiais distintas presentes nos pendentes (para o seletor de filial).
   const filiais = React.useMemo(
@@ -810,18 +936,28 @@ export default function GestaoPermutasPage() {
     return m
   }, [data])
 
+  // Busca por CLIENTE (importador) — preferência dos analistas; também casa exportador como fallback.
   const expBusca = filtroExportador.trim().toLowerCase()
+  const casaBusca = (cliente?: string, exportador?: string) =>
+    expBusca === '' ||
+    (cliente ?? '').toLowerCase().includes(expBusca) ||
+    (exportador ?? '').toLowerCase().includes(expBusca)
   const pendentesFiltrados = (data?.pendentes ?? []).filter(
     (p) =>
       (filtro === 'todos' || p.status === filtro) &&
       (filtroFilial === 'todas' || String(p.filCod) === filtroFilial) &&
-      (expBusca === '' || p.exportador.toLowerCase().includes(expBusca)),
+      casaBusca(p.importador, p.exportador),
   )
-  // Invoices em aberto (vista 'invoices') — mesmos filtros de filial/exportador.
+  // "Casada" = invoice cujo processo (priCod) tem adiantamento pendente — a visão pré-universo.
+  const priCodsComAdto = new Set(
+    (data?.pendentes ?? []).map((p) => p.detalhe?.priCod).filter(Boolean) as string[],
+  )
+  // Invoices em aberto (vista 'invoices') — filtros de filial/cliente + Todas vs. Só casadas.
   const invoicesFiltradas = (data?.invoicesEmAberto ?? []).filter(
     (i) =>
       (filtroFilial === 'todas' || String(i.filCod) === filtroFilial) &&
-      (expBusca === '' || i.exportador.toLowerCase().includes(expBusca)),
+      casaBusca(i.importador, i.exportador) &&
+      (filtroInvoiceTipo === 'todas' || (i.priCod != null && priCodsComAdto.has(i.priCod))),
   )
 
   // Paginação: 50 linhas por página. Base muda conforme a vista ativa.
@@ -863,29 +999,35 @@ export default function GestaoPermutasPage() {
   const crossOver = casamentoManualBase.filter((p) => p.tipoPermuta === 'cross-over')
   // Cross-process = cliente-filtro (invoice em OUTRO processo) — alocação manual.
   const crossProcess = (data?.pendentes ?? []).filter((p) => p.status === 'permuta-manual')
-  // Casamentos automáticos (sugeridos = "simples").
+  // Casamentos automáticos (sugeridos).
   const casamentosSugeridos = data?.casamentos ?? []
 
-  // Filtro (filial + busca) + paginação por aba — replicam a tabela principal.
+  // Regra 2026-06-24 — múltiplas AUTOMÁTICAS (adto cobre todas as invoices, Σ ≤ adto) já vêm como
+  // CASAMENTOS sintéticos do backend (pré-distribuídos) → aparecem na tabela de casamentos da aba
+  // Automáticas, com "Processar", como um caso simples. Aqui só tiramos elas da aba Múltiplas
+  // (manuais = Σ invoices > adto). Cross-over e cross-process continuam separados.
+  const multiplasManuais = multiplas.filter((p) => p.autoElegivel !== true)
+
+  // Filtro (filial + busca) + paginação por aba.
   const abaSimples = useTabelaFiltro(
     casamentosSugeridos,
     (c) => c.invoice.filCod,
-    (c) => `${c.priCod} ${c.invoice.exportador} ${c.invoice.referencia ?? ''}`,
+    (c) => `${c.priCod} ${c.invoice.importador ?? ''} ${c.invoice.exportador} ${c.invoice.referencia ?? ''}`,
   )
   const abaMultiplas = useTabelaFiltro(
-    multiplas,
+    multiplasManuais,
     (p) => p.filCod,
-    (p) => `${p.docCod} ${p.exportador}`,
+    (p) => `${p.docCod} ${p.importador ?? ''} ${p.exportador}`,
   )
   const abaCrossOver = useTabelaFiltro(
     crossOver,
     (p) => p.filCod,
-    (p) => `${p.docCod} ${p.exportador}`,
+    (p) => `${p.docCod} ${p.importador ?? ''} ${p.exportador}`,
   )
   const abaCrossProcess = useTabelaFiltro(
     crossProcess,
     (p) => p.filCod,
-    (p) => `${p.docCod} ${p.exportador}`,
+    (p) => `${p.docCod} ${p.importador ?? ''} ${p.exportador}`,
   )
 
   // Consolidação por MOEDA NEGOCIADA por card: USD como valor principal, demais
@@ -921,48 +1063,64 @@ export default function GestaoPermutasPage() {
             <TableHead className="text-right">Valor Moeda Negociada</TableHead>
             <TableHead className="text-right">Saldo restante</TableHead>
             <TableHead className="text-right">Alocações</TableHead>
+            <TableHead>Status</TableHead>
             <TableHead className="text-right">Ação</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {list.map((p) => (
-            <TableRow key={p.docCod}>
-              <TableCell>{p.filCod}</TableCell>
-              <TableCell className="font-medium">{p.docCod}</TableCell>
-              <TableCell>{p.exportador}</TableCell>
-              <TableCell className="text-right">
-                <Moeda valor={p.valorMoedaNegociada} moeda={p.moeda} />
-              </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {p.saldoRestante != null
-                  ? `${formatNumber(p.saldoRestante)} ${moedaCodigo(p.moeda)}`
-                  : '—'}
-              </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {p.alocacoes?.length ?? 0}
-              </TableCell>
-              <TableCell className="text-right">
-                <div className="flex justify-end gap-2">
-                  <Button size="sm" variant="outline" onClick={() => abrirAlocar(p)}>
-                    <ArrowLeftRight aria-hidden /> Alocar
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={(p.alocacoes?.length ?? 0) === 0}
-                    title={
-                      (p.alocacoes?.length ?? 0) === 0
-                        ? 'Aloque ao menos uma invoice antes de baixar'
-                        : 'Pré-visualizar e baixar no ERP (fin010)'
-                    }
-                    onClick={() => abrirReconciliar(p)}
-                  >
-                    <Banknote aria-hidden /> Baixar
-                  </Button>
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
+          {list.map((p) => {
+            const vinculo = statusPorAdto[p.docCod]
+            const baixado = vinculo !== undefined // já tem borderô (aguardando/finalizado)
+            return (
+              <TableRow key={p.docCod}>
+                <TableCell>{p.filCod}</TableCell>
+                <TableCell className="font-medium">{p.docCod}</TableCell>
+                <TableCell>{p.exportador}</TableCell>
+                <TableCell className="text-right">
+                  <Moeda valor={p.valorMoedaNegociada} moeda={p.moeda} />
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {p.saldoRestante != null
+                    ? `${formatNumber(p.saldoRestante)} ${moedaCodigo(p.moeda)}`
+                    : '—'}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {p.alocacoes?.length ?? 0}
+                </TableCell>
+                <TableCell>
+                  <PermutaBorderoBadge vinculo={vinculo} />
+                </TableCell>
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={baixado}
+                      title={baixado ? 'Já tem borderô — gerencie em Borderôs' : undefined}
+                      onClick={() => abrirAlocar(p)}
+                    >
+                      <ArrowLeftRight aria-hidden /> Alocar
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={baixado || (p.alocacoes?.length ?? 0) === 0}
+                      title={
+                        baixado
+                          ? `Baixado — borderô ${vinculo.borCod} (${vinculo.permutaStatus === 'finalizado' ? 'finalizado' : 'em cadastro'})`
+                          : (p.alocacoes?.length ?? 0) === 0
+                            ? 'Aloque ao menos uma invoice antes de baixar'
+                            : 'Pré-visualizar e baixar no ERP (fin010)'
+                      }
+                      onClick={() => abrirReconciliar(p)}
+                    >
+                      <Banknote aria-hidden /> Baixar
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            )
+          })}
         </TableBody>
       </Table>
     )
@@ -973,25 +1131,13 @@ export default function GestaoPermutasPage() {
         title="Gestão de Permutas"
         subtitle="Adiantamentos PROFORMA pendentes de permuta e invoices em aberto — casamento e baixa assistidos (Frente I)."
         actions={
-          <div className="flex items-center gap-2">
-            {data ? (
-              <Badge
-                variant="outline"
-                title={
-                  data.fonte === 'banco'
-                    ? 'Dados do banco (snapshot da última ingestão/eleição)'
-                    : 'Dados de demonstração (fixture com valores reais)'
-                }
-              >
-                fonte: {data.fonte === 'banco' ? 'banco' : 'fixture'}
-              </Badge>
-            ) : null}
+          <div className="flex flex-wrap items-center gap-2">
             {data?.geradoEm ? (
               <span
-                className="text-xs text-muted-foreground"
+                className="mr-1 whitespace-nowrap text-xs text-muted-foreground"
                 title="Conclusão da última ingestão bem-sucedida"
               >
-                última ingestão: {formatRunWhen(data.geradoEm)}
+                últ. ingestão: {formatRunWhen(data.geradoEm)}
               </span>
             ) : null}
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
@@ -1083,28 +1229,46 @@ export default function GestaoPermutasPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-sm font-medium text-muted-foreground">Status</span>
-              <Select value={filtro} onValueChange={(v) => mudarFiltro(v as FiltroStatus)}>
-                <SelectTrigger className="w-56" aria-label="Filtrar por status">
-                  <SelectValue placeholder="Todos os status" />
-                </SelectTrigger>
-                <SelectContent>
-                  {STATUS_OPCOES.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {vista === 'invoices' ? (
+              <div className="flex flex-col gap-1">
+                <span className="text-sm font-medium text-muted-foreground">Invoices</span>
+                <Select
+                  value={filtroInvoiceTipo}
+                  onValueChange={(v) => setFiltroInvoiceTipo(v as 'todas' | 'casadas')}
+                >
+                  <SelectTrigger className="w-56" aria-label="Filtrar invoices">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todas">Todas as invoices</SelectItem>
+                    <SelectItem value="casadas">Só casadas (com adiantamento)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1">
+                <span className="text-sm font-medium text-muted-foreground">Status</span>
+                <Select value={filtro} onValueChange={(v) => mudarFiltro(v as FiltroStatus)}>
+                  <SelectTrigger className="w-56" aria-label="Filtrar por status">
+                    <SelectValue placeholder="Todos os status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {STATUS_OPCOES.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="flex min-w-[16rem] flex-1 flex-col gap-1">
-              <span className="text-sm font-medium text-muted-foreground">Exportador</span>
+              <span className="text-sm font-medium text-muted-foreground">Cliente</span>
               <Input
                 value={filtroExportador}
                 onChange={(e) => mudarExportador(e.target.value)}
-                placeholder="Buscar exportador…"
-                aria-label="Filtrar por exportador"
+                placeholder="Buscar cliente…"
+                aria-label="Filtrar por cliente"
               />
             </div>
           </div>
@@ -1190,6 +1354,9 @@ export default function GestaoPermutasPage() {
                                   <Campo label="Processo">{inv.priCod ?? '—'}</Campo>
                                   <Campo label="Referência">{inv.referencia}</Campo>
                                   <Campo label="Data de emissão">{fmtData(inv.dataEmissao)}</Campo>
+                                  <Campo label="Cliente" className="sm:col-span-2">
+                                    {inv.importador ?? '—'}
+                                  </Campo>
                                   <Campo label="Exportador" className="sm:col-span-2">
                                     {inv.exportador}
                                   </Campo>
@@ -1303,6 +1470,8 @@ export default function GestaoPermutasPage() {
                                 <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
                                   <Campo label="Processo">{d?.priCod ?? '—'}</Campo>
                                   <Campo label="Referência">{p.referencia}</Campo>
+                                  <Campo label="Cliente">{p.importador ?? '—'}</Campo>
+                                  <Campo label="Exportador">{p.exportador}</Campo>
                                   <Campo label="Data de emissão">{fmtData(d?.dataEmissao)}</Campo>
                                   <Campo label="Pago">{d?.pago ? 'Sim' : 'Não'}</Campo>
                                   {prog ? (
@@ -1548,15 +1717,15 @@ export default function GestaoPermutasPage() {
 
           {/* Casamento — sugerido (auto 1:N) × manual (N:M), alternados por aba */}
           <Card>
-            <Tabs defaultValue="simples">
+            <Tabs defaultValue="automaticas">
               <CardHeader>
                 <TabsList>
-                  <TabsTrigger value="simples">
-                    <ArrowLeftRight className="size-4" aria-hidden /> Simples (
+                  <TabsTrigger value="automaticas">
+                    <ArrowLeftRight className="size-4" aria-hidden /> Automáticas (
                     {casamentosSugeridos.length})
                   </TabsTrigger>
                   <TabsTrigger value="multiplas">
-                    <Layers className="size-4" aria-hidden /> Múltiplas ({multiplas.length})
+                    <Layers className="size-4" aria-hidden /> Múltiplas ({multiplasManuais.length})
                   </TabsTrigger>
                   <TabsTrigger value="cross-over">
                     <Layers className="size-4" aria-hidden /> Cross-over ({crossOver.length})
@@ -1565,16 +1734,19 @@ export default function GestaoPermutasPage() {
                     <ArrowLeftRight className="size-4" aria-hidden /> Cross-process (
                     {crossProcess.length})
                   </TabsTrigger>
+                  <TabsTrigger value="borderos">
+                    <Banknote className="size-4" aria-hidden /> Borderôs
+                  </TabsTrigger>
                 </TabsList>
               </CardHeader>
               <CardContent>
                 <TabsContent value="multiplas" className="space-y-4">
                   <p className="text-sm text-muted-foreground">
-                    <strong>1 adiantamento → N invoices</strong> (mesmo processo): o adiantamento é
-                    distribuído entre as várias invoices do processo. Escolha a invoice e o valor a
-                    abater.
+                    <strong>1 adiantamento → N invoices</strong> (mesmo processo) onde a soma das
+                    invoices <strong>ultrapassa</strong> o saldo do adiantamento — exige o analista
+                    decidir a distribuição. Escolha a invoice e o valor a abater.
                   </p>
-                  <FiltroBarra aba={abaMultiplas} buscaPlaceholder="Buscar código ou exportador…" />
+                  <FiltroBarra aba={abaMultiplas} buscaPlaceholder="Buscar código ou cliente…" />
                   {renderCrossProcessTable(abaMultiplas.slice)}
                   <Paginacao aba={abaMultiplas} />
                 </TabsContent>
@@ -1584,7 +1756,7 @@ export default function GestaoPermutasPage() {
                     <strong>N adiantamentos ↔ M invoices</strong> (mesmo processo): vários
                     adiantamentos e várias invoices se cruzam. Você decide cada ligação e o valor.
                   </p>
-                  <FiltroBarra aba={abaCrossOver} buscaPlaceholder="Buscar código ou exportador…" />
+                  <FiltroBarra aba={abaCrossOver} buscaPlaceholder="Buscar código ou cliente…" />
                   {renderCrossProcessTable(abaCrossOver.slice)}
                   <Paginacao aba={abaCrossOver} />
                 </TabsContent>
@@ -1597,19 +1769,19 @@ export default function GestaoPermutasPage() {
                   </p>
                   <FiltroBarra
                     aba={abaCrossProcess}
-                    buscaPlaceholder="Buscar código ou exportador…"
+                    buscaPlaceholder="Buscar código ou cliente…"
                   />
                   {renderCrossProcessTable(abaCrossProcess.slice)}
                   <Paginacao aba={abaCrossProcess} />
                 </TabsContent>
 
-                <TabsContent value="simples" className="space-y-4">
+                <TabsContent value="automaticas" className="space-y-4">
                   <p className="text-sm text-muted-foreground">
-                    Casamento automático: processos com <strong>exatamente 1 invoice</strong>. Cada
-                    adiantamento abate essa invoice (1:1); se o processo tiver vários adiantamentos,
-                    todos aparecem agrupados sob a mesma invoice (1 invoice : N adiantamentos).
+                    <strong>Automáticas</strong>: casamento direto (1 invoice ← N adiantamentos) e
+                    múltiplas onde o adiantamento <strong>cobre todas as invoices</strong> do processo
+                    (adto ≥ Σ invoices) — já vêm distribuídas (adto → cada invoice). Use o Processar.
                   </p>
-                  <FiltroBarra aba={abaSimples} buscaPlaceholder="Buscar processo ou exportador…" />
+                  <FiltroBarra aba={abaSimples} buscaPlaceholder="Buscar processo ou cliente…" />
                   {abaSimples.total === 0 ? (
                 <EmptyState
                   title="Nenhum casamento sugerido"
@@ -1637,9 +1809,9 @@ export default function GestaoPermutasPage() {
                       )
                       const moedaGrupo = c.adiantamentos[0]?.moeda ?? c.invoice.moeda
                       const sep = g > 0 ? 'border-t-2 border-border' : ''
-                      const pendentesGrupo = c.adiantamentos.filter(
-                        (a) => a.processamentoStatus !== 'processado',
-                      )
+                      // "Processado" = já tem borderô vinculado (aguardando finalização ou finalizado).
+                      // Sem vínculo no statusPorAdto → ainda pendente (executável).
+                      const pendentesGrupo = c.adiantamentos.filter((a) => !statusPorAdto[a.docCod])
                       const todosProcessados =
                         c.adiantamentos.length > 0 && pendentesGrupo.length === 0
                       return (
@@ -1685,7 +1857,9 @@ export default function GestaoPermutasPage() {
                             </TableCell>
                             <TableCell className="text-right">
                               {todosProcessados ? (
-                                <ProcessamentoBadge status="processado" />
+                                <PermutaBorderoBadge
+                                  vinculo={statusPorAdto[c.adiantamentos[0]?.docCod ?? '']}
+                                />
                               ) : c.adiantamentos.length > 0 ? (
                                 <Button
                                   size="sm"
@@ -1716,6 +1890,7 @@ export default function GestaoPermutasPage() {
                                 <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
                                   <Campo label="Invoice (código)">{c.invoice.docCod}</Campo>
                                   <Campo label="Referência">{c.invoice.referencia}</Campo>
+                                  <Campo label="Cliente">{c.invoice.importador ?? '—'}</Campo>
                                   <Campo label="Exportador">{c.invoice.exportador}</Campo>
                                   <Campo label="Filial">{c.invoice.filCod}</Campo>
                                   <Campo label="Processo">{c.priCod}</Campo>
@@ -1762,9 +1937,7 @@ export default function GestaoPermutasPage() {
                                     : '—'}
                                 </TableCell>
                                 <TableCell className="text-right">
-                                  <ProcessamentoBadge
-                                    status={adto.processamentoStatus ?? 'pendente'}
-                                  />
+                                  <PermutaBorderoBadge vinculo={statusPorAdto[adto.docCod]} />
                                 </TableCell>
                               </TableRow>
                             ))
@@ -1776,6 +1949,11 @@ export default function GestaoPermutasPage() {
                 </Table>
                   )}
                   <Paginacao aba={abaSimples} />
+                </TabsContent>
+
+                {/* Borderôs in-place (lazy: o Radix só monta o conteúdo da aba ativa). */}
+                <TabsContent value="borderos">
+                  <BorderosPanel embedded />
                 </TabsContent>
               </CardContent>
             </Tabs>
@@ -2146,10 +2324,10 @@ export default function GestaoPermutasPage() {
                               <span className="text-xs text-muted-foreground">
                                 Valor a alocar ({moedaCodigo(alocandoAtual.moeda)})
                               </span>
-                              <Input
+                              <MoneyInput
                                 value={valorAloc}
-                                onChange={(e) => setValorAloc(e.target.value)}
-                                placeholder="0,00"
+                                onChange={setValorAloc}
+                                max={maxAlocavel}
                                 className="w-40"
                               />
                             </div>

@@ -701,6 +701,54 @@ export default class ConexosClient {
     };
 
     /**
+     * Lista TODAS as INVOICEs finalizadas da filial (tpdCod=INVOICE, situacao=FINALIZADO), SEM
+     * filtro de `priCod` — espelha a busca com298 do analista (não só as casadas com adiantamento).
+     * Básico (sem com308): docCod/priCod/exportador/valor/pago. Alimenta a vista "Invoices em aberto"
+     * com o universo completo (a ingestão filtra `pago` depois). Reusa `paginate`.
+     */
+    public listInvoicesFinalizadas = async (params: {
+        filCod: number;
+    }): Promise<{ invoices: InvoiceLancamento[]; capHit: boolean }> => {
+        const { filCod } = params;
+        let capHit = false;
+        const rows = await this.paginate<Record<string, unknown>>({
+            endpoint: 'com298/list',
+            bodyBase: {
+                fieldList: [],
+                filterList: {
+                    'tpdCod#EQ': TPD_INVOICE,
+                    'vldStatus#IN': VLD_STATUS_FINALIZADO,
+                },
+                serviceName: 'com298',
+            },
+            opts: { filCod },
+            onCapHit: () => {
+                capHit = true;
+            },
+        });
+
+        // Zod no boundary (Regis P1 integrability): pula rows SEM identidade (docCod/priCod) — evita
+        // doc/pri inválidos contaminando o cache/ingestão. Coerência com `listAdiantamentosProforma`.
+        const invoices = rows.flatMap<InvoiceLancamento>((row) => {
+            if (!com298RowSchema.safeParse(row).success) return [];
+            const mapped = this.mapDocPagar(row);
+            const invoice: InvoiceLancamento = {
+                docCod: mapped.docCod,
+                priCod: mapped.priCod,
+                dataEmissao: mapped.dataEmissao,
+                valor: mapped.valor,
+                moeda: mapped.moeda,
+                pago: mapped.pago,
+                exportador: mapped.exportador,
+                faturada: Boolean(row.faturada ?? row.flagFaturada ?? false),
+                ...(mapped.referencia !== undefined ? { referencia: mapped.referencia } : {}),
+            };
+            return [invoice];
+        });
+        return { invoices, capHit };
+    };
+
+    /**
      * Re-introduz o lado-leitura de declaração aduaneira podado no ADR-0003
      * (migration-debt O3), escopo restrito a EXISTÊNCIA (XOR) + data-base
      * (Gate 4 + aging). Lê `imp019/list` (D.I) e `imp223/list` (DUIMP) por
@@ -1133,19 +1181,25 @@ export default class ConexosClient {
                     },
                     { filCod },
                 );
-                return (page.rows ?? []).map((r) => ({
-                    filCod: Number(r.filCod ?? filCod),
-                    docTip: Number(r.docTip ?? 2),
-                    docCod: Number(r.docCod),
-                    titCod: Number(r.titCod ?? 1),
-                    bxaCodSeq: Number(r.bxaCodSeq),
-                    ...(r.bxaMnyLiquidoPermuta != null
-                        ? { bxaMnyLiquidoPermuta: Number(r.bxaMnyLiquidoPermuta) }
-                        : {}),
-                    ...(r.borVldFinalizado != null
-                        ? { borVldFinalizado: Number(r.borVldFinalizado) }
-                        : {}),
-                }));
+                return (
+                    (page.rows ?? [])
+                        .map((r) => ({
+                            filCod: Number(r.filCod ?? filCod),
+                            docTip: Number(r.docTip ?? 2),
+                            docCod: Number(r.docCod),
+                            titCod: Number(r.titCod ?? 1),
+                            bxaCodSeq: Number(r.bxaCodSeq),
+                            ...(r.bxaMnyLiquidoPermuta != null
+                                ? { bxaMnyLiquidoPermuta: Number(r.bxaMnyLiquidoPermuta) }
+                                : {}),
+                            ...(r.borVldFinalizado != null
+                                ? { borVldFinalizado: Number(r.borVldFinalizado) }
+                                : {}),
+                        }))
+                        // Guard de identidade (Regis P1): docCod/bxaCodSeq são usados no DELETE da baixa
+                        // no ERP — um NaN apagaria a baixa errada / quebraria o path. Descarta inválidos.
+                        .filter((b) => Number.isFinite(b.docCod) && Number.isFinite(b.bxaCodSeq))
+                );
             });
         } catch (cause) {
             throw new ConexosError({ endpoint: `fin010/baixas/list/${borCod}`, cause });
@@ -1247,8 +1301,14 @@ export default class ConexosClient {
     public listBorderos = async (params: {
         filCod: number;
         pageSize?: number;
+        /** Quando informado, filtra `borCod#IN` — busca PRECISA (sem perder por paginação). */
+        borCods?: number[];
     }): Promise<BorderoListaItem[]> => {
-        const { filCod, pageSize = 200 } = params;
+        const { filCod, borCods } = params;
+        // Com borCods: pageSize generoso (1000) — se o ERP aplicar `borCod#IN`, volta só os
+        // casados; se IGNORAR o filtro, ainda assim cobre os borderôs recentes (alto borCod) da
+        // filial, evitando perder o alvo por paginação. Sem borCods: a listagem normal (200).
+        const pageSize = params.pageSize ?? (borCods ? 1000 : 200);
         try {
             return await this.retryExecutor.execute(async () => {
                 await this.legacy.ensureSid();
@@ -1264,26 +1324,38 @@ export default class ConexosClient {
                             'vlrTotalLiquido',
                             'usnDesNomeCad',
                         ],
-                        filterList: { 'borVldTipo#EQ': 2 },
+                        filterList: {
+                            'borVldTipo#EQ': 2,
+                            ...(borCods && borCods.length > 0
+                                ? { 'borCod#IN': borCods.map(String) }
+                                : {}),
+                        },
                         pageNumber: 1,
                         pageSize,
                         orderList: { orderList: [{ propertyName: 'borCod', order: 'desc' }] },
                     },
                     { filCod },
                 );
-                return (page.rows ?? []).map((r) => ({
-                    borCod: Number(r.borCod),
-                    filCod: Number(r.filCod ?? filCod),
-                    ...(r.borDtaMvto != null ? { borDtaMvto: Number(r.borDtaMvto) } : {}),
-                    ...(r.borVldFinalizado != null
-                        ? { borVldFinalizado: Number(r.borVldFinalizado) }
-                        : {}),
-                    borCodEstornado: r.borCodEstornado != null ? Number(r.borCodEstornado) : null,
-                    ...(r.vlrTotalLiquido != null
-                        ? { vlrTotalLiquido: Number(r.vlrTotalLiquido) }
-                        : {}),
-                    usnDesNomeCad: (r.usnDesNomeCad as string | null) ?? null,
-                }));
+                return (
+                    (page.rows ?? [])
+                        .map((r) => ({
+                            borCod: Number(r.borCod),
+                            filCod: Number(r.filCod ?? filCod),
+                            ...(r.borDtaMvto != null ? { borDtaMvto: Number(r.borDtaMvto) } : {}),
+                            ...(r.borVldFinalizado != null
+                                ? { borVldFinalizado: Number(r.borVldFinalizado) }
+                                : {}),
+                            borCodEstornado:
+                                r.borCodEstornado != null ? Number(r.borCodEstornado) : null,
+                            ...(r.vlrTotalLiquido != null
+                                ? { vlrTotalLiquido: Number(r.vlrTotalLiquido) }
+                                : {}),
+                            usnDesNomeCad: (r.usnDesNomeCad as string | null) ?? null,
+                        }))
+                        // Guard de identidade (Regis P1): descarta rows sem `borCod` numérico — um NaN
+                        // viraria chave inválida no cache `permuta_bordero` / no status permuta→borderô.
+                        .filter((b) => Number.isFinite(b.borCod))
+                );
             });
         } catch (cause) {
             throw new ConexosError({ endpoint: 'fin010/list', cause });

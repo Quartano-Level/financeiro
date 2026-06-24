@@ -9,6 +9,7 @@ import type {
   IngestaoResult,
   InvoiceBuscada,
   PermutaRun,
+  PermutaStatusResponse,
   ReconciliarResult,
 } from './types'
 import { gestaoPermutasFixture } from './permutas-fixture'
@@ -266,12 +267,51 @@ export async function reconciliarAdiantamento(
   return (await res.json()) as ReconciliarResult
 }
 
-/** Lista os borderôs (Fase 3.1) — trilha local + status vivo do ERP. READ-ONLY. */
-export async function fetchBorderos(): Promise<BorderoResumo[]> {
-  const res = await fetch(`${API}/permutas/borderos`, { headers: await withAuthHeaders() })
+/** Memo curto do último resultado de borderôs — torna a reabertura da aba instantânea (a aba
+ * desmonta/remonta a cada troca). `live`/expira em 30s ignora o memo e rebusca. */
+let borderosMemo: { at: number; data: BorderoResumo[] } | null = null
+const BORDEROS_MEMO_TTL = 30_000
+
+/** Lista os borderôs (Fase 3.1) — cache local (rápido); `live=true` faz refresh ao vivo no ERP. */
+export async function fetchBorderos(live = false): Promise<BorderoResumo[]> {
+  if (!live && borderosMemo && Date.now() - borderosMemo.at < BORDEROS_MEMO_TTL) {
+    return borderosMemo.data
+  }
+  const qs = live ? '?live=true' : ''
+  const res = await fetch(`${API}/permutas/borderos${qs}`, { headers: await withAuthHeaders() })
   if (!res.ok) throw new Error(`API ${res.status}`)
   const json = (await res.json()) as { borderos?: BorderoResumo[] }
-  return json.borderos ?? []
+  const data = json.borderos ?? []
+  borderosMemo = { at: Date.now(), data }
+  return data
+}
+
+/** Invalida o memo de borderôs (após ações de escrita: aprovar/cancelar/excluir). */
+export function invalidarBorderosMemo(): void {
+  borderosMemo = null
+}
+
+/** Baixas DO ERP de um borderô (p/ ver detalhe de borderôs lançados direto no Conexos). */
+export async function fetchBaixasErp(
+  borCod: number,
+  filCod: number,
+): Promise<Array<{ invoiceDocCod: string; bxaCodSeq: number; valorLiquido?: number }>> {
+  const res = await fetch(
+    `${API}/permutas/borderos/${encodeURIComponent(borCod)}/baixas?filCod=${encodeURIComponent(filCod)}`,
+    { headers: await withAuthHeaders() },
+  )
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  const json = (await res.json()) as {
+    baixas?: Array<{ invoiceDocCod: string; bxaCodSeq: number; valorLiquido?: number }>
+  }
+  return json.baixas ?? []
+}
+
+/** Status PERMUTA→BORDERÔ por adiantamento (consulta lazy, status vivo do fin010). Fase 3.1. */
+export async function fetchPermutaStatus(): Promise<PermutaStatusResponse> {
+  const res = await fetch(`${API}/permutas/status`, { headers: await withAuthHeaders() })
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  return (await res.json()) as PermutaStatusResponse
 }
 
 /** Exclui UMA baixa de um borderô em aberto (no ERP + trilha). Fase 3.1. */

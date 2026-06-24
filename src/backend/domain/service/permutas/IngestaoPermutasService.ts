@@ -1,5 +1,6 @@
 import { inject, injectable } from 'tsyringe';
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
+import type Invoice from '../../interface/permutas/Invoice.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import { ESTADO_ELEGIBILIDADE } from '../../interface/permutas/EstadoElegibilidade.js';
 import type PermutaCandidata from '../../interface/permutas/PermutaCandidata.js';
@@ -13,6 +14,7 @@ import PermutaRelationalRepository, {
 import type { PermutaEleicaoRunInput } from '../../repository/permutas/PermutaSnapshotRepository.js';
 import PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
 import LogService from '../LogService.js';
+import BorderoGestaoService from './BorderoGestaoService.js';
 import EleicaoPermutasService from './EleicaoPermutasService.js';
 import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
 
@@ -62,6 +64,7 @@ export default class IngestaoPermutasService {
         private snapshotRepository: PermutaSnapshotRepository,
         @inject(VariacaoCambialPermutaService)
         private variacaoCambialService: VariacaoCambialPermutaService,
+        @inject(BorderoGestaoService) private borderoGestaoService: BorderoGestaoService,
         @inject(LogService) private logService: LogService,
     ) {}
 
@@ -76,7 +79,7 @@ export default class IngestaoPermutasService {
             const { candidatas, totals } = computed;
 
             const adiantamentos = candidatas.map((c) => this.toAdiantamentoRow(c));
-            const invoices = this.toInvoiceRows(candidatas);
+            const invoices = this.toInvoiceRows(candidatas, computed.todasInvoices);
             const declaracoes = this.toDeclaracaoRows(candidatas);
             const casamentos = this.toCasamentoRows(candidatas);
 
@@ -130,6 +133,18 @@ export default class IngestaoPermutasService {
                 bloqueadasByMotivo: totals.bloqueadasByMotivo,
             };
             await this.snapshotRepository.persistRun(snapshotInput, candidatas);
+
+            // Atualiza o cache de borderôs (tela de Borderôs lê do banco). Best-effort: uma falha
+            // aqui não derruba a ingestão (os fatos principais já foram persistidos).
+            try {
+                await this.borderoGestaoService.refreshCache();
+            } catch (err) {
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'falha ao atualizar o cache de borderôs (segue)',
+                    data: { flowId, erro: err instanceof Error ? err.message : String(err) },
+                });
+            }
 
             await this.logService.info({
                 type: LOG_TYPE.FLOW_COMPLETE,
@@ -264,9 +279,21 @@ export default class IngestaoPermutasService {
      *   - `invoicesCandidatas` dos N:M (casamento-manual) — para o analista escolher
      *     uma na tela (read-time agrupa por `priCod`). ADR-0005.
      */
-    private toInvoiceRows = (candidatas: PermutaCandidata[]): InvoiceRow[] => {
+    private toInvoiceRows = (
+        candidatas: PermutaCandidata[],
+        todasInvoices: Array<{
+            inv: Invoice;
+            filCod: number;
+            pesCod?: string;
+            importador?: string;
+        }> = [],
+    ): InvoiceRow[] => {
         const byDocCod = new Map<string, InvoiceRow>();
-        const add = (inv: PermutaCandidata['invoiceCasada'], filCod: number) => {
+        const add = (
+            inv: PermutaCandidata['invoiceCasada'],
+            filCod: number,
+            cliente?: { pesCod?: string; importador?: string },
+        ) => {
             if (!inv) return;
             byDocCod.set(inv.docCod, {
                 docCod: inv.docCod,
@@ -282,12 +309,44 @@ export default class IngestaoPermutasService {
                 ...(inv.moeda !== undefined ? { moeda: inv.moeda } : {}),
                 ...(inv.moedaNegociada !== undefined ? { moedaNegociada: inv.moedaNegociada } : {}),
                 ...(inv.taxa !== undefined ? { taxa: inv.taxa } : {}),
+                ...(cliente?.pesCod !== undefined ? { pesCod: cliente.pesCod } : {}),
+                ...(cliente?.importador !== undefined ? { importador: cliente.importador } : {}),
                 pago: inv.pago,
             });
         };
         for (const c of candidatas) {
-            add(c.invoiceCasada, c.adiantamento.filCod);
-            for (const inv of c.invoicesCandidatas ?? []) add(inv, c.adiantamento.filCod);
+            // Cliente (importador) do processo do adiantamento — mesmas invoices do processo.
+            const cliente = {
+                ...(c.adiantamento.pesCod !== undefined ? { pesCod: c.adiantamento.pesCod } : {}),
+                ...(c.adiantamento.importador !== undefined
+                    ? { importador: c.adiantamento.importador }
+                    : {}),
+            };
+            add(c.invoiceCasada, c.adiantamento.filCod, cliente);
+            for (const inv of c.invoicesCandidatas ?? []) add(inv, c.adiantamento.filCod, cliente);
+        }
+        // Universo COMPLETO (regra 2026-06-24): todas as invoices finalizadas, mesmo SEM adto casado.
+        // Básico (sem com308 → sem valor negociado). NÃO sobrescreve as casadas (hidratadas acima).
+        for (const { inv, filCod, pesCod, importador } of todasInvoices) {
+            if (byDocCod.has(inv.docCod)) continue;
+            byDocCod.set(inv.docCod, {
+                docCod: inv.docCod,
+                priCod: inv.priCod,
+                ...(filCod != null ? { filCod } : {}),
+                ...(inv.referencia !== undefined ? { referencia: inv.referencia } : {}),
+                ...(inv.exportador !== undefined ? { exportador: inv.exportador } : {}),
+                ...(inv.dataEmissao !== undefined ? { dataEmissao: inv.dataEmissao } : {}),
+                ...(inv.valor !== undefined ? { valor: inv.valor } : {}),
+                ...(inv.valorMoedaNegociada !== undefined
+                    ? { valorMoedaNegociada: inv.valorMoedaNegociada }
+                    : {}),
+                ...(inv.moeda !== undefined ? { moeda: inv.moeda } : {}),
+                ...(inv.moedaNegociada !== undefined ? { moedaNegociada: inv.moedaNegociada } : {}),
+                ...(inv.taxa !== undefined ? { taxa: inv.taxa } : {}),
+                ...(pesCod !== undefined ? { pesCod } : {}),
+                ...(importador !== undefined ? { importador } : {}),
+                pago: inv.pago,
+            });
         }
         return [...byDocCod.values()];
     };

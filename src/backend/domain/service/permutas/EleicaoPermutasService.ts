@@ -15,6 +15,7 @@ import {
     MOTIVO_BLOQUEIO,
 } from '../../interface/permutas/EstadoElegibilidade.js';
 import { GATE } from '../../interface/permutas/PermutaCandidata.js';
+import type InvoiceLancamento from '../../interface/closing-reports/Invoice.js';
 import type Invoice from '../../interface/permutas/Invoice.js';
 import type PermutaCandidata from '../../interface/permutas/PermutaCandidata.js';
 import LogService from '../LogService.js';
@@ -212,6 +213,13 @@ export default class EleicaoPermutasService {
     public computeCandidatas = async (): Promise<{
         candidatas: PermutaCandidata[];
         flowId: string;
+        /** TODAS as invoices finalizadas (universo completo, hidratadas + cliente) — não só casadas. */
+        todasInvoices: Array<{
+            inv: Invoice;
+            filCod: number;
+            pesCod?: string;
+            importador?: string;
+        }>;
         totals: {
             totalCandidatas: number;
             totalElegiveis: number;
@@ -251,6 +259,48 @@ export default class EleicaoPermutasService {
             );
             const candidatas: PermutaCandidata[] = perFilial.flat();
 
+            // Universo COMPLETO de invoices finalizadas (regra 2026-06-24) — todas as filiais, não
+            // só os processos com adiantamento. HIDRATA valor/moeda negociada (com308) + CLIENTE
+            // (importador via imp021 por processo) p/ buscar/contar por cliente no universo todo.
+            const todasInvoicesPorFilial = await this.boundedConcurrency.map(
+                filiais,
+                async (filial) => {
+                    const { invoices, capHit } = await this.conexosClient.listInvoicesFinalizadas({
+                        filCod: filial.filCod,
+                    });
+                    if (capHit) {
+                        await this.logService.warn({
+                            type: LOG_TYPE.BUSINESS_WARN,
+                            message:
+                                'listInvoicesFinalizadas atingiu o teto de páginas — universo pode estar TRUNCADO',
+                            data: { flowId, filCod: filial.filCod, retornadas: invoices.length },
+                        });
+                    }
+                    const priCods = [...new Set(invoices.map((i) => i.priCod))];
+                    const processos = await this.conexosClient.listProcessos({
+                        filCod: filial.filCod,
+                        priCods,
+                    });
+                    const procByPri = new Map(processos.map((p) => [p.priCod, p]));
+                    const hidratadas = await this.boundedConcurrency.map(
+                        invoices,
+                        (inv) => this.hidratarInvoiceNegociada(inv, filial.filCod),
+                        ADIANTAMENTOS_CONCURRENCY,
+                    );
+                    return hidratadas.map(({ inv, filCod }) => {
+                        const proc = procByPri.get(inv.priCod);
+                        return {
+                            inv,
+                            filCod,
+                            ...(proc?.pesCod ? { pesCod: proc.pesCod } : {}),
+                            ...(proc?.importador ? { importador: proc.importador } : {}),
+                        };
+                    });
+                },
+                FILIAIS_CONCURRENCY,
+            );
+            const todasInvoices = todasInvoicesPorFilial.flat();
+
             const elegiveis = candidatas.filter(
                 (c) => c.estadoElegibilidade === ESTADO_ELEGIBILIDADE.ELEGIVEL,
             );
@@ -260,6 +310,7 @@ export default class EleicaoPermutasService {
             return {
                 candidatas,
                 flowId,
+                todasInvoices,
                 totals: {
                     totalCandidatas: candidatas.length,
                     totalElegiveis: elegiveis.length,
@@ -488,6 +539,39 @@ export default class EleicaoPermutasService {
             byPriCod.set(mapped.priCod, list);
         }
         return byPriCod;
+    };
+
+    /**
+     * Hidrata UMA invoice do universo completo (regra 2026-06-24) com valor/moeda negociada
+     * (com308) — espelha a hidratação de `fetchInvoicesBatched`, mas avulsa (sem priCod casado).
+     * Falha numa linha apenas omite o valor negociado (best-effort; Conexos MAX_SESSIONS).
+     */
+    private hidratarInvoiceNegociada = async (
+        raw: InvoiceLancamento,
+        filCod: number,
+    ): Promise<{ inv: Invoice; filCod: number }> => {
+        const inv: Invoice = {
+            docCod: raw.docCod,
+            priCod: raw.priCod,
+            dataEmissao: raw.dataEmissao,
+            valor: raw.valor,
+            moeda: raw.moeda,
+            pago: raw.pago,
+            ...(raw.exportador !== undefined ? { exportador: raw.exportador } : {}),
+            ...(raw.referencia !== undefined ? { referencia: raw.referencia } : {}),
+        };
+        try {
+            const tit = await this.conexosClient.listTitulosAPagar({ docCod: raw.docCod, filCod });
+            const valorMoedaNegociada = somaValorNegociado(tit);
+            const moedaNegociada = tit[0] ? siglaMoedaNegociada(tit[0]) : undefined;
+            const taxa = tit[0]?.taxa;
+            if (valorMoedaNegociada !== undefined) inv.valorMoedaNegociada = valorMoedaNegociada;
+            if (moedaNegociada !== undefined) inv.moedaNegociada = moedaNegociada;
+            if (taxa !== undefined) inv.taxa = taxa;
+        } catch {
+            // com308 indisponível p/ esta invoice — segue sem valor negociado.
+        }
+        return { inv, filCod };
     };
 
     /**

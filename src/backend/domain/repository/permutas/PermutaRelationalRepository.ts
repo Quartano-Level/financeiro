@@ -56,6 +56,9 @@ export interface InvoiceRow {
     pago: boolean;
     /** Taxa de câmbio negociada (`com308` `titFltTaxaMneg`). */
     taxa?: number;
+    /** Cliente (importador) do processo via imp021 — `pes_cod` (chave) + `importador` (nome). */
+    pesCod?: string;
+    importador?: string;
 }
 
 /** Linha de Declaração de importação (D.I / DUIMP). */
@@ -320,16 +323,20 @@ export default class PermutaRelationalRepository {
             params[`moedaNegociada_${i}`] = r.moedaNegociada ?? null;
             params[`pago_${i}`] = r.pago;
             params[`taxa_${i}`] = r.taxa ?? null;
+            params[`pesCod_${i}`] = r.pesCod ?? null;
+            params[`importador_${i}`] = r.importador ?? null;
             return (
                 `($docCod_${i}, $priCod_${i}, $filCod_${i}, $referencia_${i}, ` +
                 `$exportador_${i}, $dataEmissao_${i}, $valor_${i}, $valorMoedaNegociada_${i}, ` +
-                `$moeda_${i}, $moedaNegociada_${i}, $pago_${i}, $taxa_${i}, $runId, now(), FALSE, now())`
+                `$moeda_${i}, $moedaNegociada_${i}, $pago_${i}, $taxa_${i}, ` +
+                `$pesCod_${i}, $importador_${i}, $runId, now(), FALSE, now())`
             );
         });
         await tx.insert(
             `INSERT INTO permuta_invoice (
                 doc_cod, pri_cod, fil_cod, referencia, exportador, data_emissao,
                 valor, valor_moeda_negociada, moeda, moeda_negociada, pago, taxa,
+                pes_cod, importador,
                 last_ingest_run_id, last_seen_at, stale, updated_at
             ) VALUES ${tuples.join(', ')}
             ON CONFLICT (doc_cod) DO UPDATE SET
@@ -344,6 +351,8 @@ export default class PermutaRelationalRepository {
                 moeda_negociada = EXCLUDED.moeda_negociada,
                 pago = EXCLUDED.pago,
                 taxa = EXCLUDED.taxa,
+                pes_cod = EXCLUDED.pes_cod,
+                importador = EXCLUDED.importador,
                 last_ingest_run_id = EXCLUDED.last_ingest_run_id,
                 last_seen_at = EXCLUDED.last_seen_at,
                 stale = FALSE,
@@ -591,6 +600,8 @@ export default class PermutaRelationalRepository {
         ...(r.moeda_negociada != null ? { moedaNegociada: String(r.moeda_negociada) } : {}),
         pago: Boolean(r.pago),
         ...(r.taxa != null ? { taxa: Number(r.taxa) } : {}),
+        ...(r.pes_cod != null ? { pesCod: String(r.pes_cod) } : {}),
+        ...(r.importador != null ? { importador: String(r.importador) } : {}),
     });
 
     private mapDeclaracaoRow = (r: Record<string, unknown>): DeclaracaoRow => ({

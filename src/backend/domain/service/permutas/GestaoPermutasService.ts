@@ -104,6 +104,17 @@ export default class GestaoPermutasService {
             }
         }
 
+        // REGRA (2026-06-24): quando o conjunto de adtos de uma invoice ULTRAPASSA o em-aberto dela
+        // (sobra adiantamento), a permuta sai de "simples/automática" e vira MANUAL (múltipla) — o
+        // analista decide a alocação do excedente. Sinal já presente nos dados: a distribuição greedy
+        // capa o total usado no em-aberto vivo da invoice, então Σ(saldoNeg) > Σ(valorASerUsado) ⇒
+        // a invoice foi o limite ⇒ ultrapassou. Se Σ(saldoNeg) ≤ em-aberto (tudo consumido), segue
+        // simples e a invoice pode ficar parcialmente em aberto.
+        const adtosReclassificadosManual = this.adtosQueUltrapassamInvoice(
+            casamentos,
+            adiantamentos,
+        );
+
         const pendentes = adiantamentos.map((a) =>
             this.toPendente(
                 a,
@@ -113,15 +124,53 @@ export default class GestaoPermutasService {
                 casamentoByAdtoDocCod,
                 alocacoesByAdto.get(a.docCod) ?? [],
                 adtosCasamentoPorPriCod,
+                adtosReclassificadosManual,
             ),
         );
-        const invoicesEmAberto = invoices.map((i) => this.toInvoiceEmAberto(i));
+        // Cliente (importador) por processo — o adto tem; a invoice não. Junta por priCod p/ que
+        // a busca por cliente e o detalhe funcionem também do lado da invoice (mesmo processo).
+        const importadorByPriCod = new Map<string, string>();
+        for (const a of adiantamentos) {
+            if (a.importador !== undefined && !importadorByPriCod.has(a.priCod)) {
+                importadorByPriCod.set(a.priCod, a.importador);
+            }
+        }
+        const invoicesEmAberto = invoices.map((i) =>
+            // Prefere o importador da PRÓPRIA invoice (ingestão via imp021, universo completo);
+            // cai no join por processo (adto) só se a invoice não tiver.
+            this.toInvoiceEmAberto(i, i.importador ?? importadorByPriCod.get(i.priCod)),
+        );
+
+        // Múltiplas AUTOMÁTICAS (adto cobre todas as invoices) viram CASAMENTOS SINTÉTICOS: já
+        // pré-distribuídos (adto → cada invoice do processo, valor cheio) e exibidos na aba
+        // Automáticas como um caso simples (com "Processar"), em vez do fluxo manual Alocar/Baixar.
+        const adtoByDocCod = new Map<string, AdiantamentoAtivo>(
+            adiantamentos.map((a) => [a.docCod, a]),
+        );
+        const autoCasamentos: CasamentoRow[] = [];
+        for (const p of pendentes) {
+            if (p.autoElegivel !== true) continue;
+            const a = adtoByDocCod.get(p.docCod);
+            if (!a) continue;
+            for (const inv of invoicesByPriCod.get(a.priCod) ?? []) {
+                autoCasamentos.push({
+                    invoiceDocCod: inv.docCod,
+                    adiantamentoDocCod: a.docCod,
+                    priCod: a.priCod,
+                    valorASerUsado: inv.valorMoedaNegociada ?? 0,
+                    ...(a.moedaNegociada !== undefined ? { moeda: a.moedaNegociada } : {}),
+                });
+            }
+        }
+
+        // Os casamentos que ultrapassam a invoice saem da lista de auto-sugeridos (viram manual).
         const casamentosSugeridos = this.toCasamentos(
-            casamentos,
+            [...casamentos, ...autoCasamentos],
             invoiceByDocCod,
             adiantamentos,
             statusByDocCod,
-        );
+            importadorByPriCod,
+        ).filter((g) => !g.adiantamentos.some((a) => adtosReclassificadosManual.has(a.docCod)));
 
         const elegiveis = pendentes.filter((p) => p.status === 'elegivel').length;
         const bloqueadas = pendentes.filter((p) => p.status === 'bloqueada').length;
@@ -160,6 +209,47 @@ export default class GestaoPermutasService {
         };
     };
 
+    /**
+     * Mapa de adto docCod → tipo MANUAL, para os casamentos que ULTRAPASSAM o em-aberto da invoice
+     * (Σ saldoNeg dos adtos do grupo > Σ valorASerUsado, que o greedy já capou no em-aberto vivo).
+     * Esses saem de "simples" e viram revisão manual. O tipo distingue:
+     *   - **cross-over** quando o grupo tem >1 adto p/ a MESMA invoice (N adtos ↔ 1 invoice);
+     *   - **multiplas** quando é 1 adto que sozinho ultrapassa a invoice (1 adto → N invoices).
+     */
+    private adtosQueUltrapassamInvoice = (
+        casamentos: CasamentoRow[],
+        adiantamentos: AdiantamentoAtivo[],
+    ): Map<string, 'cross-over' | 'multiplas'> => {
+        const adtoByDoc = new Map<string, AdiantamentoAtivo>(
+            adiantamentos.map((a) => [a.docCod, a]),
+        );
+        const porInvoice = new Map<string, { usado: number; saldo: number; adtos: string[] }>();
+        for (const c of casamentos) {
+            const adto = adtoByDoc.get(c.adiantamentoDocCod);
+            const usado = c.valorASerUsado ?? adto?.valorMoedaNegociada ?? 0;
+            const saldoNeg =
+                adto?.valorPermutar !== undefined && adto?.taxa !== undefined && adto.taxa > 0
+                    ? adto.valorPermutar / adto.taxa
+                    : usado;
+            const g = porInvoice.get(c.invoiceDocCod) ?? { usado: 0, saldo: 0, adtos: [] };
+            g.usado += usado;
+            g.saldo += saldoNeg;
+            g.adtos.push(c.adiantamentoDocCod);
+            porInvoice.set(c.invoiceDocCod, g);
+        }
+        const reclass = new Map<string, 'cross-over' | 'multiplas'>();
+        for (const g of porInvoice.values()) {
+            // tolerância de 1 (moeda negociada) p/ ruído de ponto flutuante.
+            if (g.saldo - g.usado <= 1) continue;
+            const tipo = g.adtos.length > 1 ? 'cross-over' : 'multiplas';
+            for (const d of g.adtos) {
+                // cross-over vence (se o adto cai em mais de um grupo, prioriza N:M).
+                if (reclass.get(d) !== 'cross-over') reclass.set(d, tipo);
+            }
+        }
+        return reclass;
+    };
+
     private toPendente = (
         a: AdiantamentoAtivo,
         statusByDocCod: Map<string, ProcessamentoStatus>,
@@ -168,21 +258,27 @@ export default class GestaoPermutasService {
         casamentoByAdtoDocCod: Map<string, CasamentoRow>,
         alocacoesDoAdto: AlocacaoRow[],
         adtosCasamentoPorPriCod: Map<string, number>,
+        adtosReclassificadosManual: Map<string, 'cross-over' | 'multiplas'>,
     ): PermutaPendente => {
         // "Já permutado" é gravado como BLOQUEADA+motivo `ja-permutado` (estado
         // concluído, não erro). Aqui na apresentação é promovido a status próprio,
         // pra sair do balde de bloqueadas e virar filtro/KPI separado — sem novo
         // estado no banco (zero migration/reseed).
-        const status: StatusElegibilidade =
-            a.estadoElegibilidade === 'elegivel'
-                ? 'elegivel'
-                : a.estadoElegibilidade === 'casamento-manual'
-                  ? 'casamento-manual'
-                  : a.estadoElegibilidade === 'permuta-manual'
-                    ? 'permuta-manual'
-                    : a.motivoBloqueio === 'ja-permutado'
-                      ? 'ja-permutado'
-                      : 'bloqueada';
+        // Reclassificação (regra 2026-06-24): adto elegível cujo casamento ULTRAPASSA a invoice vira
+        // casamento-manual (múltipla) — execução manual pelo analista.
+        const ultrapassaInvoice =
+            a.estadoElegibilidade === 'elegivel' && adtosReclassificadosManual.has(a.docCod);
+        const status: StatusElegibilidade = ultrapassaInvoice
+            ? 'casamento-manual'
+            : a.estadoElegibilidade === 'elegivel'
+              ? 'elegivel'
+              : a.estadoElegibilidade === 'casamento-manual'
+                ? 'casamento-manual'
+                : a.estadoElegibilidade === 'permuta-manual'
+                  ? 'permuta-manual'
+                  : a.motivoBloqueio === 'ja-permutado'
+                    ? 'ja-permutado'
+                    : 'bloqueada';
         const processamentoStatus = statusByDocCod.get(a.docCod);
         // Casamento manual (N:M): candidatas = invoices em aberto do MESMO processo.
         const candidatas =
@@ -210,21 +306,41 @@ export default class GestaoPermutasService {
         // Tipo de permuta (derivado, p/ as abas). cross-process = cliente-filtro;
         // casamento-manual divide-se por nº de adtos do processo: 1 → multiplas
         // (1 adto → N invoices), >1 → cross-over (N:M); elegível auto-casável → simples.
-        const tipoPermuta =
-            status === 'permuta-manual'
-                ? ('cross-process' as const)
-                : status === 'casamento-manual'
-                  ? (adtosCasamentoPorPriCod.get(a.priCod) ?? 1) > 1
-                      ? ('cross-over' as const)
-                      : ('multiplas' as const)
-                  : status === 'elegivel'
-                    ? ('simples' as const)
-                    : undefined;
+        const tipoPermuta = ultrapassaInvoice
+            ? // reclassificado: cross-over (N adtos ↔ 1 invoice) ou multiplas (1 adto → N invoices)
+              (adtosReclassificadosManual.get(a.docCod) ?? 'multiplas')
+            : status === 'permuta-manual'
+              ? ('cross-process' as const)
+              : status === 'casamento-manual'
+                ? (adtosCasamentoPorPriCod.get(a.priCod) ?? 1) > 1
+                    ? ('cross-over' as const)
+                    : ('multiplas' as const)
+                : status === 'elegivel'
+                  ? ('simples' as const)
+                  : undefined;
+
+        // AUTO-ELEGÍVEL (regra 2026-06-24): múltipla (1 adto → N invoices, casamento-manual ORIGINAL,
+        // tipoPermuta 'multiplas') cujo saldo do adto COBRE todas as invoices do processo
+        // (adto saldoNeg ≥ Σ invoices, USD negociado). Vira AUTOMÁTICA (baixa auto-aloca num clique).
+        // Σ invoices > adto → segue manual. NÃO se aplica a cross-over nem aos reclassificados (rule 1).
+        const somaInvoicesProcesso = (invoicesByPriCod.get(a.priCod) ?? []).reduce(
+            (s, i) => s + (i.valorMoedaNegociada ?? 0),
+            0,
+        );
+        const autoElegivel =
+            a.estadoElegibilidade === 'casamento-manual' &&
+            tipoPermuta === 'multiplas' &&
+            saldoNeg !== undefined &&
+            somaInvoicesProcesso > 0 &&
+            saldoNeg + 1 >= somaInvoicesProcesso; // tolerância de 1 (USD) p/ centavos
+
         return {
             docCod: a.docCod,
             filCod: a.filCod ?? 0,
             referencia: a.referencia ?? a.docCod,
             exportador: a.exportador ?? '',
+            // Cliente (importador do processo) — analistas buscam por ele. Vem do adto (imp021).
+            ...(a.importador !== undefined ? { importador: a.importador } : {}),
             // `null` quando não buscado (não-pago) → a tela mostra "-".
             valorMoedaNegociada: a.valorMoedaNegociada ?? null,
             // Valor de face em BRL (vem do list — presente até em não-pagos).
@@ -240,6 +356,7 @@ export default class GestaoPermutasService {
             ...(candidatas !== undefined ? { candidatas } : {}),
             ...(alocacoes !== undefined ? { alocacoes } : {}),
             ...(saldoRestante !== undefined ? { saldoRestante } : {}),
+            ...(autoElegivel ? { autoElegivel: true } : {}),
             detalhe,
         };
     };
@@ -330,13 +447,14 @@ export default class GestaoPermutasService {
         };
     };
 
-    private toInvoiceEmAberto = (i: InvoiceRow): InvoiceEmAberto => ({
+    private toInvoiceEmAberto = (i: InvoiceRow, importador?: string): InvoiceEmAberto => ({
         docCod: i.docCod,
         filCod: i.filCod ?? 0,
         priCod: i.priCod,
         ...(i.dataEmissao !== undefined ? { dataEmissao: i.dataEmissao.toISOString() } : {}),
         referencia: i.referencia ?? i.docCod,
         exportador: i.exportador ?? '',
+        ...(importador !== undefined ? { importador } : {}),
         valorMoedaNegociada: i.valorMoedaNegociada ?? null,
         // Valor de face em BRL — base da consolidação em reais.
         valorBrl: i.valor ?? null,
@@ -357,6 +475,7 @@ export default class GestaoPermutasService {
         invoiceByDocCod: Map<string, InvoiceRow>,
         adiantamentos: AdiantamentoAtivo[],
         statusByDocCod: Map<string, ProcessamentoStatus>,
+        importadorByPriCod: Map<string, string>,
     ): CasamentoSugerido[] => {
         const adiantamentoByDocCod = new Map<string, AdiantamentoAtivo>(
             adiantamentos.map((a) => [a.docCod, a]),
@@ -371,12 +490,15 @@ export default class GestaoPermutasService {
                     // chave de reconciliação manual no Conexos.
                     priCod: c.priCod,
                     invoice: inv
-                        ? this.toInvoiceEmAberto(inv)
+                        ? this.toInvoiceEmAberto(inv, importadorByPriCod.get(c.priCod))
                         : {
                               docCod: c.invoiceDocCod,
                               filCod: 0,
                               referencia: c.invoiceDocCod,
                               exportador: '',
+                              ...(importadorByPriCod.get(c.priCod) !== undefined
+                                  ? { importador: importadorByPriCod.get(c.priCod) }
+                                  : {}),
                               valorMoedaNegociada: 0,
                               valorBrl: null,
                               moeda: c.moeda ?? 'USD',

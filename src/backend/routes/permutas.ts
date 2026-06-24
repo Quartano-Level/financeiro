@@ -418,15 +418,35 @@ router.post(
     }),
 );
 
-// GET /permutas/borderos — gestão de borderôs (Fase 3.1): borderôs que criamos (trilha local)
-// enriquecidos com o status VIVO do ERP (em aberto / finalizado / estornado / removido). READ-ONLY.
+// GET /permutas/borderos — gestão de borderôs (Fase 3.1). Lê do CACHE local (rápido); `?live=true`
+// (botão Atualizar) faz refresh ao vivo no ERP antes de ler. Enriquece com a trilha local.
 router.get(
     '/borderos',
+    requireRole('admin'),
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(BorderoGestaoService);
-        const borderos = await service.listarBorderos();
+        const live = req.query.live === 'true';
+        const borderos = await service.listarBorderos({ live });
         res.json({ borderos, geradoEm: new Date().toISOString(), requestId: req.requestId });
+    }),
+);
+
+// GET /permutas/borderos/:borCod/baixas?filCod= — baixas DO ERP de um borderô (p/ ver o detalhe de
+// borderôs lançados direto no Conexos, sem trilha local). On-demand ao expandir.
+router.get(
+    '/borderos/:borCod/baixas',
+    requireRole('admin'),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const borCod = Number(req.params.borCod);
+        const filCod = Number(req.query.filCod);
+        if (!Number.isFinite(borCod) || !Number.isFinite(filCod)) {
+            res.status(400).json({ error: 'borCod/filCod inválido' });
+            return;
+        }
+        const service = container.resolve(BorderoGestaoService);
+        res.json({ baixas: await service.listarBaixasErp({ borCod, filCod }) });
     }),
 );
 
@@ -551,6 +571,18 @@ router.get(
         const repository = container.resolve(PermutaExecucaoRepository);
         const execucoes = await repository.listByAdiantamento(docCod);
         res.json({ adiantamentoDocCod: docCod, execucoes });
+    }),
+);
+
+// GET /permutas/status — status PERMUTA→BORDERÔ por adiantamento (consulta lazy, status vivo do
+// fin010). Mantém o /gestao rápido (sem ERP) e enriquece os badges da tela depois do load.
+router.get(
+    '/status',
+    requireRole('admin'),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(BorderoGestaoService);
+        res.json({ porAdiantamento: await service.statusPorAdiantamento() });
     }),
 );
 

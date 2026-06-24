@@ -39,6 +39,7 @@ const buildConexos = (over: Partial<jest.Mocked<ConexosClient>> = {}) =>
         listAdiantamentosProforma: jest
             .fn()
             .mockResolvedValue({ adiantamentos: [], capHit: false }),
+        listInvoicesFinalizadas: jest.fn().mockResolvedValue({ invoices: [], capHit: false }),
         getDetalheTitulos: jest.fn().mockResolvedValue({ valorPermutar: 1000, pago: true }),
         listDeclaracaoByProcesso: jest.fn().mockResolvedValue([{ variante: 'DI', priCod: '2048' }]),
         listFinanceiroAPagar: jest.fn().mockResolvedValue({ proformas: [], invoices: [] }),
