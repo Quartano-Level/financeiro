@@ -28,17 +28,15 @@ services:
         value: local
       - key: DEV_AUTH_BYPASS
         value: 'false'
-      # Fase 3 (ADR-0013) — guard-rails da ESCRITA no fin010. SEGUROS por padrão:
-      # escrita desligada + dry-run ligado. Para a baixa real (homologação-first):
-      # 1) aponte CONEXOS_BASE_URL p/ ...-hml...; 2) CONEXOS_WRITE_ENABLED=true;
-      # 3) CONEXOS_DRY_RUN=false. Ver docs/runbooks/fin010-write-cutover.md.
-      # `sync:false` no BASE_URL → alterna hml↔prd pelo dashboard sem editar o yaml.
+      # Fase 3 (ADR-0013) — ESCRITA no fin010 LIGADA em produção (decisão do Yuri 2026-06-24:
+      # baixa real direto em PRD, sem homologação). CONEXOS_BASE_URL fica no dashboard (sync:false)
+      # e DEVE apontar para a produção. Runbook: docs/runbooks/fin010-write-cutover.md.
       - key: CONEXOS_BASE_URL
         sync: false
       - key: CONEXOS_WRITE_ENABLED
-        value: 'false'
-      - key: CONEXOS_DRY_RUN
         value: 'true'
+      - key: CONEXOS_DRY_RUN
+        value: 'false'
       # Secrets / per-deploy values — set in the Render dashboard.
       - key: databaseConnectionString
         sync: false
