@@ -23,6 +23,17 @@ export interface ExecucaoRow {
     atualizadoEm: Date;
 }
 
+/** Linha do cache local de borderô (campos crus do ERP; situação derivada na leitura). */
+export interface BorderoCacheRow {
+    borCod: number;
+    filCod: number;
+    borVldFinalizado?: number;
+    borCodEstornado?: number | null;
+    vlrTotalLiquido?: number;
+    borDtaMvto?: number;
+    usnDesNomeCad?: string | null;
+}
+
 export interface BeginExecutionInput {
     idempotencyKey: string;
     adiantamentoDocCod: string;
@@ -285,6 +296,96 @@ export default class PermutaExecucaoRepository {
                 borCod: data.borCod ?? null,
             },
         );
+    };
+
+    // ───────────────────────── Cache de borderôs (perf — tabela `permuta_bordero`) ─────────────
+    // A tela de Borderôs lê deste cache (rápido) em vez de bater no ERP. Atualizado pela ingestão
+    // e pelo "Atualizar". Guarda os campos crus; a situação é derivada na leitura.
+
+    public listBorderoCache = async (limit?: number): Promise<BorderoCacheRow[]> => {
+        // LIMIT é inteiro interno (não vem do cliente) → seguro inline. Pega os MAIS RECENTES
+        // (por data de movimento) p/ a tela carregar rápido mesmo com milhares de borderôs.
+        const lim = limit && Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 20000) : null;
+        const rows = await this.databaseClient.selectMany(
+            `SELECT bor_cod, fil_cod, bor_vld_finalizado, bor_cod_estornado, vlr_total_liquido,
+                    bor_dta_mvto, usn_des_nome_cad
+             FROM permuta_bordero
+             ORDER BY bor_dta_mvto DESC NULLS LAST, bor_cod DESC
+             ${lim != null ? `LIMIT ${lim}` : ''}`,
+        );
+        return rows.map((r) => ({
+            borCod: Number(r.bor_cod),
+            filCod: Number(r.fil_cod),
+            ...(r.bor_vld_finalizado != null
+                ? { borVldFinalizado: Number(r.bor_vld_finalizado) }
+                : {}),
+            borCodEstornado: r.bor_cod_estornado != null ? Number(r.bor_cod_estornado) : null,
+            ...(r.vlr_total_liquido != null
+                ? { vlrTotalLiquido: Number(r.vlr_total_liquido) }
+                : {}),
+            ...(r.bor_dta_mvto != null ? { borDtaMvto: Number(r.bor_dta_mvto) } : {}),
+            usnDesNomeCad: (r.usn_des_nome_cad as string | null) ?? null,
+        }));
+    };
+
+    /** Substitui o cache pelos itens do ERP (upsert + remove os que sumiram). Fetch vazio = no-op. */
+    public replaceBorderoCache = async (items: BorderoCacheRow[]): Promise<void> => {
+        if (items.length === 0) return; // não limpa num fetch vazio (ERP indisponível)
+        const params: Record<string, unknown> = {};
+        const tuples = items.map((b, i) => {
+            params[`bor_${i}`] = b.borCod;
+            params[`fil_${i}`] = b.filCod;
+            params[`fin_${i}`] = b.borVldFinalizado ?? null;
+            params[`est_${i}`] = b.borCodEstornado ?? null;
+            params[`vlr_${i}`] = b.vlrTotalLiquido ?? null;
+            params[`dta_${i}`] = b.borDtaMvto ?? null;
+            params[`usn_${i}`] = b.usnDesNomeCad ?? null;
+            return `($bor_${i}, $fil_${i}, $fin_${i}, $est_${i}, $vlr_${i}, $dta_${i}, $usn_${i}, now())`;
+        });
+        await this.databaseClient.update(
+            `INSERT INTO permuta_bordero (
+                bor_cod, fil_cod, bor_vld_finalizado, bor_cod_estornado, vlr_total_liquido,
+                bor_dta_mvto, usn_des_nome_cad, atualizado_em
+             ) VALUES ${tuples.join(', ')}
+             ON CONFLICT (bor_cod) DO UPDATE SET
+                fil_cod = EXCLUDED.fil_cod,
+                bor_vld_finalizado = EXCLUDED.bor_vld_finalizado,
+                bor_cod_estornado = EXCLUDED.bor_cod_estornado,
+                vlr_total_liquido = EXCLUDED.vlr_total_liquido,
+                bor_dta_mvto = EXCLUDED.bor_dta_mvto,
+                usn_des_nome_cad = EXCLUDED.usn_des_nome_cad,
+                atualizado_em = now()`,
+            params,
+        );
+        const inList = items.map((_, i) => `$bor_${i}`).join(', ');
+        await this.databaseClient.update(
+            `DELETE FROM permuta_bordero WHERE bor_cod NOT IN (${inList})`,
+            params,
+        );
+    };
+
+    /** Atualiza a situação de UM borderô no cache (após Aprovar/Cancelar). */
+    public updateBorderoCacheSituacao = async (
+        borCod: number,
+        fields: { borVldFinalizado?: number; borCodEstornado?: number | null },
+    ): Promise<number> => {
+        return this.databaseClient.update(
+            `UPDATE permuta_bordero
+             SET bor_vld_finalizado = $fin, bor_cod_estornado = $est, atualizado_em = now()
+             WHERE bor_cod = $bor`,
+            {
+                bor: borCod,
+                fin: fields.borVldFinalizado ?? null,
+                est: fields.borCodEstornado ?? null,
+            },
+        );
+    };
+
+    /** Remove UM borderô do cache (após Excluir borderô no ERP). */
+    public deleteBorderoCache = async (borCod: number): Promise<number> => {
+        return this.databaseClient.update(`DELETE FROM permuta_bordero WHERE bor_cod = $bor`, {
+            bor: borCod,
+        });
     };
 
     private mapRow = (r: Record<string, unknown>): ExecucaoRow => ({

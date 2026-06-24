@@ -373,10 +373,12 @@ describe('GestaoPermutasService.exporGestao', () => {
         });
     });
 
-    it('expõe saldoRestante no casamento Simples (saldoNeg − valorASerUsado)', async () => {
-        // adto saldo 3300 BRL / taxa 5.5 = 600 USD; greedy usou 260 → resta 340.
+    it('regra: casamento que ULTRAPASSA a invoice (Σ saldoNeg > Σ usado) vira MANUAL/múltipla', async () => {
+        // adto saldo 3300 BRL / taxa 5.5 = 600 USD; greedy usou só 260 (invoice foi o teto) →
+        // sobra 340 de adiantamento → ULTRAPASSA → sai de Simples e vira casamento-manual/múltipla.
         const a1Parcial: AdiantamentoAtivo = {
             ...adiantamentos[0],
+            estadoElegibilidade: 'elegivel',
             valorPermutar: 3300,
             taxa: 5.5,
         };
@@ -395,9 +397,66 @@ describe('GestaoPermutasService.exporGestao', () => {
             buildLog(),
         );
         const res = await service.exporGestao('req-1');
-        const adto = res.casamentos[0].adiantamentos[0];
-        expect(adto.valorASerUsado).toBe(260);
-        expect(adto.saldoRestante).toBeCloseTo(340, 5);
+
+        // NÃO aparece mais como auto-sugerido (saiu de Simples).
+        expect(res.casamentos).toHaveLength(0);
+        // O adto vira casamento-manual / múltipla (revisão manual pelo analista).
+        const pend = res.pendentes.find((p) => p.docCod === a1Parcial.docCod);
+        expect(pend?.status).toBe('casamento-manual');
+        expect(pend?.tipoPermuta).toBe('multiplas');
+    });
+
+    it('regra: casamento que NÃO ultrapassa (Σ saldoNeg ≤ usado) segue Simples', async () => {
+        // adto saldo 1430 BRL / taxa 5.5 = 260 USD; greedy usou 260 (tudo consumido) → não sobra →
+        // segue Simples; a invoice pode ficar parcialmente em aberto.
+        const a1Cheio: AdiantamentoAtivo = {
+            ...adiantamentos[0],
+            estadoElegibilidade: 'elegivel',
+            valorPermutar: 1430,
+            taxa: 5.5,
+        };
+        const casamentoCheio: CasamentoRow = { ...casamentos[0], valorASerUsado: 260 };
+        const service = new GestaoPermutasService(
+            buildRelational({ adiantamentos: [a1Cheio], casamentos: [casamentoCheio] }),
+            buildProcessamento(),
+            buildAlocacao(),
+            buildSnapshot(),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+        expect(res.casamentos).toHaveLength(1);
+        expect(res.casamentos[0].adiantamentos[0].valorASerUsado).toBe(260);
+    });
+
+    it('regra: N adtos → 1 invoice que ultrapassa → CROSS-OVER (não multiplas)', async () => {
+        // 2 adtos (A1, A2) casados na MESMA invoice I1; cada um saldo 1000, mas só 1000 cabe na
+        // invoice → Σ saldo 2000 > usado 1000 → ultrapassa → cross-over (N adtos ↔ 1 invoice).
+        const a1: AdiantamentoAtivo = {
+            ...adiantamentos[0],
+            docCod: 'A1',
+            estadoElegibilidade: 'elegivel',
+            valorPermutar: 5500,
+            taxa: 5.5,
+        };
+        const a2: AdiantamentoAtivo = { ...a1, docCod: 'A2' };
+        const cas: CasamentoRow[] = [
+            { ...casamentos[0], adiantamentoDocCod: 'A1', valorASerUsado: 1000 },
+            { ...casamentos[0], adiantamentoDocCod: 'A2', valorASerUsado: 0 },
+        ];
+        const service = new GestaoPermutasService(
+            buildRelational({ adiantamentos: [a1, a2], casamentos: cas }),
+            buildProcessamento(),
+            buildAlocacao(),
+            buildSnapshot(),
+            buildLog(),
+        );
+        const res = await service.exporGestao('req-1');
+
+        expect(res.casamentos).toHaveLength(0); // saiu de Simples
+        const byCod = Object.fromEntries(res.pendentes.map((p) => [p.docCod, p]));
+        expect(byCod.A1?.status).toBe('casamento-manual');
+        expect(byCod.A1?.tipoPermuta).toBe('cross-over');
+        expect(byCod.A2?.tipoPermuta).toBe('cross-over');
     });
 
     it('promotes BLOQUEADA+motivo ja-permutado to its OWN status (out of bloqueadas)', async () => {

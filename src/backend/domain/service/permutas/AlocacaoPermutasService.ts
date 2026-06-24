@@ -288,4 +288,107 @@ export default class AlocacaoPermutasService {
     public remover = async (adiantamentoDocCod: string, invoiceDocCod: string): Promise<void> => {
         await this.alocacaoRepository.deleteAlocacao(adiantamentoDocCod, invoiceDocCod);
     };
+
+    /**
+     * AUTO-ALOCAÇÃO (regra 2026-06-24) — múltipla AUTOMÁTICA: cria as alocações sozinho quando o
+     * adiantamento é casamento-manual, ÚNICO casamento-manual do processo (1 adto → N invoices, ≠
+     * cross-over), e o saldo do adto COBRE todas as invoices do processo (adto saldoNeg ≥ Σ invoices,
+     * USD negociado). Aloca cada invoice (com D.I) o seu disponível, reaproveitando `alocar` (caps +
+     * variação + dataBase). Idempotente: se já houver alocação, devolve true sem recriar. Retorna
+     * false (segue manual) quando não é elegível — defesa server-side do "auto-alocar no Baixar".
+     */
+    public autoAlocarSeElegivel = async (
+        adiantamentoDocCod: string,
+        criadoPor: string,
+    ): Promise<boolean> => {
+        const jaAlocado = (await this.alocacaoRepository.listAtivas()).some(
+            (a) => a.adiantamentoDocCod === adiantamentoDocCod,
+        );
+        if (jaAlocado) return true; // já tem rascunho → nada a fazer
+
+        const adto = await this.relationalRepository.findAdiantamento(adiantamentoDocCod);
+        if (
+            !adto ||
+            adto.estadoElegibilidade !== 'casamento-manual' ||
+            adto.filCod === undefined ||
+            adto.taxa === undefined ||
+            adto.taxa <= 0 ||
+            adto.valorPermutar === undefined
+        ) {
+            return false;
+        }
+
+        // Múltipla = ÚNICO casamento-manual do processo (cross-over com N adtos fica manual).
+        const ativos = await this.relationalRepository.listAdiantamentosAtivos();
+        const casamManualDoProcesso = ativos.filter(
+            (a) => a.priCod === adto.priCod && a.estadoElegibilidade === 'casamento-manual',
+        ).length;
+        if (casamManualDoProcesso !== 1) return false;
+
+        // Invoices vivas do processo com D.I/DUIMP (sem D.I não permuta).
+        const invoices = (await this.buscarInvoices(adto.priCod, adto.filCod)).filter(
+            (i) => i.temDi,
+        );
+        if (invoices.length === 0) return false;
+
+        // O adto COBRE todas as invoices? saldoNeg(USD) ≥ Σ invoices(USD). Senão → manual.
+        const saldoNeg = adto.valorPermutar / adto.taxa;
+        const somaInvoices = invoices.reduce((s, i) => s + (i.valorMoedaNegociada ?? 0), 0);
+        if (somaInvoices <= 0 || saldoNeg + 1 < somaInvoices) return false;
+
+        // Cria as alocações (adto → cada invoice o seu disponível). `alocar` capa no disponível da
+        // invoice e no saldo do adto; como saldoNeg ≥ Σ invoices, tudo cabe.
+        for (const inv of invoices) {
+            const disponivel = (inv.valorMoedaNegociada ?? 0) - inv.jaAlocado;
+            if (disponivel > 0) {
+                await this.alocar({
+                    adiantamentoDocCod,
+                    invoiceDocCod: inv.docCod,
+                    invoicePriCod: adto.priCod,
+                    valorAlocado: disponivel,
+                    criadoPor,
+                });
+            }
+        }
+        return (await this.alocacaoRepository.listAtivas()).some(
+            (a) => a.adiantamentoDocCod === adiantamentoDocCod,
+        );
+    };
+
+    /**
+     * AUTO-ALOCAÇÃO a partir do CASAMENTO (simples/elegível): cria as alocações do adiantamento
+     * conforme o casamento já calculado na eleição (adto → invoice, `valorASerUsado` do greedy).
+     * Usado pelo "Processar" da aba Automáticas, que vira baixa real (borderô) como nos manuais.
+     * Idempotente: se já houver alocação, devolve true. Retorna false quando não há casamento.
+     */
+    public autoAlocarDeCasamento = async (
+        adiantamentoDocCod: string,
+        criadoPor: string,
+    ): Promise<boolean> => {
+        const jaAlocado = (await this.alocacaoRepository.listAtivas()).some(
+            (a) => a.adiantamentoDocCod === adiantamentoDocCod,
+        );
+        if (jaAlocado) return true;
+
+        const casamentos = (await this.relationalRepository.listCasamentos()).filter(
+            (c) => c.adiantamentoDocCod === adiantamentoDocCod,
+        );
+        if (casamentos.length === 0) return false;
+
+        for (const c of casamentos) {
+            const valor = c.valorASerUsado;
+            if (valor !== undefined && valor > 0) {
+                await this.alocar({
+                    adiantamentoDocCod,
+                    invoiceDocCod: c.invoiceDocCod,
+                    invoicePriCod: c.priCod,
+                    valorAlocado: valor,
+                    criadoPor,
+                });
+            }
+        }
+        return (await this.alocacaoRepository.listAtivas()).some(
+            (a) => a.adiantamentoDocCod === adiantamentoDocCod,
+        );
+    };
 }

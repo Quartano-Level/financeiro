@@ -17,6 +17,16 @@ export type BorderoSituacao =
     | 'REMOVIDO'
     | 'INDISPONIVEL';
 
+/** Status da PERMUTA em relação ao seu borderô no fin010 (tela de permutas). */
+export type PermutaStatus = 'aguardando-finalizacao' | 'finalizado';
+
+/** Vínculo permuta→borderô: borderô gerado pela baixa do adiantamento + status vivo. */
+export interface PermutaBorderoVinculo {
+    borCod: number;
+    permutaStatus: PermutaStatus;
+    situacao: BorderoSituacao;
+}
+
 /** Uma baixa (par adto→invoice) dentro do borderô — vinda da nossa trilha. */
 export interface BaixaResumo {
     invoiceDocCod: string;
@@ -111,6 +121,7 @@ export default class BorderoGestaoService {
             try {
                 await this.conexosClient.excluirBordero({ filCod: row.filCod, borCod });
                 borderoExcluido = true;
+                await this.execucaoRepository.deleteBorderoCache(borCod); // some do cache na hora
             } catch (err) {
                 await this.logService.warn({
                     type: LOG_TYPE.BUSINESS_WARN,
@@ -168,6 +179,7 @@ export default class BorderoGestaoService {
         }
         await this.conexosClient.excluirBordero({ filCod, borCod });
         await this.execucaoRepository.deleteByBorCod(borCod); // limpa a trilha (no-op se não houver)
+        await this.execucaoRepository.deleteBorderoCache(borCod); // some do cache na hora
 
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
@@ -175,6 +187,28 @@ export default class BorderoGestaoService {
             data: { borCod, baixasExcluidas: baixas.length, executadoPor },
         });
         return { borCod, excluido: true, baixasExcluidas: baixas.length };
+    };
+
+    /**
+     * LIBERA o borderô removendo-o APENAS da NOSSA trilha (`permuta_alocacao_execucao`) — NÃO toca
+     * no Conexos. Saída de emergência para borderôs TRAVADOS no ERP (ex.: estornados que ficam
+     * "em cadastro" mas o ERP recusa cancelar/excluir): a permuta vinculada volta a "pendente" e
+     * pode ser re-lançada. O borderô no ERP fica intacto — o analista o trata manualmente lá.
+     * NÃO é gated por CONEXOS_WRITE_ENABLED (é operação só-local). Exige borderô da trilha.
+     */
+    public removerDaTrilha = async (params: {
+        borCod: number;
+        executadoPor: string;
+    }): Promise<{ borCod: number; linhasRemovidas: number }> => {
+        const { borCod, executadoPor } = params;
+        await this.requireOwnBorderoFilCod(borCod); // garante que é um borderô NOSSO (da trilha)
+        const linhasRemovidas = await this.execucaoRepository.deleteByBorCod(borCod);
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'borderô removido da trilha (liberação local — ERP intocado)',
+            data: { borCod, linhasRemovidas, executadoPor },
+        });
+        return { borCod, linhasRemovidas };
     };
 
     /**
@@ -187,6 +221,10 @@ export default class BorderoGestaoService {
     }): Promise<{ borCod: number; finalizado: boolean }> => {
         const filCod = await this.guardAcaoBordero(params.borCod);
         await this.conexosClient.finalizarBordero({ filCod, borCod: params.borCod });
+        // Reflete no cache na hora (sem esperar o próximo refresh).
+        await this.execucaoRepository.updateBorderoCacheSituacao(params.borCod, {
+            borVldFinalizado: 1,
+        });
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
             message: 'borderô finalizado/aprovado (fin010)',
@@ -204,6 +242,9 @@ export default class BorderoGestaoService {
     }): Promise<{ borCod: number; cancelado: boolean }> => {
         const filCod = await this.guardAcaoBordero(params.borCod);
         await this.conexosClient.cancelarBordero({ filCod, borCod: params.borCod });
+        await this.execucaoRepository.updateBorderoCacheSituacao(params.borCod, {
+            borVldFinalizado: 2,
+        });
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
             message: 'borderô cancelado (fin010)',
@@ -268,95 +309,217 @@ export default class BorderoGestaoService {
         this.guardAcaoBordero(borCod);
 
     /**
-     * Lista os borderôs de permuta — FONTE AUTORITATIVA: o ERP (`fin010/list`, borVldTipo=2), assim
-     * a tela SEMPRE reflete o Conexos (mostra cancelados/estornados mesmo que a trilha local não
-     * tenha). Enriquece cada borderô com os detalhes de baixa da nossa trilha (invoice/adto/juros).
-     * Consulta as filiais presentes na trilha ∪ a filial default do ambiente.
+     * Lista os borderôs de permuta a partir do CACHE local (`permuta_bordero`) — rápido, sem bater
+     * no ERP a cada abertura. Enriquece cada borderô com as baixas da nossa trilha. `live=true`
+     * (botão Atualizar) faz um refresh ao vivo no Conexos antes de ler. Se o cache estiver vazio
+     * (primeira carga), popula ao vivo uma vez.
      */
-    public listarBorderos = async (): Promise<BorderoResumo[]> => {
-        const rows = await this.execucaoRepository.listComBordero();
-        // Agrupa as baixas da trilha por borCod (detalhe; o ERP é a fonte da LISTA).
+    public listarBorderos = async (opts?: {
+        live?: boolean;
+        limit?: number;
+    }): Promise<BorderoResumo[]> => {
+        // Default: 500 mais recentes (perf — milhares de borderôs no ERP; o usuário pagina 50/pág).
+        const limit = opts?.limit ?? 500;
+        if (opts?.live) await this.refreshCache();
+        let cache = await this.execucaoRepository.listBorderoCache(limit);
+        if (cache.length === 0 && !opts?.live) {
+            await this.refreshCache();
+            cache = await this.execucaoRepository.listBorderoCache(limit);
+        }
+
+        // Baixas da trilha por borCod (detalhe: invoice/adto/juros).
         const trilhaPorBor = new Map<number, ExecucaoRow[]>();
-        for (const r of rows) {
+        for (const r of await this.execucaoRepository.listComBordero()) {
             if (r.borCod === undefined) continue;
             const lista = trilhaPorBor.get(r.borCod) ?? [];
             lista.push(r);
             trilhaPorBor.set(r.borCod, lista);
         }
 
-        // Filiais a consultar no ERP: as da trilha ∪ a default do ambiente.
-        const env = await this.environmentProvider.getEnvironmentVars();
-        const filiais = new Set<number>();
-        for (const r of rows) if (Number.isFinite(r.filCod)) filiais.add(r.filCod);
-        if (Number.isFinite(env.conexosFilCod)) filiais.add(env.conexosFilCod);
-
-        // Busca os borderôs de permuta no ERP (uma chamada por filial, em paralelo).
-        const itensPorFilial = await Promise.all(
-            [...filiais].map((filCod) =>
-                this.conexosClient.listBorderos({ filCod }).catch(async (err) => {
-                    await this.logService.warn({
-                        type: LOG_TYPE.BUSINESS_WARN,
-                        message: 'falha ao listar borderôs do ERP (filial segue vazia)',
-                        data: { filCod, erro: err instanceof Error ? err.message : String(err) },
-                    });
-                    return [];
-                }),
-            ),
+        const resumos = cache.map((item) => {
+            const baixasRows = trilhaPorBor.get(item.borCod) ?? [];
+            const situacao = this.situacaoDoItem(item);
+            const baixas: BaixaResumo[] = baixasRows.map((r) => ({
+                invoiceDocCod: r.invoiceDocCod,
+                adiantamentoDocCod: r.adiantamentoDocCod,
+                status: r.status,
+                ...(r.valorBaixado !== undefined ? { valorBaixado: r.valorBaixado } : {}),
+                ...(r.juros !== undefined ? { juros: r.juros } : {}),
+                ...(r.contaJuros !== undefined ? { contaJuros: r.contaJuros } : {}),
+                ...(r.bxaCodSeq !== undefined ? { bxaCodSeq: r.bxaCodSeq } : {}),
+                criadoEm: r.criadoEm.toISOString(),
+            }));
+            const totalTrilha = baixas.reduce((acc, b) => acc + (b.valorBaixado ?? 0), 0);
+            const totalBaixado =
+                baixas.length > 0
+                    ? Math.round(totalTrilha * 100) / 100
+                    : (item.vlrTotalLiquido ?? 0);
+            const criadoPor = baixasRows[0]?.executadoPor ?? item.usnDesNomeCad ?? undefined;
+            const criadoEm =
+                baixasRows.map((r) => r.criadoEm.toISOString()).sort()[0] ??
+                (item.borDtaMvto ? new Date(item.borDtaMvto).toISOString() : '');
+            return {
+                borCod: item.borCod,
+                filCod: item.filCod,
+                situacao,
+                finalizado: situacao === 'FINALIZADO',
+                estornado: situacao === 'ESTORNADO',
+                ...(criadoPor !== undefined ? { criadoPor } : {}),
+                criadoEm,
+                totalBaixado,
+                baixas,
+                daTrilha: baixasRows.length > 0,
+            } satisfies BorderoResumo;
+        });
+        // Mais NOVO → mais velho: por data (criadoEm) desc; empate pelo maior borCod.
+        return resumos.sort(
+            (a, b) => (b.criadoEm ?? '').localeCompare(a.criadoEm ?? '') || b.borCod - a.borCod,
         );
-
-        const resumos: BorderoResumo[] = [];
-        for (const itens of itensPorFilial) {
-            for (const item of itens) {
-                const baixasRows = trilhaPorBor.get(item.borCod) ?? [];
-                const situacao = this.situacaoDoItem(item);
-                const baixas: BaixaResumo[] = baixasRows.map((r) => ({
-                    invoiceDocCod: r.invoiceDocCod,
-                    adiantamentoDocCod: r.adiantamentoDocCod,
-                    status: r.status,
-                    ...(r.valorBaixado !== undefined ? { valorBaixado: r.valorBaixado } : {}),
-                    ...(r.juros !== undefined ? { juros: r.juros } : {}),
-                    ...(r.contaJuros !== undefined ? { contaJuros: r.contaJuros } : {}),
-                    ...(r.bxaCodSeq !== undefined ? { bxaCodSeq: r.bxaCodSeq } : {}),
-                    criadoEm: r.criadoEm.toISOString(),
-                }));
-                // Total: soma da trilha (detalhe) ou o total líquido do ERP (quando sem trilha).
-                const totalTrilha = baixas.reduce((acc, b) => acc + (b.valorBaixado ?? 0), 0);
-                const totalBaixado =
-                    baixas.length > 0
-                        ? Math.round(totalTrilha * 100) / 100
-                        : (item.vlrTotalLiquido ?? 0);
-                const criadoPor = baixasRows[0]?.executadoPor ?? item.usnDesNomeCad ?? undefined;
-                const criadoEm =
-                    baixasRows.map((r) => r.criadoEm.toISOString()).sort()[0] ??
-                    (item.borDtaMvto ? new Date(item.borDtaMvto).toISOString() : '');
-                resumos.push({
-                    borCod: item.borCod,
-                    filCod: item.filCod,
-                    situacao,
-                    finalizado: situacao === 'FINALIZADO',
-                    estornado: situacao === 'ESTORNADO',
-                    ...(criadoPor !== undefined ? { criadoPor } : {}),
-                    criadoEm,
-                    totalBaixado,
-                    baixas,
-                    daTrilha: baixasRows.length > 0,
-                });
-            }
-        }
-
-        // Mais recentes primeiro (maior borCod). Dedup por borCod (filiais podem se sobrepor).
-        const porBor = new Map<number, BorderoResumo>();
-        for (const r of resumos) porBor.set(r.borCod, r);
-        return [...porBor.values()].sort((a, b) => b.borCod - a.borCod);
     };
 
     /**
-     * Situação OPERACIONAL do borderô, derivada de `borVldFinalizado` (0/undefined = EM CADASTRO,
-     * 1 = FINALIZADO, 2 = CANCELADO). `borCodEstornado` é só VÍNCULO DE AUDITORIA — NÃO é a
-     * situação: ao estornar, o ERP devolve o borderô para EM CADASTRO (finalizável de novo), mesmo
-     * mantendo o `borCodEstornado` como histórico do estorno.
+     * Baixas DE UM borderô lidas DO ERP (`fin010/baixas/list`) — para ver o detalhe de borderôs
+     * lançados direto no Conexos (sem trilha local). O ERP expõe o lado invoice + valor líquido; o
+     * lado-permuta (adiantamento/juros) não vem nesse list (fica só nos criados por nós).
      */
-    private situacaoDoItem = (item: { borVldFinalizado?: number }): BorderoSituacao => {
+    public listarBaixasErp = async (params: {
+        borCod: number;
+        filCod: number;
+    }): Promise<Array<{ invoiceDocCod: string; bxaCodSeq: number; valorLiquido?: number }>> => {
+        const baixas = await this.conexosClient.listBaixas(params);
+        return baixas.map((b) => ({
+            invoiceDocCod: String(b.docCod),
+            bxaCodSeq: b.bxaCodSeq,
+            ...(b.bxaMnyLiquidoPermuta !== undefined
+                ? { valorLiquido: b.bxaMnyLiquidoPermuta }
+                : {}),
+        }));
+    };
+
+    /**
+     * REFRESH do cache de borderôs a partir do ERP — busca `fin010/list` (borVldTipo=2) de TODAS
+     * as filiais e regrava `permuta_bordero`. Chamado pela ingestão e pelo botão "Atualizar".
+     */
+    public refreshCache = async (): Promise<void> => {
+        const filiais = await this.conexosClient.listFiliais();
+        const itensPorFilial = await Promise.all(
+            filiais.map((f) =>
+                this.conexosClient
+                    .listBorderos({ filCod: f.filCod, pageSize: 1000 })
+                    .catch(async (err) => {
+                        await this.logService.warn({
+                            type: LOG_TYPE.BUSINESS_WARN,
+                            message: 'falha ao listar borderôs do ERP (filial segue vazia)',
+                            data: {
+                                filCod: f.filCod,
+                                erro: err instanceof Error ? err.message : String(err),
+                            },
+                        });
+                        return [];
+                    }),
+            ),
+        );
+        // Dedup por borCod (filiais podem se sobrepor).
+        const byBor = new Map<number, (typeof itensPorFilial)[number][number]>();
+        for (const it of itensPorFilial.flat()) byBor.set(it.borCod, it);
+        await this.execucaoRepository.replaceBorderoCache(
+            [...byBor.values()].map((it) => ({
+                borCod: it.borCod,
+                filCod: it.filCod,
+                ...(it.borVldFinalizado !== undefined
+                    ? { borVldFinalizado: it.borVldFinalizado }
+                    : {}),
+                borCodEstornado: it.borCodEstornado ?? null,
+                ...(it.vlrTotalLiquido !== undefined
+                    ? { vlrTotalLiquido: it.vlrTotalLiquido }
+                    : {}),
+                ...(it.borDtaMvto !== undefined ? { borDtaMvto: it.borDtaMvto } : {}),
+                usnDesNomeCad: it.usnDesNomeCad ?? null,
+            })),
+        );
+    };
+
+    /**
+     * STATUS PERMUTA→BORDERÔ (tela de permutas, consulta lazy). Para cada adiantamento com baixa
+     * `settled` na trilha, resolve o status VIVO do borderô vinculado no fin010:
+     *   - FINALIZADO   → `finalizado` (permuta concluída; continua aparecendo).
+     *   - EM CADASTRO  → `aguardando-finalizacao` (baixado, falta finalizar o borderô).
+     *   - CANCELADO/ESTORNADO/REMOVIDO/indisponível → OMITIDO → a permuta volta a "pendente"
+     *     (reabre p/ execução), alinhado à idempotência viva do reconciliar.
+     * Busca PRECISA por `borCod#IN` (não perde por paginação do fin010/list).
+     */
+    public statusPorAdiantamento = async (): Promise<Record<string, PermutaBorderoVinculo>> => {
+        const rows = await this.execucaoRepository.listComBordero();
+        // Um adto pode ter VÁRIOS borderôs settled (re-baixa após cancelar/estornar). Guardo TODOS
+        // e, no fim, escolho o que está VÁLIDO no ERP (em cadastro/finalizado) — não o "último".
+        const borCodsByAdto = new Map<string, Set<number>>();
+        const borCodsPorFilial = new Map<number, Set<number>>();
+        for (const r of rows) {
+            if (r.status !== 'settled' || r.borCod === undefined) continue;
+            const set = borCodsByAdto.get(r.adiantamentoDocCod) ?? new Set<number>();
+            set.add(r.borCod);
+            borCodsByAdto.set(r.adiantamentoDocCod, set);
+            const fset = borCodsPorFilial.get(r.filCod) ?? new Set<number>();
+            fset.add(r.borCod);
+            borCodsPorFilial.set(r.filCod, fset);
+        }
+        if (borCodsByAdto.size === 0) return {};
+
+        // Status vivo dos borderôs envolvidos (1 chamada por filial, filtrada por borCod#IN).
+        const sitByBor = new Map<number, BorderoSituacao>();
+        await Promise.all(
+            [...borCodsPorFilial.entries()].map(async ([filCod, set]) => {
+                try {
+                    const itens = await this.conexosClient.listBorderos({
+                        filCod,
+                        borCods: [...set],
+                    });
+                    for (const it of itens) sitByBor.set(it.borCod, this.situacaoDoItem(it));
+                } catch (err) {
+                    await this.logService.warn({
+                        type: LOG_TYPE.BUSINESS_WARN,
+                        message: 'falha ao resolver status permuta→borderô (filial segue)',
+                        data: { filCod, erro: err instanceof Error ? err.message : String(err) },
+                    });
+                }
+            }),
+        );
+
+        const out: Record<string, PermutaBorderoVinculo> = {};
+        for (const [adto, borCods] of borCodsByAdto) {
+            // Entre os borderôs do adto, pega o VÁLIDO mais recente (maior borCod). Cancelado/
+            // estornado/removido é ignorado → se nenhum válido, a permuta volta a "pendente".
+            let escolhido: { borCod: number; situacao: BorderoSituacao } | undefined;
+            for (const borCod of [...borCods].sort((a, b) => b - a)) {
+                const situacao = sitByBor.get(borCod);
+                if (situacao === 'FINALIZADO' || situacao === 'EM_CADASTRO') {
+                    escolhido = { borCod, situacao };
+                    break; // maior borCod válido = o atual
+                }
+            }
+            if (!escolhido) continue;
+            out[adto] = {
+                borCod: escolhido.borCod,
+                permutaStatus:
+                    escolhido.situacao === 'FINALIZADO' ? 'finalizado' : 'aguardando-finalizacao',
+                situacao: escolhido.situacao,
+            };
+        }
+        return out;
+    };
+
+    /**
+     * Situação OPERACIONAL do borderô (decisão Yuri 2026-06-24 — estorno removido da UI):
+     * `borCodEstornado != null` ⇒ ESTORNADO — beco sem saída no ERP (não cancela/exclui). A tela
+     * de borderôs marca como estornado (ações desabilitadas) e a PERMUTA é LIBERADA p/ novo
+     * lançamento (`statusPorAdiantamento` ignora estornado → volta a pendente). Senão:
+     * `borVldFinalizado` 1 = FINALIZADO, 2 = CANCELADO, 0/undefined = EM CADASTRO.
+     */
+    private situacaoDoItem = (item: {
+        borVldFinalizado?: number;
+        borCodEstornado?: number | null;
+    }): BorderoSituacao => {
+        if (item.borCodEstornado != null) return 'ESTORNADO';
         if (item.borVldFinalizado === 1) return 'FINALIZADO';
         if (item.borVldFinalizado === 2) return 'CANCELADO';
         return 'EM_CADASTRO';

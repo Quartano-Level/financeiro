@@ -76,6 +76,8 @@ export interface PermutaPendente {
     filCod: number;
     referencia: string;
     exportador: string;
+    /** Cliente = importador do processo (`imp021`). Analistas buscam por ele. Opcional. */
+    importador?: string;
     /** Valor em moeda negociada (com308). `null` quando não buscado (não-pago) → tela mostra "-". */
     valorMoedaNegociada: number | null;
     /** Valor de FACE do documento em BRL (`docMnyValor`) — base da consolidação em reais. */
@@ -98,6 +100,12 @@ export interface PermutaPendente {
      * (ADR-0005). O analista escolhe UMA e processa.
      */
     candidatas?: InvoiceEmAberto[];
+    /**
+     * Múltipla (1 adto → N invoices do mesmo processo) onde o saldo do adto COBRE todas as invoices
+     * (adto ≥ Σ invoices, USD negociado) → é AUTOMÁTICA: aparece na aba "Automáticas" e a baixa
+     * auto-aloca (adto → cada invoice) num clique. `Σ invoices > adto` segue manual. (Regra 2026-06-24)
+     */
+    autoElegivel?: boolean;
     /** Micro-informações exibidas ao expandir a linha (qualquer status). */
     detalhe?: PermutaDetalhe;
 }
@@ -111,6 +119,8 @@ export interface InvoiceEmAberto {
     dataEmissao?: string;
     referencia: string;
     exportador: string;
+    /** Cliente = importador do processo (`imp021`), juntado por priCod. Opcional. */
+    importador?: string;
     valorMoedaNegociada: number | null;
     /** Valor de FACE do documento em BRL (`docMnyValor`) — base da consolidação em reais. */
     valorBrl: number | null;

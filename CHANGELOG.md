@@ -1,5 +1,27 @@
 # Columbia Financeiro — Changelog
 
+## v0.7.0 (2026-06-24) — Permutas: cliente, universo de invoices, ciclo de borderô e cache
+
+- **feat(permutas):** reclassificação automática — múltiplas onde o adiantamento **cobre todas as
+  invoices** do processo (adto ≥ Σ invoices) viram **AUTOMÁTICAS** (casamentos sintéticos pré-distribuídos,
+  com "Processar" = baixa real auto-alocada); casamentos simples cujos adtos **ultrapassam** a invoice
+  caem para manual (cross-over/múltipla).
+- **feat(permutas):** **status PERMUTA→BORDERÔ** por adiantamento (`GET /permutas/status`, lazy) —
+  badge Pendente / Aguardando finalização / Finalizado; borderô cancelado/estornado/excluído reabre a
+  permuta para novo lançamento.
+- **feat(permutas):** **busca por CLIENTE** (importador) em todas as abas + no detalhe; importador
+  hidratado (imp021) para **TODAS as invoices** na ingestão.
+- **feat(permutas):** ingestão lista **TODAS as invoices finalizadas** (não só as casadas) com valor em
+  moeda negociada (com308) — vista "Invoices em aberto" com filtro Todas / Só casadas.
+- **feat(permutas):** **aba Borderôs** in-place na Gestão de Permutas + **cache de borderôs**
+  (`permuta_bordero`, populado na ingestão; "Atualizar" = refresh ao vivo) — leitura do banco (rápido),
+  500 mais recentes, ações atualizam o cache na hora; detalhe (baixas do ERP) de borderôs lançados
+  direto no Conexos via expand.
+- **feat(ui):** input monetário com máscara pt-BR + botão "Máx"; moedas com alias ISO no KPI;
+  paginação (50/pág) e ordenação mais-novo→mais-velho nos borderôs; saída "Liberar" removida.
+- **fix(permutas):** remoção do botão Estorno; mensagens de erro do fin010 amigáveis.
+- Migrations `0017_invoice_importador`, `0018_permuta_bordero_cache`.
+
 ## v0.6.1 (2026-06-24) — Regis-Review 2026-06-24-0039: remediação dos P0 de código
 
 - **fix(security):** autorização **server-side** nas ações de borderô (confused-deputy). As ações

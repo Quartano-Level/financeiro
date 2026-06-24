@@ -118,6 +118,8 @@ export interface PermutaPendente {
   filCod: number
   referencia: string
   exportador: string
+  /** Cliente = importador do processo (`imp021`). Analistas buscam por ele. */
+  importador?: string
   valorMoedaNegociada: number | null
   /** Valor de FACE do documento em BRL (`docMnyValor`) — base da consolidação em reais. */
   valorBrl?: number | null
@@ -139,6 +141,9 @@ export interface PermutaPendente {
   alocacoes?: AlocacaoDetalhe[]
   /** Saldo a permutar ainda não alocado (moeda negociada) — `permuta-manual`. */
   saldoRestante?: number
+  /** Múltipla AUTOMÁTICA: adto cobre todas as invoices do processo (adto ≥ Σ invoices) — aba
+   * "Automáticas", baixa auto-aloca. (Regra 2026-06-24) */
+  autoElegivel?: boolean
   /** Micro-informações exibidas ao expandir a linha (qualquer status). */
   detalhe?: PermutaDetalhe
 }
@@ -153,6 +158,8 @@ export interface InvoiceEmAberto {
   dataEmissao?: string
   referencia: string
   exportador: string
+  /** Cliente = importador do processo (`imp021`), juntado por priCod. */
+  importador?: string
   valorMoedaNegociada: number | null
   /** Valor de FACE do documento em BRL (`docMnyValor`) — base da consolidação em reais. */
   valorBrl?: number | null
@@ -279,6 +286,20 @@ export interface ExecucaoPermuta {
   executadoPor?: string
   criadoEm: string
   atualizadoEm: string
+}
+
+/** Status da PERMUTA em relação ao seu borderô no fin010 (badge na tela de permutas). */
+export type PermutaStatusBordero = 'aguardando-finalizacao' | 'finalizado'
+
+/** Vínculo permuta→borderô (status vivo) — `GET /permutas/status`. */
+export interface PermutaBorderoVinculo {
+  borCod: number
+  permutaStatus: PermutaStatusBordero
+  situacao: BorderoSituacao
+}
+
+export interface PermutaStatusResponse {
+  porAdiantamento: Record<string, PermutaBorderoVinculo>
 }
 
 /** Situação viva do borderô no ERP (Fase 3.1 — gestão de borderôs). */

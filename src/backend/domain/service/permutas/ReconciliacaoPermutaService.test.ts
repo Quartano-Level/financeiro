@@ -74,15 +74,28 @@ const buildDeps = () => {
             conexosDryRun: envFlags.conexosDryRun,
         }),
     };
+    // auto-alocação no Baixar (múltipla automática) — default: não elegível (não cria nada).
+    const alocacaoService = {
+        autoAlocarSeElegivel: jest.fn().mockResolvedValue(false),
+        autoAlocarDeCasamento: jest.fn().mockResolvedValue(false),
+    };
     const service = new ReconciliacaoPermutaService(
         conexosClient as never,
         environmentProvider as never,
         alocacaoRepository as never,
         execucaoRepository as never,
         relationalRepository as never,
+        alocacaoService as never,
         logService as never,
     );
-    return { service, conexosClient, alocacaoRepository, execucaoRepository, relationalRepository };
+    return {
+        service,
+        conexosClient,
+        alocacaoRepository,
+        execucaoRepository,
+        relationalRepository,
+        alocacaoService,
+    };
 };
 
 describe('ReconciliacaoPermutaService', () => {

@@ -16,6 +16,11 @@ import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
 /** Serviço de variação real (puro, sem deps) — recalcula a variação por parcial. */
 const variacao = new VariacaoCambialPermutaService();
 
+/** Mock do BorderoGestaoService — só o refresh do cache de borderôs (best-effort na ingestão). */
+const borderoGestao = {
+    refreshCache: jest.fn().mockResolvedValue(undefined),
+} as unknown as import('./BorderoGestaoService.js').default;
+
 type LogCall = { type: string; data?: Record<string, unknown> };
 
 const buildLogService = () => {
@@ -186,7 +191,14 @@ describe('IngestaoPermutasService', () => {
         const { repo } = buildRelational();
         const snapshot = buildSnapshot();
         const { logService } = buildLogService();
-        const service = new IngestaoPermutasService(eleicao, repo, snapshot, variacao, logService);
+        const service = new IngestaoPermutasService(
+            eleicao,
+            repo,
+            snapshot,
+            variacao,
+            borderoGestao,
+            logService,
+        );
 
         const result = await service.executar({ triggeredBy: 'cron' });
 
@@ -242,6 +254,7 @@ describe('IngestaoPermutasService', () => {
             repo,
             buildSnapshot(),
             variacao,
+            borderoGestao,
             buildLogService().logService,
         );
 
@@ -260,6 +273,7 @@ describe('IngestaoPermutasService', () => {
             repo,
             buildSnapshot(),
             variacao,
+            borderoGestao,
             buildLogService().logService,
         );
 
@@ -280,7 +294,14 @@ describe('IngestaoPermutasService', () => {
         (repo.persistIngestRun as jest.Mock).mockRejectedValue(new IngestLockBusyError());
         const snapshot = buildSnapshot();
         const { logService, calls } = buildLogService();
-        const service = new IngestaoPermutasService(eleicao, repo, snapshot, variacao, logService);
+        const service = new IngestaoPermutasService(
+            eleicao,
+            repo,
+            snapshot,
+            variacao,
+            borderoGestao,
+            logService,
+        );
 
         await expect(service.executar({ triggeredBy: 'simone' })).rejects.toBeInstanceOf(
             IngestLockBusyError,
@@ -301,6 +322,7 @@ describe('IngestaoPermutasService', () => {
             repo,
             buildSnapshot(),
             variacao,
+            borderoGestao,
             buildLogService().logService,
         );
 
@@ -321,7 +343,14 @@ describe('IngestaoPermutasService', () => {
         const { repo } = buildRelational();
         const snapshot = buildSnapshot();
         const { logService, calls } = buildLogService();
-        const service = new IngestaoPermutasService(eleicao, repo, snapshot, variacao, logService);
+        const service = new IngestaoPermutasService(
+            eleicao,
+            repo,
+            snapshot,
+            variacao,
+            borderoGestao,
+            logService,
+        );
 
         await expect(service.executar({ triggeredBy: 'cron' })).rejects.toThrow('conexos down');
 
@@ -394,6 +423,7 @@ const casamentoRowsDe = async (candidatas: PermutaCandidata[]) => {
         repo,
         buildSnapshot(),
         variacao,
+        borderoGestao,
         buildLogService().logService,
     );
     await service.executar({ triggeredBy: 'cron' });

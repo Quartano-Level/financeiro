@@ -24,6 +24,7 @@ const build = (getBorderoImpl: jest.Mock) => {
         getBordero: getBorderoImpl,
         listBorderos: jest.fn().mockResolvedValue([]),
         listBaixas: jest.fn().mockResolvedValue([]),
+        listFiliais: jest.fn().mockResolvedValue([{ filCod: 2 }]),
         excluirBaixa: jest.fn(),
         excluirBordero: jest.fn(),
         finalizarBordero: jest.fn(),
@@ -42,6 +43,10 @@ const build = (getBorderoImpl: jest.Mock) => {
         countByBorCod: jest.fn().mockResolvedValue(1),
         listByBorCod: jest.fn(),
         deleteByBorCod: jest.fn().mockResolvedValue(1),
+        listBorderoCache: jest.fn().mockResolvedValue([]),
+        replaceBorderoCache: jest.fn().mockResolvedValue(undefined),
+        updateBorderoCacheSituacao: jest.fn().mockResolvedValue(1),
+        deleteBorderoCache: jest.fn().mockResolvedValue(1),
     };
     const logService = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
     const service = new BorderoGestaoService(
@@ -54,9 +59,9 @@ const build = (getBorderoImpl: jest.Mock) => {
 };
 
 describe('BorderoGestaoService', () => {
-    it('lista a partir do ERP (fonte), enriquece baixas da trilha e soma o total', async () => {
-        const { service, conexosClient, execucaoRepository } = build(jest.fn());
-        conexosClient.listBorderos.mockResolvedValue([
+    it('lista do CACHE, enriquece baixas da trilha e soma o total', async () => {
+        const { service, execucaoRepository } = build(jest.fn());
+        execucaoRepository.listBorderoCache.mockResolvedValue([
             { borCod: 14699, filCod: 2, borVldFinalizado: 1, borCodEstornado: null },
         ]);
         execucaoRepository.listComBordero.mockResolvedValue([
@@ -78,12 +83,12 @@ describe('BorderoGestaoService', () => {
         expect(out[0].baixas).toHaveLength(2);
     });
 
-    it('situação vem de borVldFinalizado; estorno (borCodEstornado) REABRE p/ em cadastro', async () => {
-        const { service, conexosClient, execucaoRepository } = build(jest.fn());
-        conexosClient.listBorderos.mockResolvedValue([
+    it('situação: finalizado / cancelado / estornado (borCodEstornado → ESTORNADO)', async () => {
+        const { service, execucaoRepository } = build(jest.fn());
+        execucaoRepository.listBorderoCache.mockResolvedValue([
             { borCod: 14699, filCod: 2, borVldFinalizado: 1, borCodEstornado: null }, // finalizado
             { borCod: 14676, filCod: 2, borVldFinalizado: 2, borCodEstornado: null }, // cancelado
-            { borCod: 14674, filCod: 2, borVldFinalizado: 0, borCodEstornado: 555 }, // estornado → em cadastro
+            { borCod: 14674, filCod: 2, borVldFinalizado: 0, borCodEstornado: 555 }, // estornado
         ]);
         execucaoRepository.listComBordero.mockResolvedValue([]);
 
@@ -91,14 +96,14 @@ describe('BorderoGestaoService', () => {
         const byCod = Object.fromEntries(out.map((b) => [b.borCod, b.situacao]));
         expect(byCod[14699]).toBe('FINALIZADO');
         expect(byCod[14676]).toBe('CANCELADO');
-        expect(byCod[14674]).toBe('EM_CADASTRO'); // estorno reabre — finalizável de novo
+        expect(byCod[14674]).toBe('ESTORNADO'); // beco sem saída → permuta liberada p/ re-lançar
         // ordenado por borCod desc
         expect(out.map((b) => b.borCod)).toEqual([14699, 14676, 14674]);
     });
 
-    it('mostra borderô CANCELADO do ERP mesmo SEM trilha local (divergência)', async () => {
-        const { service, conexosClient, execucaoRepository } = build(jest.fn());
-        conexosClient.listBorderos.mockResolvedValue([
+    it('mostra borderô CANCELADO mesmo SEM trilha local (divergência)', async () => {
+        const { service, execucaoRepository } = build(jest.fn());
+        execucaoRepository.listBorderoCache.mockResolvedValue([
             {
                 borCod: 14707,
                 filCod: 2,
@@ -128,6 +133,125 @@ describe('BorderoGestaoService', () => {
         const out = await service.listarBorderos();
 
         expect(out).toEqual([]);
+    });
+
+    it('live=true → refresca o cache (busca filiais no ERP e regrava)', async () => {
+        const { service, conexosClient, execucaoRepository } = build(jest.fn());
+        conexosClient.listFiliais.mockResolvedValue([{ filCod: 2 }, { filCod: 4 }]);
+        conexosClient.listBorderos.mockResolvedValue([
+            { borCod: 14709, filCod: 2, borVldFinalizado: 0, borCodEstornado: null },
+        ]);
+        execucaoRepository.listComBordero.mockResolvedValue([]);
+
+        await service.listarBorderos({ live: true });
+
+        expect(conexosClient.listFiliais).toHaveBeenCalled();
+        expect(execucaoRepository.replaceBorderoCache).toHaveBeenCalled();
+    });
+
+    it('listarBaixasErp mapeia as baixas do ERP (invoice + valor líquido)', async () => {
+        const { service, conexosClient } = build(jest.fn());
+        conexosClient.listBaixas.mockResolvedValue([
+            { docCod: 18779, bxaCodSeq: 1, bxaMnyLiquidoPermuta: 99.61 },
+        ]);
+
+        const out = await service.listarBaixasErp({ borCod: 14709, filCod: 2 });
+
+        expect(out).toEqual([{ invoiceDocCod: '18779', bxaCodSeq: 1, valorLiquido: 99.61 }]);
+    });
+
+    describe('statusPorAdiantamento', () => {
+        it('settled + borderô EM CADASTRO → aguardando-finalizacao; FINALIZADO → finalizado; CANCELADO → omitido', async () => {
+            const { service, conexosClient, execucaoRepository } = build(jest.fn());
+            execucaoRepository.listComBordero.mockResolvedValue([
+                row({ adiantamentoDocCod: '9026', borCod: 14735, status: 'settled', filCod: 2 }),
+                row({ adiantamentoDocCod: '9027', borCod: 14736, status: 'settled', filCod: 2 }),
+                row({ adiantamentoDocCod: '9028', borCod: 14737, status: 'settled', filCod: 2 }),
+            ]);
+            conexosClient.listBorderos.mockResolvedValue([
+                { borCod: 14735, filCod: 2, borVldFinalizado: 1, borCodEstornado: null }, // finalizado
+                { borCod: 14736, filCod: 2, borVldFinalizado: 0, borCodEstornado: null }, // em cadastro
+                { borCod: 14737, filCod: 2, borVldFinalizado: 2, borCodEstornado: null }, // cancelado
+            ]);
+
+            const out = await service.statusPorAdiantamento();
+
+            expect(out['9026']).toMatchObject({ borCod: 14735, permutaStatus: 'finalizado' });
+            expect(out['9027']).toMatchObject({
+                borCod: 14736,
+                permutaStatus: 'aguardando-finalizacao',
+            });
+            expect(out['9028']).toBeUndefined(); // cancelado → permuta volta a pendente
+        });
+
+        it('adto com VÁRIOS borderôs (re-baixa): escolhe o válido mais recente, ignora o cancelado', async () => {
+            const { service, conexosClient, execucaoRepository } = build(jest.fn());
+            // 9026 baixado 2x: 14735 (cancelado/estornado) e 14761 (em aberto, atual).
+            execucaoRepository.listComBordero.mockResolvedValue([
+                row({ adiantamentoDocCod: '9026', borCod: 14761, status: 'settled', filCod: 2 }),
+                row({ adiantamentoDocCod: '9026', borCod: 14735, status: 'settled', filCod: 2 }),
+            ]);
+            conexosClient.listBorderos.mockResolvedValue([
+                { borCod: 14735, filCod: 2, borVldFinalizado: 2, borCodEstornado: null }, // cancelado
+                { borCod: 14761, filCod: 2, borVldFinalizado: 0, borCodEstornado: null }, // em aberto
+            ]);
+
+            const out = await service.statusPorAdiantamento();
+
+            expect(out['9026']).toMatchObject({
+                borCod: 14761,
+                permutaStatus: 'aguardando-finalizacao',
+            });
+        });
+
+        it('borderô ESTORNADO → permuta liberada (volta a pendente, sem vínculo)', async () => {
+            const { service, conexosClient, execucaoRepository } = build(jest.fn());
+            execucaoRepository.listComBordero.mockResolvedValue([
+                row({ adiantamentoDocCod: '9027', borCod: 14708, status: 'settled', filCod: 2 }),
+            ]);
+            conexosClient.listBorderos.mockResolvedValue([
+                { borCod: 14708, filCod: 2, borVldFinalizado: 0, borCodEstornado: 999 }, // estornado
+            ]);
+
+            const out = await service.statusPorAdiantamento();
+
+            expect(out['9027']).toBeUndefined(); // estornado → reabre p/ novo lançamento
+        });
+
+        it('sem execução settled → mapa vazio (sem chamar o ERP)', async () => {
+            const { service, conexosClient, execucaoRepository } = build(jest.fn());
+            execucaoRepository.listComBordero.mockResolvedValue([
+                row({ adiantamentoDocCod: '9026', borCod: undefined, status: 'error' }),
+            ]);
+            const out = await service.statusPorAdiantamento();
+            expect(out).toEqual({});
+            expect(conexosClient.listBorderos).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('removerDaTrilha', () => {
+        it('remove só da trilha (sem tocar no ERP) e libera a permuta', async () => {
+            const { service, conexosClient, execucaoRepository } = build(jest.fn());
+            execucaoRepository.listByBorCod.mockResolvedValue([row({ borCod: 14708, filCod: 2 })]);
+            execucaoRepository.deleteByBorCod.mockResolvedValue(2);
+
+            const out = await service.removerDaTrilha({ borCod: 14708, executadoPor: 'yuri' });
+
+            expect(execucaoRepository.deleteByBorCod).toHaveBeenCalledWith(14708);
+            expect(out).toEqual({ borCod: 14708, linhasRemovidas: 2 });
+            // NÃO toca no ERP
+            expect(conexosClient.cancelarBordero).not.toHaveBeenCalled();
+            expect(conexosClient.excluirBordero).not.toHaveBeenCalled();
+        });
+
+        it('FORBIDDEN quando o borderô não é da trilha', async () => {
+            const { service, execucaoRepository } = build(jest.fn());
+            execucaoRepository.listByBorCod.mockResolvedValue([]);
+
+            await expect(
+                service.removerDaTrilha({ borCod: 999, executadoPor: 'yuri' }),
+            ).rejects.toThrow(/FORBIDDEN/);
+        });
     });
 
     describe('excluirBaixa', () => {

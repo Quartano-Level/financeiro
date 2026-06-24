@@ -701,6 +701,51 @@ export default class ConexosClient {
     };
 
     /**
+     * Lista TODAS as INVOICEs finalizadas da filial (tpdCod=INVOICE, situacao=FINALIZADO), SEM
+     * filtro de `priCod` — espelha a busca com298 do analista (não só as casadas com adiantamento).
+     * Básico (sem com308): docCod/priCod/exportador/valor/pago. Alimenta a vista "Invoices em aberto"
+     * com o universo completo (a ingestão filtra `pago` depois). Reusa `paginate`.
+     */
+    public listInvoicesFinalizadas = async (params: {
+        filCod: number;
+    }): Promise<{ invoices: InvoiceLancamento[]; capHit: boolean }> => {
+        const { filCod } = params;
+        let capHit = false;
+        const rows = await this.paginate<Record<string, unknown>>({
+            endpoint: 'com298/list',
+            bodyBase: {
+                fieldList: [],
+                filterList: {
+                    'tpdCod#EQ': TPD_INVOICE,
+                    'vldStatus#IN': VLD_STATUS_FINALIZADO,
+                },
+                serviceName: 'com298',
+            },
+            opts: { filCod },
+            onCapHit: () => {
+                capHit = true;
+            },
+        });
+
+        const invoices = rows.map<InvoiceLancamento>((row) => {
+            const mapped = this.mapDocPagar(row);
+            const invoice: InvoiceLancamento = {
+                docCod: mapped.docCod,
+                priCod: mapped.priCod,
+                dataEmissao: mapped.dataEmissao,
+                valor: mapped.valor,
+                moeda: mapped.moeda,
+                pago: mapped.pago,
+                exportador: mapped.exportador,
+                faturada: Boolean(row.faturada ?? row.flagFaturada ?? false),
+                ...(mapped.referencia !== undefined ? { referencia: mapped.referencia } : {}),
+            };
+            return invoice;
+        });
+        return { invoices, capHit };
+    };
+
+    /**
      * Re-introduz o lado-leitura de declaração aduaneira podado no ADR-0003
      * (migration-debt O3), escopo restrito a EXISTÊNCIA (XOR) + data-base
      * (Gate 4 + aging). Lê `imp019/list` (D.I) e `imp223/list` (DUIMP) por
@@ -1247,8 +1292,14 @@ export default class ConexosClient {
     public listBorderos = async (params: {
         filCod: number;
         pageSize?: number;
+        /** Quando informado, filtra `borCod#IN` — busca PRECISA (sem perder por paginação). */
+        borCods?: number[];
     }): Promise<BorderoListaItem[]> => {
-        const { filCod, pageSize = 200 } = params;
+        const { filCod, borCods } = params;
+        // Com borCods: pageSize generoso (1000) — se o ERP aplicar `borCod#IN`, volta só os
+        // casados; se IGNORAR o filtro, ainda assim cobre os borderôs recentes (alto borCod) da
+        // filial, evitando perder o alvo por paginação. Sem borCods: a listagem normal (200).
+        const pageSize = params.pageSize ?? (borCods ? 1000 : 200);
         try {
             return await this.retryExecutor.execute(async () => {
                 await this.legacy.ensureSid();
@@ -1264,7 +1315,12 @@ export default class ConexosClient {
                             'vlrTotalLiquido',
                             'usnDesNomeCad',
                         ],
-                        filterList: { 'borVldTipo#EQ': 2 },
+                        filterList: {
+                            'borVldTipo#EQ': 2,
+                            ...(borCods && borCods.length > 0
+                                ? { 'borCod#IN': borCods.map(String) }
+                                : {}),
+                        },
                         pageNumber: 1,
                         pageSize,
                         orderList: { orderList: [{ propertyName: 'borCod', order: 'desc' }] },

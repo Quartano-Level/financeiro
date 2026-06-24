@@ -9,6 +9,7 @@ import PermutaExecucaoRepository, {
     type ExecucaoStatus,
 } from '../../repository/permutas/PermutaExecucaoRepository.js';
 import PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
+import AlocacaoPermutasService from './AlocacaoPermutasService.js';
 import LogService from '../LogService.js';
 
 /** Conta gerencial do juros = VARIAÇÃO CAMBIAL PASSIVA REALIZADA (HAR + ontologia). */
@@ -72,6 +73,8 @@ export default class ReconciliacaoPermutaService {
         private execucaoRepository: PermutaExecucaoRepository,
         @inject(PermutaRelationalRepository)
         private relationalRepository: PermutaRelationalRepository,
+        @inject(AlocacaoPermutasService)
+        private alocacaoService: AlocacaoPermutasService,
         @inject(LogService) private logService: LogService,
     ) {}
 
@@ -85,8 +88,25 @@ export default class ReconciliacaoPermutaService {
         }
         const filCod = adto.filCod;
 
-        const todas = await this.alocacaoRepository.listAtivas();
-        const alocacoes = todas.filter((a) => a.adiantamentoDocCod === adiantamentoDocCod);
+        let alocacoes = (await this.alocacaoRepository.listAtivas()).filter(
+            (a) => a.adiantamentoDocCod === adiantamentoDocCod,
+        );
+        // AUTO-ALOCAÇÃO no Baixar (regra 2026-06-24): múltipla AUTOMÁTICA (adto cobre todas as
+        // invoices do processo) sem rascunho → o backend cria as alocações sozinho (adto → cada
+        // invoice) e segue. Cria RASCUNHO (não toca o ERP); a baixa real continua gated.
+        if (alocacoes.length === 0) {
+            // Múltipla automática (adto cobre as invoices do processo) OU simples/casamento
+            // (elegível) → o backend cria as alocações sozinho (rascunho), pra o "Processar"/Baixar
+            // da aba Automáticas virar baixa real (borderô) como nos manuais.
+            (await this.alocacaoService.autoAlocarSeElegivel(adiantamentoDocCod, executadoPor)) ||
+                (await this.alocacaoService.autoAlocarDeCasamento(
+                    adiantamentoDocCod,
+                    executadoPor,
+                ));
+            alocacoes = (await this.alocacaoRepository.listAtivas()).filter(
+                (a) => a.adiantamentoDocCod === adiantamentoDocCod,
+            );
+        }
         if (alocacoes.length === 0) {
             throw new Error(`adiantamento ${adiantamentoDocCod} has no alocacoes to reconcile`);
         }

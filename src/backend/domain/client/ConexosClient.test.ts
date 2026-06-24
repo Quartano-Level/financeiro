@@ -67,6 +67,25 @@ describe('ConexosClient', () => {
             expect(result.proformas).toEqual([]);
         });
 
+        it('listInvoicesFinalizadas: tpdCod=128 INVOICE + FINALIZADO, SEM priCod (universo completo)', async () => {
+            const legacy = buildLegacy();
+            legacy.listGenericPaginated.mockResolvedValue({
+                count: 1,
+                rows: [{ docCod: 'D9', priCod: 'P9', valor: 500, moeda: 'USD' }],
+            });
+            const client = new ConexosClient(legacy);
+
+            const result = await client.listInvoicesFinalizadas({ filCod: 2 });
+
+            const body = legacy.listGenericPaginated.mock.calls[0][1] as Record<string, unknown>;
+            const filterList = body.filterList as Record<string, unknown>;
+            expect(filterList['tpdCod#EQ']).toBe(128);
+            expect(filterList['priCod#IN']).toBeUndefined(); // sem filtro de processo
+            expect(filterList['vldStatus#IN']).toBeDefined();
+            expect(result.invoices).toHaveLength(1);
+            expect(result.invoices[0]).toMatchObject({ docCod: 'D9', priCod: 'P9' });
+        });
+
         it('sends tpdCod#EQ=99 filter for PROFORMA', async () => {
             const legacy = buildLegacy();
             legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
