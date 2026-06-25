@@ -17,6 +17,8 @@ import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasSe
 import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasService.js';
 import RelatorioExportService from '../domain/service/permutas/RelatorioExportService.js';
 import ReconciliacaoLotePermutaService from '../domain/service/permutas/ReconciliacaoLotePermutaService.js';
+import BorderoGestaoService from '../domain/service/permutas/BorderoGestaoService.js';
+import LogService from '../domain/service/LogService.js';
 import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
 import ClienteFiltroRepository from '../domain/repository/permutas/ClienteFiltroRepository.js';
@@ -817,6 +819,101 @@ describe('POST /permutas/reconciliar-lote', () => {
                 body: JSON.stringify({}),
             });
             expect(res.status).toBe(401);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+describe('POST /permutas/borderos/:borCod/finalizar (erro do ERP — observabilidade)', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    const erpError = (key: string) =>
+        Object.assign(new Error('conexos'), {
+            cause: { response: { status: 400, data: { messages: [{ message: key }] } } },
+        });
+
+    it('loga a resposta CRUA do ERP e responde 400 com requestId + mensagem amigável', async () => {
+        const finalizarBordero = jest.fn().mockRejectedValue(erpError('Generic.ERROR_MESSAGE'));
+        const logError = jest.fn().mockResolvedValue(undefined);
+        container.registerInstance(BorderoGestaoService, { finalizarBordero } as never);
+        container.registerInstance(LogService, { error: logError } as never);
+
+        const server = await listen(buildApp({ authenticated: true, role: 'admin' }));
+        try {
+            const res = await fetch(`${server.url}/permutas/borderos/14918/finalizar`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ filCod: 2 }),
+            });
+            const body = await readJson(res);
+            expect(res.status).toBe(400);
+            expect(body.error).toMatch(/ERP recusou/);
+            expect(typeof body.requestId).toBe('string');
+            // A resposta crua do ERP (status + key + data) agora é logada — antes era descartada.
+            expect(logError).toHaveBeenCalledTimes(1);
+            const logArg = logError.mock.calls[0][0];
+            expect(logArg.data).toMatchObject({
+                acao: 'finalizar',
+                borCod: 14918,
+                erpStatus: 400,
+                erpKey: 'Generic.ERROR_MESSAGE',
+            });
+            expect(logArg.data.erpData).toMatchObject({
+                messages: [{ message: 'Generic.ERROR_MESSAGE' }],
+            });
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('inclui erpDetail (key crua) quando o código do ERP não é mapeado', async () => {
+        container.registerInstance(BorderoGestaoService, {
+            finalizarBordero: jest.fn().mockRejectedValue(erpError('FIN_010.ALGO_NAO_MAPEADO')),
+        } as never);
+        container.registerInstance(LogService, {
+            error: jest.fn().mockResolvedValue(undefined),
+        } as never);
+
+        const server = await listen(buildApp({ authenticated: true, role: 'admin' }));
+        try {
+            const res = await fetch(`${server.url}/permutas/borderos/14918/finalizar`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: '{}',
+            });
+            const body = await readJson(res);
+            expect(res.status).toBe(400);
+            expect(body.erpDetail).toBe('FIN_010.ALGO_NAO_MAPEADO');
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('FORBIDDEN (borderô fora da trilha) → 403 com requestId', async () => {
+        const forbidden = new Error(
+            'FORBIDDEN: borderô 14918 não foi criado por este sistema — ação não permitida',
+        );
+        container.registerInstance(BorderoGestaoService, {
+            finalizarBordero: jest.fn().mockRejectedValue(forbidden),
+        } as never);
+        container.registerInstance(LogService, {
+            error: jest.fn().mockResolvedValue(undefined),
+        } as never);
+
+        const server = await listen(buildApp({ authenticated: true, role: 'admin' }));
+        try {
+            const res = await fetch(`${server.url}/permutas/borderos/14918/finalizar`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: '{}',
+            });
+            const body = await readJson(res);
+            expect(res.status).toBe(403);
+            expect(body.error).toMatch(/não foi criado por este sistema/);
+            expect(typeof body.requestId).toBe('string');
         } finally {
             await server.close();
         }
