@@ -37,6 +37,27 @@ export function formatNumber(val: number): string {
 }
 
 /**
+ * Ordena os borderôs do painel: os EM ABERTO **da nossa trilha** (`daTrilha === true` e
+ * `situacao === 'EM_CADASTRO'`) sobem para o topo — são os acionáveis (aprovar/cancelar). O resto
+ * (nossos finalizados/cancelados + os que vêm do ERP) mantém a ordem por DATA decrescente (`criadoEm`),
+ * como o ERP entrega. Em-aberto vindos do ERP (sem trilha) NÃO sobem — ficam na ordem por data.
+ * Retorna uma cópia ordenada (não muta a entrada).
+ */
+export function ordenarBorderosPainel<
+  T extends { daTrilha?: boolean; situacao: string; criadoEm?: string },
+>(borderos: T[]): T[] {
+  const prioridade = (b: T): number =>
+    b.daTrilha === true && b.situacao === 'EM_CADASTRO' ? 0 : 1
+  return [...borderos].sort((a, b) => {
+    const pa = prioridade(a)
+    const pb = prioridade(b)
+    if (pa !== pb) return pa - pb
+    // Mesma prioridade → data desc (mais recentes primeiro), como o ERP entrega.
+    return (b.criadoEm ?? '').localeCompare(a.criadoEm ?? '')
+  })
+}
+
+/**
  * Progresso de pagamento de um adiantamento parcialmente pago (ADR-0006).
  * `valorTotal`/`valorAberto` vêm em BRL (`mnyTitValor`/`mnyTitAberto`). Retorna
  * `null` quando não há o que mostrar (sem total, total ≤ 0, ou nada em aberto =

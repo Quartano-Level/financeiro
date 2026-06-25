@@ -1,4 +1,40 @@
-import { formatDate, progressoPagamento } from '@/lib/utils'
+import { formatDate, ordenarBorderosPainel, progressoPagamento } from '@/lib/utils'
+
+describe('ordenarBorderosPainel', () => {
+  const b = (
+    borCod: number,
+    situacao: string,
+    daTrilha: boolean,
+    criadoEm: string,
+  ) => ({ borCod, situacao, daTrilha, criadoEm })
+
+  it('põe os EM ABERTO da nossa trilha no topo (por data desc); resto por data desc', () => {
+    const entrada = [
+      b(1, 'FINALIZADO', true, '2026-06-25T16:35:00Z'), // nosso, finalizado
+      b(2, 'EM_CADASTRO', true, '2026-06-25T16:20:00Z'), // nosso, EM ABERTO (sobe)
+      b(3, 'EM_CADASTRO', false, '2026-06-25T16:30:00Z'), // ERP em aberto → NÃO sobe (fica por data)
+      b(4, 'EM_CADASTRO', true, '2026-06-25T16:24:00Z'), // nosso, EM ABERTO (sobe, mais novo que o 2)
+    ]
+    const ordenado = ordenarBorderosPainel(entrada).map((x) => x.borCod)
+    // Topo: nossos em-aberto por data desc (4 @16:24 antes de 2 @16:20); depois resto por data desc (1 @16:35, 3 @16:30).
+    expect(ordenado).toEqual([4, 2, 1, 3])
+  })
+
+  it('ERP em aberto NÃO sobe acima de um finalizado mais recente (mantém data)', () => {
+    const entrada = [
+      b(10, 'FINALIZADO', true, '2026-06-25T17:00:00Z'),
+      b(11, 'EM_CADASTRO', false, '2026-06-25T16:00:00Z'), // ERP, em aberto, mais antigo
+    ]
+    expect(ordenarBorderosPainel(entrada).map((x) => x.borCod)).toEqual([10, 11])
+  })
+
+  it('não muta a entrada', () => {
+    const entrada = [b(1, 'FINALIZADO', true, 'a'), b(2, 'EM_CADASTRO', true, 'b')]
+    const copia = [...entrada]
+    ordenarBorderosPainel(entrada)
+    expect(entrada).toEqual(copia)
+  })
+})
 
 describe('progressoPagamento', () => {
   it('computes % pago, falta em BRL e USD para um pagamento parcial', () => {
