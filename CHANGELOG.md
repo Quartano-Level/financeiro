@@ -1,5 +1,12 @@
 # Columbia Financeiro — Changelog
 
+## v0.7.1 (2026-06-25)
+
+- **fix(permutas):** o seletor "Filial" passa a incluir filiais que só têm invoices (sem adiantamento
+  PROFORMA) — ex.: filial 6. Antes o dropdown era derivado só dos adiantamentos, então as invoices
+  dessas filiais ficavam visíveis em "Todas as filiais" mas não eram filtráveis. Agora a lista é a
+  união das filiais de adiantamentos + invoices.
+
 ## v0.7.0 (2026-06-24) — Permutas: cliente, universo de invoices, ciclo de borderô e cache
 
 - **feat(permutas):** reclassificação automática — múltiplas onde o adiantamento **cobre todas as
