@@ -1336,7 +1336,10 @@ export default function GestaoPermutasPage() {
         <TableBody>
           {list.map((p) => {
             const vinculo = statusPorAdto[p.docCod]
-            const baixado = vinculo !== undefined // já tem borderô (aguardando/finalizado)
+            // Sem saldo a permutar = totalmente alocado. PARCIAL = já tem borderô MAS ainda sobra saldo
+            // (baixa parcial) → Alocar/Baixar continuam liberados pra lançar o resto.
+            const semSaldo = p.saldoRestante !== undefined && p.saldoRestante <= SALDO_TOL
+            const parcial = vinculo !== undefined && !semSaldo
             return (
               <TableRow key={p.docCod}>
                 <TableCell>{p.filCod}</TableCell>
@@ -1354,15 +1357,27 @@ export default function GestaoPermutasPage() {
                   {p.alocacoes?.length ?? 0}
                 </TableCell>
                 <TableCell>
-                  <PermutaBorderoBadge vinculo={vinculo} />
+                  {parcial ? (
+                    <Badge className="border-transparent bg-warning-subtle text-warning-foreground">
+                      Parcial · borderô {vinculo?.borCod}
+                    </Badge>
+                  ) : (
+                    <PermutaBorderoBadge vinculo={vinculo} />
+                  )}
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2">
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={baixado}
-                      title={baixado ? 'Já tem borderô — gerencie em Borderôs' : undefined}
+                      disabled={semSaldo}
+                      title={
+                        semSaldo
+                          ? 'Adiantamento totalmente alocado — sem saldo a permutar'
+                          : parcial
+                            ? 'Alocar o saldo restante em mais invoices'
+                            : 'Alocar saldo em invoices'
+                      }
                       onClick={() => abrirAlocar(p)}
                     >
                       <ArrowLeftRight aria-hidden /> Alocar
@@ -1370,12 +1385,12 @@ export default function GestaoPermutasPage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={baixado || (p.alocacoes?.length ?? 0) === 0}
+                      disabled={(p.alocacoes?.length ?? 0) === 0}
                       title={
-                        baixado
-                          ? `Baixado — borderô ${vinculo.borCod} (${vinculo.permutaStatus === 'finalizado' ? 'finalizado' : 'em cadastro'})`
-                          : (p.alocacoes?.length ?? 0) === 0
-                            ? 'Aloque ao menos uma invoice antes de baixar'
+                        (p.alocacoes?.length ?? 0) === 0
+                          ? 'Aloque ao menos uma invoice antes de baixar'
+                          : parcial
+                            ? `Parcial: borderô ${vinculo?.borCod} já lançado — aloque o restante e baixe de novo (o que já foi baixado é ignorado)`
                             : 'Pré-visualizar e baixar no ERP (fin010)'
                       }
                       onClick={() => abrirReconciliar(p)}
