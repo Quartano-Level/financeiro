@@ -1,5 +1,13 @@
 # Columbia Financeiro — Changelog
 
+## v0.8.0 (2026-06-25) — Permutas: relatórios e exportação Excel do painel
+
+- **feat(permutas):** exportação Excel (.xlsx) dos KPIs e relatórios do painel — Adiantamentos,
+  Invoices, Já permutado e Bloqueadas no nível de detalhe de cada documento, mais dois relatórios
+  analíticos derivados (Reconciliação por processo e Quebra por cliente). Novo endpoint READ-ONLY
+  `GET /permutas/relatorios/:tipo` (reusa o snapshot do `/gestao`; serialização via exceljs) e botão
+  "Exportar" no header do painel (um arquivo por relatório, snapshot completo).
+
 ## v0.7.0 (2026-06-24) — Permutas: cliente, universo de invoices, ciclo de borderô e cache
 
 - **feat(permutas):** reclassificação automática — múltiplas onde o adiantamento **cobre todas as
