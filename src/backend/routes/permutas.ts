@@ -14,6 +14,8 @@ import PermutaRelationalRepository from '../domain/repository/permutas/PermutaRe
 import PermutaSnapshotRepository from '../domain/repository/permutas/PermutaSnapshotRepository.js';
 import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasService.js';
 import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasService.js';
+import RelatorioExportService from '../domain/service/permutas/RelatorioExportService.js';
+import { isRelatorioTipo } from '../domain/interface/permutas/Relatorio.js';
 import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
 import ReconciliacaoPermutaService from '../domain/service/permutas/ReconciliacaoPermutaService.js';
@@ -359,6 +361,28 @@ router.get(
         const service = container.resolve(GestaoPermutasService);
         const gestao = await service.exporGestao(req.requestId);
         res.json(gestao);
+    }),
+);
+
+// GET /permutas/relatorios/:tipo — exporta um relatório do painel em Excel (.xlsx).
+// Projeção READ-ONLY de `/gestao` (snapshot completo, sem filtros) — mesma faixa de
+// acesso de `/gestao` (auth global). `:tipo` validado contra o enum de relatórios.
+const CONTENT_TYPE_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+router.get(
+    '/relatorios/:tipo',
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const tipo = String(req.params.tipo);
+        if (!isRelatorioTipo(tipo)) {
+            res.status(400).json({ error: 'invalid report type' });
+            return;
+        }
+        const service = container.resolve(RelatorioExportService);
+        const { filename, buffer } = await service.exportar(tipo, req.requestId);
+        res.setHeader('Content-Type', CONTENT_TYPE_XLSX);
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(buffer);
     }),
 );
 

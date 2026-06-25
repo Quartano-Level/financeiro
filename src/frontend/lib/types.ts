@@ -323,6 +323,60 @@ export interface BaixaResumo {
   criadoEm: string
 }
 
+/**
+ * Relatórios exportáveis (.xlsx) do painel de Permutas — espelha o enum do
+ * backend (`:tipo` de `GET /permutas/relatorios/:tipo`). Cada um vira um item no
+ * menu "Exportar" e baixa um arquivo próprio (snapshot completo, sem filtros).
+ */
+export type RelatorioTipo =
+  | 'adiantamentos'
+  | 'invoices'
+  | 'ja-permutado'
+  | 'bloqueadas'
+  | 'reconciliacao-processo'
+  | 'clientes'
+
+/** Descritor de um relatório para o menu de exportação (rótulo + ajuda). */
+export interface RelatorioDescritor {
+  tipo: RelatorioTipo
+  label: string
+  descricao: string
+}
+
+/** Relatórios oferecidos no menu "Exportar" (ordem = ordem de exibição). */
+export const RELATORIOS_DISPONIVEIS: RelatorioDescritor[] = [
+  {
+    tipo: 'adiantamentos',
+    label: 'Adiantamentos pendentes',
+    descricao: 'Todos os adiantamentos, com detalhe (status, gates, datas, variação).',
+  },
+  {
+    tipo: 'invoices',
+    label: 'Invoices em aberto',
+    descricao: 'Invoices finalizadas a casar, com cliente, moeda e taxa.',
+  },
+  {
+    tipo: 'ja-permutado',
+    label: 'Já permutado',
+    descricao: 'Adiantamentos concluídos em permuta anterior.',
+  },
+  {
+    tipo: 'bloqueadas',
+    label: 'Bloqueadas',
+    descricao: 'Adiantamentos bloqueados, com o motivo de cada bloqueio.',
+  },
+  {
+    tipo: 'reconciliacao-processo',
+    label: 'Reconciliação por processo',
+    descricao: 'Resumo por processo: cardinalidade, cobertura, aging.',
+  },
+  {
+    tipo: 'clientes',
+    label: 'Quebra por cliente',
+    descricao: 'Resumo por importador: volumes, valores e contagens de status.',
+  },
+]
+
 /** Resumo de um borderô para a tela de gestão (trilha local + status vivo do ERP). */
 export interface BorderoResumo {
   borCod: number

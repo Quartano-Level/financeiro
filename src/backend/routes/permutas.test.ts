@@ -15,6 +15,7 @@ import IngestLockBusyError from '../domain/errors/IngestLockBusyError.js';
 import AlocacaoPermutasService from '../domain/service/permutas/AlocacaoPermutasService.js';
 import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasService.js';
 import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasService.js';
+import RelatorioExportService from '../domain/service/permutas/RelatorioExportService.js';
 import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
 import ClienteFiltroRepository from '../domain/repository/permutas/ClienteFiltroRepository.js';
@@ -687,6 +688,61 @@ describe('RBAC — requireRole nas rotas de mutação (security-1)', () => {
             } as never);
             const leitura = await fetch(`${server.url}/permutas/painel`);
             expect(leitura.status).not.toBe(403);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+describe('GET /permutas/relatorios/:tipo', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    it('exports a known report as xlsx with attachment filename', async () => {
+        const exportar = jest.fn().mockResolvedValue({
+            filename: 'permutas-adiantamentos-2026-06-24.xlsx',
+            buffer: Buffer.from('PK-fake-xlsx'),
+        });
+        container.registerInstance(RelatorioExportService, { exportar } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/relatorios/adiantamentos`);
+            expect(res.status).toBe(200);
+            expect(res.headers.get('content-type')).toBe(
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            );
+            expect(res.headers.get('content-disposition')).toBe(
+                'attachment; filename="permutas-adiantamentos-2026-06-24.xlsx"',
+            );
+            expect(exportar).toHaveBeenCalledWith('adiantamentos', expect.any(String));
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('returns 400 for an unknown report type (and does not resolve the service)', async () => {
+        const exportar = jest.fn();
+        container.registerInstance(RelatorioExportService, { exportar } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/relatorios/inexistente`);
+            const body = await readJson(res);
+            expect(res.status).toBe(400);
+            expect(body.error).toMatch(/invalid report type/);
+            expect(exportar).not.toHaveBeenCalled();
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('requires authentication (401 when unauthenticated)', async () => {
+        const server = await listen(buildApp({ authenticated: false }));
+        try {
+            const res = await fetch(`${server.url}/permutas/relatorios/invoices`);
+            expect(res.status).toBe(401);
         } finally {
             await server.close();
         }

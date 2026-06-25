@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   ChevronRight,
   DatabaseZap,
+  Download,
   Layers,
   RefreshCw,
   Users,
@@ -18,6 +19,7 @@ import {
   AlocacaoExcedeSaldoError,
   buscarInvoicesPorProcesso,
   criarAlocacao,
+  exportarRelatorio,
   fetchGestaoPermutas,
   fetchPermutaRuns,
   fetchPermutaStatus,
@@ -36,8 +38,10 @@ import type {
   PermutaRun,
   ProcessamentoStatus,
   ReconciliarResult,
+  RelatorioTipo,
   StatusElegibilidade,
 } from '@/lib/types'
+import { RELATORIOS_DISPONIVEIS } from '@/lib/types'
 import { cn, formatNumber, progressoPagamento } from '@/lib/utils'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
@@ -63,6 +67,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { BorderosPanel } from './BorderosPanel'
 import { Input } from '@/components/ui/input'
 import {
@@ -670,6 +675,24 @@ export default function GestaoPermutasPage() {
     }
   }, [load, carregarRuns])
 
+  // Exportação de relatórios (.xlsx). Guarda o `tipo` em andamento para o
+  // spinner por item; um clique baixa o arquivo (snapshot completo no backend).
+  const [exportando, setExportando] = React.useState<RelatorioTipo | null>(null)
+
+  const exportar = React.useCallback(async (tipo: RelatorioTipo, label: string) => {
+    setExportando(tipo)
+    try {
+      await exportarRelatorio(tipo)
+      toast.success(`Relatório "${label}" exportado.`)
+    } catch (err) {
+      toast.error(
+        `Falha ao exportar "${label}"${err instanceof Error ? ` — ${err.message}` : ''}.`,
+      )
+    } finally {
+      setExportando(null)
+    }
+  }, [])
+
   // Carga inicial: resolve a promise num callback (sem setState síncrono no
   // corpo do effect) e ignora o resultado se o componente desmontar.
   React.useEffect(() => {
@@ -1153,6 +1176,43 @@ export default function GestaoPermutasPage() {
                 <Banknote aria-hidden /> Borderôs
               </Link>
             </Button>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  title="Exportar os relatórios do painel para Excel (.xlsx)"
+                  disabled={exportando !== null}
+                >
+                  <Download aria-hidden /> Exportar
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" aria-labelledby="exportar-titulo" className="w-72 p-1">
+                <p
+                  id="exportar-titulo"
+                  className="px-2 py-1.5 text-xs font-medium text-muted-foreground"
+                >
+                  Exportar para Excel (.xlsx)
+                </p>
+                {RELATORIOS_DISPONIVEIS.map((r) => (
+                  <button
+                    key={r.tipo}
+                    type="button"
+                    onClick={() => void exportar(r.tipo, r.label)}
+                    disabled={exportando !== null}
+                    title={r.descricao}
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    {exportando === r.tipo ? (
+                      <Spinner className="size-4 shrink-0" aria-hidden />
+                    ) : (
+                      <Download className="size-4 shrink-0" aria-hidden />
+                    )}
+                    <span className="truncate">{r.label}</span>
+                  </button>
+                ))}
+              </PopoverContent>
+            </Popover>
             <Button
               size="sm"
               onClick={abrirIngestao}
