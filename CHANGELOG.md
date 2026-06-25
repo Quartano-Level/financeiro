@@ -1,5 +1,13 @@
 # Columbia Financeiro — Changelog
 
+## v0.8.0 (2026-06-25) — Permutas: execução em lote das automáticas (botão "Executar")
+
+- **feat(permutas):** botão **"Executar todas"** na aba Automáticas — cria os borderôs de TODAS as
+  automáticas de uma vez (baixa real no `fin010`), num único request server-side. Novo endpoint
+  `POST /permutas/reconciliar-lote` (admin + heavyRouteLimiter) orquestrando `reconciliarPermuta` adto
+  a adto com **continue-on-error**; herda o gate de escrita, a idempotência write-ahead e a atomicidade
+  por par. Diálogo de confirmação com resumo do lote. O "Processar" individual continua intacto.
+
 ## v0.7.0 (2026-06-24) — Permutas: cliente, universo de invoices, ciclo de borderô e cache
 
 - **feat(permutas):** reclassificação automática — múltiplas onde o adiantamento **cobre todas as
