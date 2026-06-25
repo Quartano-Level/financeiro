@@ -1,4 +1,43 @@
-import { formatDate, ordenarBorderosPainel, progressoPagamento } from '@/lib/utils'
+import {
+  bucketEtapaPermuta,
+  formatDate,
+  ordenarBorderosPainel,
+  ordenarPorEtapaPermuta,
+  progressoPagamento,
+} from '@/lib/utils'
+
+describe('ordenarPorEtapaPermuta', () => {
+  it('bucketEtapaPermuta: aguardando→0, a-processar→1, finalizada→2; aguardando vence', () => {
+    expect(bucketEtapaPermuta(['a-processar'])).toBe(1)
+    expect(bucketEtapaPermuta(['finalizada'])).toBe(2)
+    expect(bucketEtapaPermuta(['aguardando-aprovacao'])).toBe(0)
+    // Casamento misto: se QUALQUER adto aguarda aprovação, a linha sobe.
+    expect(bucketEtapaPermuta(['finalizada', 'aguardando-aprovacao'])).toBe(0)
+    // Misto finalizada + a-processar → ainda há o que processar (meio).
+    expect(bucketEtapaPermuta(['finalizada', 'a-processar'])).toBe(1)
+    // Vazio → finalizada (fundo).
+    expect(bucketEtapaPermuta([])).toBe(2)
+  })
+
+  it('ordena: aguardando aprovação (topo) → a processar (meio) → finalizada (fundo), estável', () => {
+    type Row = { id: number; etapas: ('aguardando-aprovacao' | 'a-processar' | 'finalizada')[] }
+    const rows: Row[] = [
+      { id: 1, etapas: ['finalizada'] },
+      { id: 2, etapas: ['a-processar'] },
+      { id: 3, etapas: ['aguardando-aprovacao'] },
+      { id: 4, etapas: ['a-processar'] }, // mesmo bucket do 2 → mantém ordem (2 antes de 4)
+      { id: 5, etapas: ['aguardando-aprovacao'] }, // mesmo bucket do 3 → 3 antes de 5
+    ]
+    expect(ordenarPorEtapaPermuta(rows, (r) => r.etapas).map((r) => r.id)).toEqual([3, 5, 2, 4, 1])
+  })
+
+  it('não muta a entrada', () => {
+    const rows = [{ etapas: ['finalizada' as const] }, { etapas: ['a-processar' as const] }]
+    const copia = [...rows]
+    ordenarPorEtapaPermuta(rows, (r) => r.etapas)
+    expect(rows).toEqual(copia)
+  })
+})
 
 describe('ordenarBorderosPainel', () => {
   const b = (

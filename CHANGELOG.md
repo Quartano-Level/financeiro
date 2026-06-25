@@ -23,6 +23,8 @@
 - **feat(permutas):** tela de **Borderôs** carrega ao vivo ao entrar (sem clicar em "Atualizar") e
   ordena os EM ABERTO da nossa trilha no topo; o resto (finalizados + ERP) por data.
 - **fix(infra):** rate-limiters desligados sob `NODE_ENV=test` (evita 429 espúrios na suíte combinada).
+- **feat(permutas):** as abas de trabalho (Automáticas/Múltiplas/Cross-over/Cross-process) ordenam por
+  etapa — **pendentes de aprovação** no topo, **a processar/alocar/baixar** no meio, **finalizadas** no fundo.
 
 ## v0.7.0 (2026-06-24) — Permutas: cliente, universo de invoices, ciclo de borderô e cache
 

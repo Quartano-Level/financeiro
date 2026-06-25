@@ -45,7 +45,13 @@ import type {
   StatusElegibilidade,
 } from '@/lib/types'
 import { RELATORIOS_DISPONIVEIS } from '@/lib/types'
-import { cn, formatNumber, progressoPagamento } from '@/lib/utils'
+import {
+  cn,
+  type EtapaPermuta,
+  formatNumber,
+  ordenarPorEtapaPermuta,
+  progressoPagamento,
+} from '@/lib/utils'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -1109,24 +1115,35 @@ export default function GestaoPermutasPage() {
   // (manuais = Σ invoices > adto). Cross-over e cross-process continuam separados.
   const multiplasManuais = multiplas.filter((p) => p.autoElegivel !== true)
 
-  // Filtro (filial + busca) + paginação por aba.
+  // Etapa de um adiantamento (pelo vínculo de borderô): sem vínculo → a processar; vínculo finalizado
+  // → finalizada; senão (borderô em cadastro) → aguardando aprovação. Espelha o PermutaBorderoBadge.
+  const etapaDoAdto = (docCod: string): EtapaPermuta => {
+    const v = statusPorAdto[docCod]
+    if (!v) return 'a-processar'
+    return v.permutaStatus === 'finalizado' ? 'finalizada' : 'aguardando-aprovacao'
+  }
+
+  // Filtro (filial + busca) + paginação por aba. Antes do filtro, ordena por ETAPA: pendentes de
+  // aprovação no topo, a processar no meio, finalizadas no fundo (pedido do analista).
   const abaSimples = useTabelaFiltro(
-    casamentosSugeridos,
+    ordenarPorEtapaPermuta(casamentosSugeridos, (c) =>
+      c.adiantamentos.map((a) => etapaDoAdto(a.docCod)),
+    ),
     (c) => c.invoice.filCod,
     (c) => `${c.priCod} ${c.invoice.importador ?? ''} ${c.invoice.exportador} ${c.invoice.referencia ?? ''}`,
   )
   const abaMultiplas = useTabelaFiltro(
-    multiplasManuais,
+    ordenarPorEtapaPermuta(multiplasManuais, (p) => [etapaDoAdto(p.docCod)]),
     (p) => p.filCod,
     (p) => `${p.docCod} ${p.importador ?? ''} ${p.exportador}`,
   )
   const abaCrossOver = useTabelaFiltro(
-    crossOver,
+    ordenarPorEtapaPermuta(crossOver, (p) => [etapaDoAdto(p.docCod)]),
     (p) => p.filCod,
     (p) => `${p.docCod} ${p.importador ?? ''} ${p.exportador}`,
   )
   const abaCrossProcess = useTabelaFiltro(
-    crossProcess,
+    ordenarPorEtapaPermuta(crossProcess, (p) => [etapaDoAdto(p.docCod)]),
     (p) => p.filCod,
     (p) => `${p.docCod} ${p.importador ?? ''} ${p.exportador}`,
   )
