@@ -1,7 +1,7 @@
 ---
 name: Invoice
 type: entity
-ontology_version: "0.2"
+ontology_version: "0.4"
 implementation_status: implemented
 status: draft
 owners: [yuri]
@@ -9,8 +9,10 @@ related_files:
   - src/backend/domain/client/ConexosClient.ts
   - src/backend/domain/service/permutas/EleicaoPermutasService.ts
   - src/backend/domain/service/permutas/AlocacaoPermutasService.ts
+  - src/backend/domain/service/permutas/IngestaoPermutasService.ts
   - src/backend/domain/repository/permutas/PermutaRelationalRepository.ts
   - src/backend/migrations/0009_invoice_taxa.sql
+  - src/backend/migrations/0017_invoice_importador.sql
 properties:
   - docCod
   - priCod
@@ -20,11 +22,13 @@ properties:
   - pago
   - exportador
   - valorAbertoNegociado
+  - pesCod
+  - importador
 relationships:
   - "Invoice N—1 Adiantamento (mesmo priCod; casamento via casarInvoice)"
   - "Invoice 1—1 PermutaCandidata (lado-crédito da candidata, quando casada)"
   - "Invoice 1—N Permuta (lado-crédito da alocação; pode ser cross-process, ADR-0008)"
-last_review: 2026-06-22
+last_review: 2026-06-24
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente I (adiantamento ↔ invoice)"
   - "docs-contexto/03_ontologia_financeiro.md §2 Frente I"
@@ -32,6 +36,7 @@ universality_evidence:
   - "Columbia (priCod=1153): com298 tpdCod=128"
   - "Conceito universal de comex: fatura definitiva do exportador (lado-crédito)"
   - "ADR-0010 — valorAbertoNegociado é o TETO do lado-crédito no auto-casamento Simples"
+  - "ADR-0014 — importador (cliente) hidratado via imp021 em TODAS as invoices; universo completo de invoices finalizadas"
 ---
 
 # Invoice (Fatura)
@@ -58,6 +63,8 @@ processo — não há baixa/reconciliação.
 | `pago` | boolean | não | derivado | Estado de pagamento (informativo nesta fatia). |
 | `exportador` | string? | não | `com298.dpeNomPessoa` | Exibição. |
 | `valorAbertoNegociado` | number? | não | `getDetalheTitulos` → `mnyTitAberto / taxaInvoice` | **Em-aberto vivo** em moeda negociada (USD) — o **TETO** do lado-crédito no auto-casamento Simples (ADR-0010). Fallback `valorMoedaNegociada`; ausente ⇒ sem teto (comportamento legado). |
+| `pesCod` | string? | não | `imp021` (processo) → `permuta_invoice.pes_cod` | **Chave do importador (cliente)** do processo da invoice — hidratado na ingestão via `imp021` para TODAS as invoices (ADR-0014, migration `0017`). |
+| `importador` | string? | não | `imp021` (processo) → `permuta_invoice.importador` | **Nome do importador (cliente)** — habilita busca/contagem de invoices por cliente no universo completo. Quando a invoice não tem importador próprio, a apresentação cai no join por processo (adto), `GestaoPermutasService.ts:138-142`. |
 
 ## Discriminador de tipo (INVOICE)
 
@@ -76,6 +83,22 @@ processo — não há baixa/reconciliação.
 - `ConexosClient.listFinanceiroAPagar({ docTip: 'INVOICE', priCods: [proc], filCod })` → `tpdCod=128`, FINALIZADO.
 - `getDetalheTitulos` → `mnyTitAberto` (BRL) ÷ `taxaInvoice` = `valorAbertoNegociado` (em-aberto vivo,
   hidratado na eleição por `EleicaoPermutasService.computeVariacao`).
+- **Universo completo (ADR-0014):** `ConexosClient.listInvoicesFinalizadas({ filCod })`
+  (`src/backend/domain/client/ConexosClient.ts:709+`, `tpdCod=128`, `vldStatus IN finalizado`) lista
+  **TODAS** as invoices finalizadas da filial — não só as de processos com adiantamento. A ingestão
+  hidrata valor/taxa negociada (com308) e o importador (imp021) de cada uma
+  (`EleicaoPermutasService.computeCandidatas.todasInvoices`, `:213-313`;
+  `IngestaoPermutasService.toInvoiceRows`, `:282-347`). Cap-hit de paginação é logado (Regis-Review
+  2026-06-24-2011, Integrability P1).
+
+## Cliente (importador) — busca por cliente (ADR-0014)
+
+O **importador** (cliente Columbia) do processo é hidratado via `imp021` para **todas** as invoices
+(migration `0017_invoice_importador.sql`: colunas `pes_cod` + `importador`). Habilita a busca/contagem
+de invoices por cliente em todas as abas e no detalhe. O adto tem o importador; a invoice não tinha —
+agora ela carrega o seu, e a apresentação prefere o da própria invoice, caindo no join por processo
+quando ausente (`GestaoPermutasService.ts:138-142`). Estrutura (invoice carrega o cliente do
+processo) é do domínio; **quais** clientes são config do tenant.
 
 ## Teto do auto-casamento Simples (ADR-0010)
 

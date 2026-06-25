@@ -84,6 +84,57 @@ valores ecoados, `borDtaMvto`, `vldPermuta:1`. **`bxaCodSeq` é a confirmação*
 - **I-Write-5 (homologação-first):** nenhuma escrita em produção antes de validada em
   `https://columbiatrading-hml.conexos.cloud` (mesmas credenciais/`filCod`). `CONEXOS_DRY_RUN` default ON.
 
+## Adendo v0.7.0 (2026-06-24) — auto-alocação ANTES de gravar
+
+> **Vigência:** 2026-06-24 (v0.7.0, ADR-0014). O contrato de escrita acima (handshake de 5 chamadas,
+> Fase 3) continua igual; o que mudou é o **passo a montante**: o "Processar"/Baixar da aba
+> **Automáticas** e o Baixar dos manuais agora **AUTO-ALOCAM antes de gravar** no `fin010`.
+
+`ReconciliacaoPermutaService.reconciliar`
+(`src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts:97-109`), quando o adiantamento
+**não tem rascunho** de alocação (`alocacoes.length === 0`), cria os rascunhos sozinho antes de
+qualquer escrita no ERP:
+
+- **múltipla AUTOMÁTICA** → `AlocacaoPermutasService.autoAlocarSeElegivel` (adto cobre todas as
+  invoices do processo — ver `business-rules/multipla-automatica.md`);
+- **casamento simples/elegível** (fallback) → `AlocacaoPermutasService.autoAlocarDeCasamento`.
+
+A criação dos rascunhos é **ATÔMICA** (all-or-nothing) — ver `business-rules/auto-alocacao-atomica.md`
+(`criarRascunhosAtomico`, I-Permuta-8): se um par falha no meio, os rascunhos da própria chamada são
+revertidos (nunca uma meia-permuta). Os rascunhos são **locais** (`permuta_alocacao`), **sem efeito no
+ERP**; só depois a baixa real (handshake de 5 chamadas acima) toca o `fin010`. A baixa relê o em-aberto
+vivo no passo 2 (anti-drift, I-Write-1).
+
+Pós-baixa, o status da permuta passa a ser derivado em relação ao borderô do `fin010` — ver a
+state-machine `state-machines/status-permuta-bordero.md` (`pendente | aguardando-finalizacao |
+finalizado`; B1 entra quando há baixa `settled` com o borderô EM CADASTRO). A listagem/situação dos
+borderôs é servida pelo **cache local** `permuta_bordero` (migration `0018_permuta_bordero_cache.sql`;
+ver `BorderoGestaoService.refreshCache`).
+
+## Tolerâncias de arredondamento
+
+Quatro tolerâncias coexistem no fluxo de permuta; cada uma resolve um tipo distinto de ruído. Não
+confundir entre si.
+
+| Tolerância | Onde (file:line) | Regra | Para quê |
+|---|---|---|---|
+| **+0,005** (moeda negociada) — saldo do **adiantamento** | `AlocacaoPermutasService.ts:225` | `valorAlocado > (saldoAdtoNeg − jaAdto) + 0.005` ⇒ `AlocacaoSaldoError` | evita falso-positivo de estouro por ruído de ponto flutuante na validação do rascunho |
+| **+0,005** (moeda negociada) — saldo da **invoice** | `AlocacaoPermutasService.ts:239` | `valorAlocado > (saldoInvoiceNeg − jaInvoice) + 0.005` ⇒ `AlocacaoSaldoError` | idem, lado-crédito |
+| **dinâmica (anti-drift na baixa)** | `ReconciliacaoPermutaService.ts:269-270` | `tolerancia = Math.max(0.01, emAbertoErp * 0.005)`; se `valorBaixaDesejado > emAbertoErp + tolerancia` ⇒ **aborta** (I-Write-1) | a baixa NUNCA pode exceder o em-aberto VIVO do ERP; tolera só centavo/0,5% de arredondamento, depois capa em `bxaMnyValor = min(valorBaixaDesejado, emAbertoErp)` (`:277`) |
+| **+1 USD** (elegibilidade automática) | `GestaoPermutasService.ts:322-335` + `AlocacaoPermutasService.ts:337` | `saldoNeg + 1 ≥ Σ invoices do processo` ⇒ múltipla AUTOMÁTICA | já documentada em `business-rules/multipla-automatica.md` (I-Permuta-6) — só referência aqui |
+
+> **Tolerância dinâmica — fórmula EXATA do código (`ReconciliacaoPermutaService.ts:269`):**
+> `const tolerancia = Math.max(0.01, emAbertoErp * 0.005);` — ou seja, o maior entre **0,01 BRL**
+> (1 centavo) e **0,5% do em-aberto vivo do ERP** (`bxaMnyValor` do passo 2). É a guarda anti-drift
+> (I-Write-1): cobre o ruído de arredondamento sem permitir super-pagamento.
+
+**`round2` (2 casas) nos valores enviados ao `fin010`:** `round2 = (n) => Math.round(n * 100) / 100`
+(`ReconciliacaoPermutaService.ts:24`) é aplicado a **todo valor monetário** do payload
+(`valorVariacao`/`juros`/`desconto` `:296`, `bxaMnyLiquido` `:311`, e o preview `:452`/`:470`); o
+`valorBaixaDesejado` é arredondado inline em `:268`. Motivo (sonda real 2026-06-23): o ERP rejeita
+money com >2 decimais (`CnxValidatorMny` → `precision_not_supported`), e a variação cambial chega com
+ruído de ponto flutuante (ex.: `1000×(5.2887−4.9806)=308.1000000000005`).
+
 ## Fora do contrato (a confirmar em campo)
 - Comportamento quando a invoice **já tem baixa parcial** anterior (passo 2 pode mudar `bxaMnyValor`).
 - Finalização do borderô (`borVldFinalizado`/`borDtaFinalizado`) — o HAR ficou com `borVldFinalizado:0`

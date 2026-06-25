@@ -1,14 +1,18 @@
 ---
 name: conexos
 type: integration
-direction: read-only (esta fatia)
-ontology_version: "0.2"
+direction: read-write (read amplo + write-back fin010 gated)
+ontology_version: "0.4"
 implementation_status: partial
 status: draft
 owners: [yuri]
 related_files:
   - src/backend/domain/client/ConexosClient.ts
-last_review: 2026-06-18
+  - src/backend/domain/service/permutas/BorderoGestaoService.ts
+  - src/backend/migrations/0017_invoice_importador.sql
+  - src/backend/migrations/0018_permuta_bordero_cache.sql
+  - src/backend/migrations/0019_permuta_perf_indexes.sql
+last_review: 2026-06-24
 endpoints_read:
   - com298 (PROFORMA tpdCod=99 + docVldTipoAdto=1 / INVOICE tpdCod=128 / detail mnyTitPermutar + pago=mnyTitAberto===0)
   - imp019 (D.I — data CI = cdiDtaCi)
@@ -44,6 +48,10 @@ open-gap:
 | `imp019/list` | D.I — **data CI** (data-base) | re-introduzido; `mapDeclaracaoDataBase` | `cdiDtaCi` (epoch-ms); acompanha `cdiEspNumci` (nº CI) | **P0-4 RESOLVIDO (probe 2026-06-18).** Campo wire confirmado. |
 | `imp223/list` | DUIMP — **data de desembaraço** (data-base) | re-introduzido; `mapDeclaracaoDataBase` | `dioDtaDesembaraco` (epoch-ms) | **P0-4 RESOLVIDO (probe 2026-06-18).** Campo wire confirmado. |
 | `com308/financeiroAPagar/list/{docCod}` | taxa/valor negociado | `listTitulosAPagar({docCod})` | `titFltTaxaMneg`, `titMnyValorMneg`, `moeCodMneg`, `moeEspNome`, `titMnyValor`; `serviceName='com308.finTituloFin'` | Entrada da `VariacaoCambial` (fórmula = comparação de TAXA, P0-1 RESOLVIDO). |
+| `com298/list` (universo) | **TODAS** as invoices finalizadas da filial | `listInvoicesFinalizadas({filCod})` | `tpdCod=128`, `vldStatus IN finalizado` | **ADR-0014:** universo completo (não só casadas) p/ busca/contagem por cliente. Cap-hit de paginação logado (Regis 2026-06-24-2011, Integrability P1). `ConexosClient.ts:709+`. |
+| `imp021/list` | importador (cliente) do processo | `listProcessos(...)` | `pesCod` + nome importador | **ADR-0014:** hidrata `pes_cod`/`importador` em TODAS as invoices (migration `0017`). `ConexosClient.ts:467+`. |
+| `fin010/list` (`borVldTipo=2`) | borderôs de **permuta** | `listBorderos({filCod, borCods?, pageSize?})` | `borCod`, `borVldFinalizado`, `borCodEstornado`, `vlrTotalLiquido`, `borDtaMvto`, `usnDesNomeCad` | **ADR-0014:** alimenta o cache `permuta_bordero` + status PERMUTA→BORDERÔ (busca precisa por `borCod#IN`). `ConexosClient.ts:1301+`. `requireRole('admin')`. |
+| `fin010/baixas/list/{borCod}` | baixas de um borderô (lado-invoice) | `listBaixas({filCod, borCod})` | `docCod`, `docTip`, `titCod`, `bxaCodSeq`, `bxaMnyLiquidoPermuta` | **ADR-0014:** detalhe de borderôs lançados direto no Conexos (sem trilha). `ConexosClient.ts:1155+`. |
 
 ## Constantes de tenant (Columbia, priCod=1153)
 
@@ -135,3 +143,25 @@ A **primeira escrita** do sistema no Conexos. Contrato completo (endpoints, payl
 ### Ainda não observado no ERP (follow-up)
 - Baixa **parcial** (invoice compartilhada N:M); finalização do borderô (`borVldFinalizado`); caminho
   `DESCONTO` (conta gerencial 94). O HAR cobriu 1 adto → 1 invoice cheia, classificação `JUROS`.
+
+## Cache local de borderôs — `permuta_bordero` (ADR-0014, v0.7.0)
+
+Para a aba Borderôs não bater no ERP a cada abertura, os borderôs de permuta (`fin010` `borVldTipo=2`)
+são cacheados na tabela própria **`permuta_bordero`** (migration `0018_permuta_bordero_cache.sql`):
+campos crus do ERP (`bor_cod` PK, `fil_cod`, `bor_vld_finalizado`, `bor_cod_estornado`,
+`vlr_total_liquido`, `bor_dta_mvto`, `usn_des_nome_cad`, `atualizado_em`). A **situação** (em
+cadastro/finalizado/cancelado/estornado) é **derivada na leitura** (`situacaoDoItem`,
+`BorderoGestaoService.ts:496-504`), não persistida.
+
+- **Populado** na ingestão e pelo botão "Atualizar" → `BorderoGestaoService.refreshCache`
+  (`:381-418`, varre todas as filiais via `listBorderos`, dedup por `borCod`).
+- **Lido** pela tela: `GET /permutas/borderos` (`routes/permutas.ts:423-433`), LIMIT 500 mais recentes;
+  `?live=true` força refresh ao vivo antes de ler (`listarBorderos`, `:295-356`).
+- **Ações** de borderô atualizam o cache na hora (`updateBorderoCacheSituacao`/`deleteBorderoCache`).
+- **Índices** do hot path em migration `0019_permuta_perf_indexes.sql`
+  (`permuta_bordero` por `bor_dta_mvto DESC, bor_cod DESC`; `permuta_alocacao_execucao(bor_cod)` parcial)
+  — Regis-Review 2026-06-24-2011, Performance P1.
+
+> O cache é **leitura derivada do ERP**, não fonte da verdade: o `fin010` continua autoritativo; o
+> cache só acelera a listagem (`READ`). As escritas (finalizar/cancelar/excluir baixa) seguem o
+> handshake gated e refletem no cache de imediato.
