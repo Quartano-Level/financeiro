@@ -11,6 +11,7 @@ import {
   DatabaseZap,
   Download,
   Layers,
+  Play,
   RefreshCw,
   Users,
 } from 'lucide-react'
@@ -25,6 +26,7 @@ import {
   fetchPermutaStatus,
   IngestaoEmAndamentoError,
   reconciliarAdiantamento,
+  reconciliarLoteAutomaticas,
   removerAlocacao,
   runIngestaoManual,
 } from '@/lib/api'
@@ -37,6 +39,7 @@ import type {
   PermutaPendente,
   PermutaRun,
   ProcessamentoStatus,
+  ReconciliarLoteResult,
   ReconciliarResult,
   RelatorioTipo,
   StatusElegibilidade,
@@ -710,6 +713,10 @@ export default function GestaoPermutasPage() {
 
   const [processando, setProcessando] = React.useState<string | null>(null)
 
+  // Execução em LOTE das automáticas (botão "Executar"): diálogo de confirmação + estado de execução.
+  const [confirmLoteOpen, setConfirmLoteOpen] = React.useState(false)
+  const [executandoLote, setExecutandoLote] = React.useState(false)
+
   // Alocação manual cross-process (Fase 2): adto + busca de invoice por processo.
   const [alocando, setAlocando] = React.useState<PermutaPendente | null>(null)
   const [buscaProcesso, setBuscaProcesso] = React.useState<string>('')
@@ -760,6 +767,36 @@ export default function GestaoPermutasPage() {
       setProcessando(null)
     }
   }, [confirmacao, load])
+
+  // Executa TODAS as automáticas de uma vez (botão "Executar") — um único request ao backend
+  // (`/reconciliar-lote`), que itera server-side com continue-on-error. O "Processar" individual
+  // segue intacto para quem quiser rodar uma a uma. Decisão 2026-06-25: roda todas, ignora filtros.
+  const executarLote = React.useCallback(async () => {
+    setConfirmLoteOpen(false)
+    setExecutandoLote(true)
+    try {
+      const r = await reconciliarLoteAutomaticas({ dryRun: false })
+      if (r.dryRun) {
+        toast.info('Escrita desabilitada no servidor (dry-run). Payloads validados, sem baixa real.')
+      } else {
+        if (r.totalSettled > 0)
+          toast.success(
+            `${r.totalSettled} baixa(s) no fin010 em ${r.borderos.length} borderô(s) (EM CADASTRO). Revise e aprove em Borderôs.`,
+          )
+        if (r.totalErros > 0)
+          toast.error(`${r.totalErros} baixa(s) falharam — os casos seguem pendentes para retry.`)
+        if (r.totalSettled === 0 && r.totalErros === 0)
+          toast.info('Nada a executar — as automáticas já estavam processadas.')
+      }
+      await load()
+    } catch (err) {
+      toast.error(
+        `Falha ao executar o lote${err instanceof Error ? `: ${err.message}` : ''}`,
+      )
+    } finally {
+      setExecutandoLote(false)
+    }
+  }, [load])
 
   // --- Alocação manual (Fase 2) ---
   // A busca é SEMPRE escopada à filial do adiantamento — o priCod não é único entre
@@ -1024,6 +1061,20 @@ export default function GestaoPermutasPage() {
   const crossProcess = (data?.pendentes ?? []).filter((p) => p.status === 'permuta-manual')
   // Casamentos automáticos (sugeridos).
   const casamentosSugeridos = data?.casamentos ?? []
+
+  // Resumo do lote de automáticas (para o diálogo de confirmação do botão "Executar"):
+  // adiantamentos ainda SEM borderô vinculado (executáveis) + total a ser usado. Cobre TODAS as
+  // automáticas (ignora filtros da tela) — o backend reconcilia o mesmo conjunto.
+  const loteResumo = React.useMemo(() => {
+    const pendentes = casamentosSugeridos.flatMap((c) =>
+      c.adiantamentos.filter(
+        (a) => !statusPorAdto[a.docCod] && a.processamentoStatus !== 'processado',
+      ),
+    )
+    const totalUsd = pendentes.reduce((s, a) => s + (a.valorASerUsado ?? 0), 0)
+    const moeda = pendentes[0]?.moeda ?? 'USD'
+    return { casos: casamentosSugeridos.length, adtos: pendentes.length, totalUsd, moeda }
+  }, [casamentosSugeridos, statusPorAdto])
 
   // Regra 2026-06-24 — múltiplas AUTOMÁTICAS (adto cobre todas as invoices, Σ ≤ adto) já vêm como
   // CASAMENTOS sintéticos do backend (pré-distribuídos) → aparecem na tabela de casamentos da aba
@@ -1839,9 +1890,26 @@ export default function GestaoPermutasPage() {
                   <p className="text-sm text-muted-foreground">
                     <strong>Automáticas</strong>: casamento direto (1 invoice ← N adiantamentos) e
                     múltiplas onde o adiantamento <strong>cobre todas as invoices</strong> do processo
-                    (adto ≥ Σ invoices) — já vêm distribuídas (adto → cada invoice). Use o Processar.
+                    (adto ≥ Σ invoices) — já vêm distribuídas (adto → cada invoice). Use o Processar
+                    para uma a uma, ou <strong>Executar</strong> para criar todos os borderôs de uma vez.
                   </p>
-                  <FiltroBarra aba={abaSimples} buscaPlaceholder="Buscar processo ou cliente…" />
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <FiltroBarra aba={abaSimples} buscaPlaceholder="Buscar processo ou cliente…" />
+                    <Button
+                      onClick={() => setConfirmLoteOpen(true)}
+                      disabled={
+                        !PROCESSAMENTO_HABILITADO || executandoLote || loteResumo.adtos === 0
+                      }
+                      title="Executar TODAS as automáticas de uma vez (cria os borderôs no ERP)"
+                    >
+                      {executandoLote ? (
+                        <Spinner aria-hidden />
+                      ) : (
+                        <Play aria-hidden />
+                      )}
+                      Executar todas ({loteResumo.adtos})
+                    </Button>
+                  </div>
                   {abaSimples.total === 0 ? (
                 <EmptyState
                   title="Nenhum casamento sugerido"
@@ -2113,6 +2181,45 @@ export default function GestaoPermutasPage() {
                       ).length
                     : 0}{' '}
                   adiantamento(s)
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Confirmação do lote — "Executar todas" as automáticas de uma vez */}
+          <Dialog open={confirmLoteOpen} onOpenChange={setConfirmLoteOpen}>
+            <DialogContent size="md">
+              <DialogHeader>
+                <DialogTitle>Executar todas as automáticas</DialogTitle>
+                <DialogDescription>
+                  Cria os borderôs de todas as automáticas de uma vez (baixa real no ERP). Esta ação
+                  é irreversível e ignora os filtros da tela.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogBody>
+                <dl className="grid grid-cols-2 gap-x-6 gap-y-3">
+                  <Campo label="Automáticas (processos)">{loteResumo.casos}</Campo>
+                  <Campo label="Adiantamentos a baixar">{loteResumo.adtos}</Campo>
+                  <Campo label="Total a ser usado">
+                    <Moeda valor={loteResumo.totalUsd} moeda={loteResumo.moeda} />
+                  </Campo>
+                </dl>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Cada adiantamento pendente vira um borderô <strong>EM CADASTRO</strong> no fin010.
+                  Os que falharem seguem pendentes para nova tentativa; os já processados são
+                  ignorados. Revise e aprove na aba <strong>Borderôs</strong>.
+                </p>
+              </DialogBody>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setConfirmLoteOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  disabled={!PROCESSAMENTO_HABILITADO || executandoLote || loteResumo.adtos === 0}
+                  onClick={() => void executarLote()}
+                >
+                  {executandoLote ? <Spinner aria-hidden /> : <Play aria-hidden />}
+                  Executar {loteResumo.adtos} adiantamento(s)
                 </Button>
               </DialogFooter>
             </DialogContent>

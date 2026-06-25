@@ -16,6 +16,7 @@ import AlocacaoPermutasService from '../domain/service/permutas/AlocacaoPermutas
 import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasService.js';
 import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasService.js';
 import RelatorioExportService from '../domain/service/permutas/RelatorioExportService.js';
+import ReconciliacaoLotePermutaService from '../domain/service/permutas/ReconciliacaoLotePermutaService.js';
 import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
 import ClienteFiltroRepository from '../domain/repository/permutas/ClienteFiltroRepository.js';
@@ -742,6 +743,75 @@ describe('GET /permutas/relatorios/:tipo', () => {
         const server = await listen(buildApp({ authenticated: false }));
         try {
             const res = await fetch(`${server.url}/permutas/relatorios/invoices`);
+            expect(res.status).toBe(401);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+describe('POST /permutas/reconciliar-lote', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    it('executa o lote das automáticas via service e devolve o agregado', async () => {
+        const reconciliarLote = jest.fn().mockResolvedValue({
+            dryRun: false,
+            writeEnabled: true,
+            totalCasos: 3,
+            totalSettled: 2,
+            totalErros: 1,
+            borderos: [100, 101],
+            resultados: [],
+        });
+        container.registerInstance(ReconciliacaoLotePermutaService, { reconciliarLote } as never);
+
+        const server = await listen(buildApp({ authenticated: true, role: 'admin' }));
+        try {
+            const res = await fetch(`${server.url}/permutas/reconciliar-lote`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ dryRun: true }),
+            });
+            const body = await readJson(res);
+            expect(res.status).toBe(200);
+            expect(body).toMatchObject({ totalCasos: 3, totalSettled: 2, borderos: [100, 101] });
+            // executadoPor = identidade autenticada; dryRun passado adiante.
+            expect(reconciliarLote).toHaveBeenCalledWith(
+                expect.objectContaining({ executadoPor: 'user-abc', dryRunOverride: true }),
+            );
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('exige role admin (403 para não-admin)', async () => {
+        const reconciliarLote = jest.fn();
+        container.registerInstance(ReconciliacaoLotePermutaService, { reconciliarLote } as never);
+
+        const server = await listen(buildApp({ authenticated: true, role: 'viewer' }));
+        try {
+            const res = await fetch(`${server.url}/permutas/reconciliar-lote`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({}),
+            });
+            expect(res.status).toBe(403);
+            expect(reconciliarLote).not.toHaveBeenCalled();
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('exige autenticação (401)', async () => {
+        const server = await listen(buildApp({ authenticated: false }));
+        try {
+            const res = await fetch(`${server.url}/permutas/reconciliar-lote`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({}),
+            });
             expect(res.status).toBe(401);
         } finally {
             await server.close();

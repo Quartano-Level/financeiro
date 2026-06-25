@@ -10,6 +10,7 @@ import type {
   InvoiceBuscada,
   PermutaRun,
   PermutaStatusResponse,
+  ReconciliarLoteResult,
   RelatorioTipo,
   ReconciliarResult,
 } from './types'
@@ -266,6 +267,33 @@ export async function reconciliarAdiantamento(
     throw new Error(`API ${res.status}${detail}`)
   }
   return (await res.json()) as ReconciliarResult
+}
+
+/**
+ * Executa em LOTE a baixa de TODAS as automáticas (aba "Automáticas") num único request —
+ * `POST /permutas/reconciliar-lote`. O backend itera server-side (continue-on-error) e devolve o
+ * agregado. Mesmo gating de escrita do reconciliar individual (dry-run por padrão).
+ */
+export async function reconciliarLoteAutomaticas(
+  opts?: { dryRun?: boolean; dataMovto?: number },
+): Promise<ReconciliarLoteResult> {
+  const res = await fetch(`${API}/permutas/reconciliar-lote`, {
+    method: 'POST',
+    headers: await withAuthHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({
+      ...(opts?.dryRun !== undefined ? { dryRun: opts.dryRun } : {}),
+      ...(opts?.dataMovto !== undefined ? { dataMovto: opts.dataMovto } : {}),
+    }),
+  })
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const j = await res.json()
+      detail = j?.error ? ` — ${j.error}` : ''
+    } catch {}
+    throw new Error(`API ${res.status}${detail}`)
+  }
+  return (await res.json()) as ReconciliarLoteResult
 }
 
 /** Memo curto do último resultado de borderôs — torna a reabertura da aba instantânea (a aba

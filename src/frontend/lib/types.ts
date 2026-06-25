@@ -271,6 +271,29 @@ export interface ReconciliarResult {
   resultados: ResultadoAlocacao[]
 }
 
+/** Status agregado de UM adiantamento dentro do lote de automáticas. */
+export type LoteAdiantamentoStatus = 'settled' | 'parcial' | 'error' | 'dry-run' | 'skipped'
+
+/** Resultado por adiantamento no lote (POST /reconciliar-lote). */
+export interface ReconciliarLoteItem {
+  adiantamentoDocCod: string
+  priCod?: string
+  status: LoteAdiantamentoStatus
+  borCod?: number
+  erro?: string
+}
+
+/** Resposta agregada do POST /reconciliar-lote (executar todas as automáticas). */
+export interface ReconciliarLoteResult {
+  dryRun: boolean
+  writeEnabled: boolean
+  totalCasos: number
+  totalSettled: number
+  totalErros: number
+  borderos: number[]
+  resultados: ReconciliarLoteItem[]
+}
+
 /** Trilha persistida de execução (GET /execucoes). */
 export interface ExecucaoPermuta {
   idempotencyKey: string
