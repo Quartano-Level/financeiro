@@ -17,6 +17,7 @@ import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasServ
 import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
 import ReconciliacaoPermutaService from '../domain/service/permutas/ReconciliacaoPermutaService.js';
+import ReconciliacaoLotePermutaService from '../domain/service/permutas/ReconciliacaoLotePermutaService.js';
 import BorderoGestaoService from '../domain/service/permutas/BorderoGestaoService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { requireRole } from '../http/auth.js';
@@ -412,6 +413,33 @@ router.post(
             adiantamentoDocCod: docCod,
             executadoPor,
             dataMovto: parsed.data.dataMovto ?? todayUtcMidnightMs(),
+            ...(parsed.data.dryRun !== undefined ? { dryRunOverride: parsed.data.dryRun } : {}),
+        });
+        res.json(result);
+    }),
+);
+
+// POST /permutas/reconciliar-lote — Fase 3: executa a BAIXA de TODAS as automáticas de uma vez
+// (cada adiantamento dos casamentos sugeridos → seu borderô). Server-side e sequencial (1 request,
+// continue-on-error). admin + heavyRouteLimiter. Mesmo gating de escrita do /reconciliar individual
+// (CONEXOS_WRITE_ENABLED/DRY_RUN) — o lote reusa o ReconciliacaoPermutaService integralmente.
+router.post(
+    '/reconciliar-lote',
+    requireRole('admin'),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = reconciliarBodySchema.safeParse(req.body ?? {});
+        if (!parsed.success) {
+            res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
+            return;
+        }
+        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const service = container.resolve(ReconciliacaoLotePermutaService);
+        const result = await service.reconciliarLote({
+            executadoPor,
+            dataMovto: parsed.data.dataMovto ?? todayUtcMidnightMs(),
+            requestId: req.requestId,
             ...(parsed.data.dryRun !== undefined ? { dryRunOverride: parsed.data.dryRun } : {}),
         });
         res.json(result);
