@@ -1176,7 +1176,12 @@ export default function GestaoPermutasPage() {
         cliente: c.invoice.importador ?? '',
         exportador: c.invoice.exportador,
         adtoDocCod: a.docCod,
-        valor: a.valorASerUsado ?? null,
+        // `valorASerUsado` zera quando a automática FINALIZA (a invoice foi abatida). Nesse caso usa o
+        // valor negociado do PRÓPRIO adiantamento (estável), pra não mostrar 0 no histórico.
+        valor:
+          (a.valorASerUsado ?? 0) > 0
+            ? a.valorASerUsado
+            : (pendenteByDocCod.get(a.docCod)?.valorMoedaNegociada ?? a.valorASerUsado ?? null),
         moeda: a.moeda ?? c.invoice.moeda,
         borCod: v.borCod,
         finalizado: v.permutaStatus === 'finalizado',
@@ -1994,7 +1999,15 @@ export default function GestaoPermutasPage() {
 
           {/* Casamento — sugerido (auto 1:N) × manual (N:M), alternados por aba */}
           <Card>
-            <Tabs defaultValue="automaticas">
+            <Tabs
+              defaultValue="automaticas"
+              onValueChange={(v) => {
+                // Auto-reload ao abrir uma aba de trabalho/histórico: rebusca os vínculos (status) do
+                // NOSSO banco — é o que move as linhas entre trabalho/histórico e atualiza os badges.
+                // (A aba Borderôs já se recarrega sozinha ao montar.)
+                if (v !== 'borderos') void carregarStatus()
+              }}
+            >
               <CardHeader>
                 <TabsList>
                   <TabsTrigger value="automaticas">
