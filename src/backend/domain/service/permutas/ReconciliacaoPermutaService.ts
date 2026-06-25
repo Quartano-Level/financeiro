@@ -15,6 +15,13 @@ import LogService from '../LogService.js';
 /** Conta gerencial do juros = VARIAÇÃO CAMBIAL PASSIVA REALIZADA (HAR + ontologia). */
 const CONTA_GER_JUROS = 131;
 const GER_DES_JUROS = 'VARIAÇÃO CAMBIAL PASSIVA REALIZADA';
+/**
+ * Conta gerencial do DESCONTO = VARIAÇÃO CAMBIAL ATIVA REALIZADA (ontologia: 130 = ATIVA = DESCONTO,
+ * taxa caiu). OBRIGATÓRIA quando a baixa tem desconto: sem ela o ERP grava a baixa mas RECUSA a
+ * FINALIZAÇÃO do borderô com "CONTA DE DESCONTO NÃO INFORMADA" (sonda HAR 2026-06-25, borderô 14918).
+ */
+const CONTA_GER_DESCONTO = 130;
+const GER_DES_DESCONTO = 'VARIAÇÃO CAMBIAL ATIVA REALIZADA';
 
 /**
  * Arredonda para 2 casas decimais. OBRIGATÓRIO em todo valor monetário enviado ao `fin010`
@@ -288,7 +295,8 @@ export default class ReconciliacaoPermutaService {
         if (!perm)
             throw new Error(`adiantamento ${adiantamentoDocCod} sem dados de permuta no ERP`);
 
-        // JUROS vai em bxaMnyJuros (conta 131); DESCONTO vai em bxaMnyDesconto (conta do ERP).
+        // JUROS → bxaMnyJuros (conta 131); DESCONTO → bxaMnyDesconto (conta 130, constante — o ERP
+        // rejeitava a finalização sem ela). A conta vai SÓ no lado ativo (a outra fica null).
         // ARREDONDAR a 2 casas (sonda real 2026-06-23): o ERP rejeita money com >2 decimais
         // (CnxValidatorMny precision_not_supported). A variação cambial vem com ruído de ponto
         // flutuante (ex.: 1000×(5.2887−4.9806)=308.1000000000005) → round2 em todo valor monetário.
@@ -328,8 +336,6 @@ export default class ReconciliacaoPermutaService {
             bxaMnyLiquido,
             perm,
             comentario,
-            descontoGerCod: val2.responseData?.bxaCodGerDesconto,
-            descontoGerDes: val2.responseData?.gerDesDesconto,
         });
         await this.execucaoRepository.setRequestPayload(key, payload);
 
@@ -339,7 +345,7 @@ export default class ReconciliacaoPermutaService {
             bxaCodSeq: baixa.bxaCodSeq,
             valorBaixado: bxaMnyValor,
             juros,
-            contaJuros: isDesconto ? (val2.responseData?.bxaCodGerDesconto ?? 0) : CONTA_GER_JUROS,
+            contaJuros: isDesconto ? CONTA_GER_DESCONTO : CONTA_GER_JUROS,
             erpResponse: baixa,
         });
         await this.logService.info({
@@ -378,8 +384,6 @@ export default class ReconciliacaoPermutaService {
             bxaMnyValorPermuta?: number;
         };
         comentario?: string;
-        descontoGerCod?: number;
-        descontoGerDes?: string;
     }): Record<string, unknown> => ({
         bxaVldSistema: 0,
         docTip: 2,
@@ -396,13 +400,16 @@ export default class ReconciliacaoPermutaService {
         docCod: p.invoiceDocCod,
         titCod: 1,
         bxaMnyDesconto: p.desconto,
-        bxaCodGerDesconto: p.descontoGerCod ?? null,
-        gerDesDesconto: p.descontoGerDes ?? null,
+        // Conta da variação cambial: setar a conta SÓ do lado ativo (a outra fica null), espelhando o
+        // padrão validado da baixa de juros. DESCONTO sem `bxaCodGerDesconto` faz o ERP recusar a
+        // FINALIZAÇÃO ("CONTA DE DESCONTO NÃO INFORMADA"). Conta 130 = VAR. CAMBIAL ATIVA = DESCONTO.
+        bxaCodGerDesconto: p.desconto > 0 ? CONTA_GER_DESCONTO : null,
+        gerDesDesconto: p.desconto > 0 ? GER_DES_DESCONTO : null,
         bxaMnyValor: p.bxaMnyValor,
         bxaMnyMulta: 0,
         bxaMnyJuros: p.juros,
-        bxaCodGerJuros: CONTA_GER_JUROS,
-        gerDesJuros: GER_DES_JUROS,
+        bxaCodGerJuros: p.juros > 0 ? CONTA_GER_JUROS : null,
+        gerDesJuros: p.juros > 0 ? GER_DES_JUROS : null,
         bxaMnyLiquido: p.bxaMnyLiquido,
         // Comentário do borderô (spec do analista) — conta da variação cambial.
         bxaEspComplemento: p.comentario ?? null,
@@ -428,7 +435,9 @@ export default class ReconciliacaoPermutaService {
     ): string => {
         const isDesconto = aloc.variacaoClassificacao === 'DESCONTO';
         const tipo = isDesconto ? 'Desconto' : 'Juros';
-        const conta = isDesconto ? 'conta desconto' : `conta ${CONTA_GER_JUROS} (${GER_DES_JUROS})`;
+        const conta = isDesconto
+            ? `conta ${CONTA_GER_DESCONTO} (${GER_DES_DESCONTO})`
+            : `conta ${CONTA_GER_JUROS} (${GER_DES_JUROS})`;
         const moeda = aloc.moeda ?? 'USD';
         const partes: string[] = [
             `Permuta adto ${aloc.adiantamentoDocCod} x invoice ${aloc.invoiceDocCod}.`,
@@ -462,7 +471,8 @@ export default class ReconciliacaoPermutaService {
             classificacao: aloc.variacaoClassificacao ?? null,
             bxaMnyJuros: isDesconto ? 0 : valorVariacao,
             bxaMnyDesconto: isDesconto ? valorVariacao : 0,
-            bxaCodGerJuros: CONTA_GER_JUROS,
+            bxaCodGerJuros: isDesconto ? null : CONTA_GER_JUROS,
+            bxaCodGerDesconto: isDesconto ? CONTA_GER_DESCONTO : null,
             taxaAdiantamento: aloc.taxaAdiantamento ?? null,
             taxaInvoice: aloc.taxaInvoice ?? null,
             bxaEspComplemento: this.buildComentario(
