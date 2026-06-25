@@ -25,6 +25,7 @@ properties:
   - estadoElegibilidade
   - motivoBloqueio
   - tipoPermuta
+  - autoElegivel
   - gatesAvaliados
 relationships:
   - "PermutaCandidata 1—1 Adiantamento (lado-débito)"
@@ -33,13 +34,14 @@ relationships:
   - "PermutaCandidata 1—1 VariacaoCambial (derivada)"
   - "PermutaCandidata 1—* Permuta (alocação consumada; permuta-manual/casamento-manual originam alocações, ADR-0008)"
 state_machine: elegibilidade-permuta-candidata
-last_review: 2026-06-22
+last_review: 2026-06-24
 universality_evidence:
   - "docs-contexto/03_ontologia_financeiro.md §2 Frente I (backlog elegível com aging)"
   - "ontology/glossary.md — 'Backlog elegível' / 'Pendência bloqueada'"
   - "Interview permutas-painel-elegiveis Axis 1 — pendência elegível (NÃO executada nesta fatia)"
   - "Columbia (priCod=1153): PDF processo 2048"
   - "ADR-0010 — auto-casamento Simples N:1 parcial (greedy + teto da invoice); caso 1408 ZNSHINE"
+  - "ADR-0014 — múltipla AUTOMÁTICA + reclassificação ultrapassa-invoice; flag derivada autoElegivel; aba 'Simples'→'Automáticas'"
 ---
 
 # PermutaCandidata
@@ -79,7 +81,8 @@ contada como falha — ver glossary "Pendência bloqueada").
 | `aging` | number (dias) | derivado | Âncora = data-base (P0-8 RESOLVIDO); `aging = hoje − dataBase`. Leitura da data-base RESOLVIDA (P0-4, probe 2026-06-18) — coluna aging popula. |
 | `estadoElegibilidade` | enum | máquina de estado | `descoberta \| elegivel \| casamento-manual \| permuta-manual \| bloqueada` (ver state-machine; `casamento-manual` = N:M pós-4-gates mesmo processo, ADR-0005; `permuta-manual` = cliente-filtro cross-process, ADR-0007). |
 | `motivoBloqueio` | enum? | `casarInvoice` / `avaliarElegibilidade` / `EleicaoPermutasService` | Motivo informativo. Para `bloqueada`: `sem-invoice \| falha-gate \| data-base-indisponivel \| detail-indisponivel`. Para `casamento-manual`: `composto-nm \| multiplas-invoices` (N:M, ADR-0005). Para `permuta-manual`: `cliente-filtro` (ADR-0007). |
-| `tipoPermuta` | enum (derivado) | `GestaoPermutasService` | **Não persiste** (apresentação/abas). `simples \| multiplas \| cross-over \| cross-process`, derivado do estado + cardinalidade do processo (ADR-0009). |
+| `tipoPermuta` | enum (derivado) | `GestaoPermutasService` | **Não persiste** (apresentação/abas). `simples \| multiplas \| cross-over \| cross-process`, derivado do estado + cardinalidade do processo (ADR-0009). **ADR-0014:** pode ser **reclassificado** quando o casamento simples ultrapassa a invoice (`simples → cross-over/multiplas`, `GestaoPermutasService.ts:309-320`). |
+| `autoElegivel` | boolean? (derivado) | `GestaoPermutasService.toPendente` | **Não persiste** (apresentação). `true` quando a múltipla (1 adto casamento-manual no processo) **cobre todas as invoices** do processo (`saldoNeg + 1 ≥ Σ invoices`, USD) → vira **AUTOMÁTICA** (`GestaoPermutasService.ts:322-335`, ADR-0014). Ver `business-rules/multipla-automatica.md`. |
 | `gatesAvaliados` | registro | `avaliarElegibilidade` | Resultado de cada um dos 4 gates (auditoria I5). |
 
 ## Cardinalidade — 1:1 vs N:M (P0-5/P0-6 — RESOLVIDO)

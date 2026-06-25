@@ -76,6 +76,18 @@ adiantamento em USD contra uma invoice em BRL (o saldo e a variação cambial n�
 filtra o dropdown para invoices na moeda do adiantamento (D.I + mesma moeda); invoices em outra moeda são
 omitidas (com aviso). Rede de segurança no backend: `alocar` rejeita `adto.moedaNegociada ≠ invoice.moeda`.
 
+## Adendo (2026-06-24, ADR-0014): aba "Simples" → "Automáticas"
+
+A aba **Simples** foi renomeada para **Automáticas** e passou a englobar dois casos auto-executáveis:
+(1) o casamento simples 1:1 / greedy N:1 (ADR-0010) e (2) a **múltipla AUTOMÁTICA** — `casamento-manual`
+único do processo cujo adto cobre todas as invoices (`saldoNeg + 1 ≥ Σ invoices`), exposto como
+**casamentos sintéticos pré-distribuídos** (`GestaoPermutasService.ts:144-173`). Nos dois, "Processar"
+dispara a baixa real **auto-alocada** (atômica). Em sentido inverso, um casamento simples que
+**ultrapassa** o em-aberto da invoice é **reclassificado** para `cross-over`/`multiplas` (sai das
+Automáticas para revisão manual; `GestaoPermutasService.ts:219-251, 309-320`). Ver
+`business-rules/multipla-automatica.md`, `business-rules/reclassificacao-ultrapassa-invoice.md`,
+`business-rules/auto-alocacao-atomica.md`. Continua tudo **DERIVADO** (sem novo estado no banco).
+
 ## Alternativas descartadas
 
 - **3 abas (cross-process dentro de cross-over):** rejeitado — misturaria mesmo-processo com cross-process

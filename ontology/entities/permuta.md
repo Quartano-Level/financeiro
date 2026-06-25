@@ -1,15 +1,19 @@
 ---
 name: Permuta
 type: entity
-ontology_version: "0.2"
+ontology_version: "0.4"
 implementation_status: partial
 status: draft
 owners: [yuri]
 related_files:
   - src/backend/migrations/0014_permuta_alocacao.sql
+  - src/backend/migrations/0018_permuta_bordero_cache.sql
+  - src/backend/migrations/0019_permuta_perf_indexes.sql
   - src/backend/domain/repository/permutas/PermutaAlocacaoRepository.ts
   - src/backend/domain/service/permutas/AlocacaoPermutasService.ts
   - src/backend/domain/service/permutas/GestaoPermutasService.ts
+  - src/backend/domain/service/permutas/BorderoGestaoService.ts
+  - src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts
   - src/backend/routes/permutas.ts
   - src/frontend/app/permutas/page.tsx
 properties:
@@ -29,11 +33,12 @@ relationships:
   - "Permuta N—1 Invoice (lado-crédito, via invoiceDocCod — pode ser de OUTRO processo, cross-process)"
   - "Permuta 1—1 VariacaoCambial (derivada pela taxa da invoice sobre o valor PARCIAL alocado)"
   - "Permuta *—1 PermutaCandidata (a candidata em permuta-manual/casamento-manual é a origem da alocação)"
-last_review: 2026-06-22
+last_review: 2026-06-24
 universality_evidence:
   - "ADR-0008 — alocação manual N:M cross-process (a Permuta consumada nasce como ALOCAÇÃO)"
   - "ADR-0010 — o auto-casamento Simples também ficou PARCIAL (mesma semântica de teto/residual)"
   - "ADR-0004 — a Permuta consumada já era backlog explícito da Fatia 2 (Etapa 6 / BAIXAS PERMUTAS)"
+  - "ADR-0014 — múltipla automática (adto cobre todas as invoices), auto-alocação atômica no Baixar, ciclo de vida do borderô"
   - "docs-contexto/03_ontologia_financeiro.md §2 Frente I — reconciliação PROFORMA × INVOICE"
   - "ontology/glossary.md — 'Permuta' (reconciliação adiantamento ↔ invoice)"
   - "Columbia + INOX-TECH (priCod=1153): cross-process N:M validado com o time (2026-06-20), 290 adtos + 21 invoices, 0 D.I no processo"
@@ -135,3 +140,42 @@ calcula `saldoRestante` (saldo − Σ alocado) e expõe as `alocacoes` por adian
 - **Pendente de validação em produção:** o 1º caso real controlado (reversível, com o analista
   acompanhando). Casos ainda não observados no ERP: baixa **parcial** (invoice N:M), finalização do
   borderô, `DESCONTO`.
+
+## v0.7.0 (2026-06-24, ADR-0014) — classificação automática, atomicidade e ciclo do borderô
+
+### Múltipla AUTOMÁTICA (adto cobre todas as invoices do processo)
+Um `casamento-manual` único do processo (`tipoPermuta = multiplas`) cujo `saldoNeg` cobre `Σ` das
+invoices do processo (`saldoNeg + 1 ≥ Σ`, USD) é promovido a **AUTOMÁTICA**: na aba "Automáticas"
+aparece como **casamentos sintéticos pré-distribuídos** (adto → cada invoice, valor cheio) e
+"Processar" vira baixa real auto-alocada. Σ invoices > adto → segue manual. Não se aplica a
+`cross-over` nem aos reclassificados. Ver `business-rules/multipla-automatica.md`.
+Código: `GestaoPermutasService.ts:322-335` (autoElegivel), `:144-173` (synth);
+`AlocacaoPermutasService.autoAlocarSeElegivel` (`:300-349`).
+
+### Reclassificação "ultrapassa invoice"
+Casamento simples cujos adtos ultrapassam o em-aberto da invoice (`Σ saldoNeg − Σ valorASerUsado > 1`)
+cai para manual: N adtos → `cross-over`; 1 adto → `multiplas`. Ver
+`business-rules/reclassificacao-ultrapassa-invoice.md`. Código:
+`GestaoPermutasService.adtosQueUltrapassamInvoice` (`:219-251`).
+
+### Auto-alocação no Baixar (ATÔMICA)
+"Processar"/Baixar de caso automático sem rascunho cria os rascunhos de `permuta_alocacao` sozinho
+(do casamento simples OU do processo na múltipla) antes da baixa, **all-or-nothing** — falha parcial
+reverte (sem meia-permuta). Ver `business-rules/auto-alocacao-atomica.md`. Código:
+`AlocacaoPermutasService.criarRascunhosAtomico` (`:357-391`), gatilho em
+`ReconciliacaoPermutaService.ts:97-109`. Novo invariante **I-Permuta-8**.
+
+### Status PERMUTA → BORDERÔ (ciclo de vida)
+Por adiantamento com baixa `settled`: borderô EM CADASTRO → `aguardando-finalizacao`; FINALIZADO →
+`finalizado`; CANCELADO/ESTORNADO/REMOVIDO → a permuta **reabre** (volta a `pendente`). Consulta lazy
+`GET /permutas/status` (`routes/permutas.ts:579-587`), separada do `/gestao`. Ver
+`state-machines/status-permuta-bordero.md`. Código: `BorderoGestaoService.statusPorAdiantamento`
+(`:429-487`). **Estorno e "Liberar" removidos da UI** (sem borderô travado; `removerDaTrilha`
+removido — risco de dupla-baixa, Regis-Review R-1 P0).
+
+### Cache de borderôs (`permuta_bordero`)
+Cache local dos borderôs de permuta do `fin010` (`borVldTipo=2`) — tabela `permuta_bordero` (migration
+`0018`), populada na ingestão (`BorderoGestaoService.refreshCache`, `:381-418`), lida pela aba
+Borderôs do banco (LIMIT 500 recentes, `GET /permutas/borderos`; `?live=true` = refresh ao vivo). As
+ações de borderô atualizam o cache na hora; índices do hot path em migration `0019`. A situação viva
+(em cadastro/finalizado/cancelado/estornado) é derivada na leitura (`situacaoDoItem`, `:496-504`).
