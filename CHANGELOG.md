@@ -1,5 +1,12 @@
 # Columbia Financeiro — Changelog
 
+## v0.7.1 (2026-06-25)
+
+- **fix(permutas):** baixa de **DESCONTO** agora grava a **conta de desconto (130 = VAR. CAMBIAL
+  ATIVA)** — antes ia `null`, e o ERP gravava a baixa mas **recusava a finalização do borderô** com
+  "CONTA DE DESCONTO NÃO INFORMADA". A conta da variação cambial vai só no lado ativo (JUROS→131,
+  DESCONTO→130). Corrige também a ontologia (`fin010-write-contract.md` I-Write-2 dizia 94, errado).
+
 ## v0.7.0 (2026-06-24) — Permutas: cliente, universo de invoices, ciclo de borderô e cache
 
 - **feat(permutas):** reclassificação automática — múltiplas onde o adiantamento **cobre todas as
