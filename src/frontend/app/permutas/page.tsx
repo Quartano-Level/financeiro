@@ -90,6 +90,11 @@ import {
  */
 const PROCESSAMENTO_HABILITADO = true
 
+/** Tamanho máximo do lote por clique em "Executar" — espelha o cap server-side (LOTE_MAX no backend).
+ * Mantém cada execução curta (longe do timeout do proxy) e limita o blast radius; o analista clica
+ * de novo para o próximo lote até zerar. */
+const LOTE_MAX = 10
+
 /** Rótulos legíveis para os motivos de bloqueio do snapshot. */
 const MOTIVO_LABEL: Record<string, string> = {
   'nao-pago': 'Não totalmente pago',
@@ -768,35 +773,39 @@ export default function GestaoPermutasPage() {
     }
   }, [confirmacao, load])
 
-  // Executa TODAS as automáticas de uma vez (botão "Executar") — um único request ao backend
-  // (`/reconciliar-lote`), que itera server-side com continue-on-error. O "Processar" individual
-  // segue intacto para quem quiser rodar uma a uma. Decisão 2026-06-25: roda todas, ignora filtros.
-  const executarLote = React.useCallback(async () => {
-    setConfirmLoteOpen(false)
-    setExecutandoLote(true)
-    try {
-      const r = await reconciliarLoteAutomaticas({ dryRun: false })
-      if (r.dryRun) {
-        toast.info('Escrita desabilitada no servidor (dry-run). Payloads validados, sem baixa real.')
-      } else {
-        if (r.totalSettled > 0)
-          toast.success(
-            `${r.totalSettled} baixa(s) no fin010 em ${r.borderos.length} borderô(s) (EM CADASTRO). Revise e aprove em Borderôs.`,
-          )
-        if (r.totalErros > 0)
-          toast.error(`${r.totalErros} baixa(s) falharam — os casos seguem pendentes para retry.`)
-        if (r.totalSettled === 0 && r.totalErros === 0)
-          toast.info('Nada a executar — as automáticas já estavam processadas.')
+  // Executa o PRÓXIMO LOTE de automáticas (até LOTE_MAX) — um request ao backend (`/reconciliar-lote`),
+  // que itera server-side com continue-on-error e capa em LOTE_MAX. Manda os "próximos N" pendentes; ao
+  // recarregar, os baixados ganham borderô e somem da contagem → o analista clica de novo até zerar. O
+  // "Processar" individual segue intacto. Decisão 2026-06-25: ignora filtros; lotes de 10 em 10.
+  const executarLote = React.useCallback(
+    async (docCods: string[], totalPendentes: number) => {
+      setConfirmLoteOpen(false)
+      setExecutandoLote(true)
+      try {
+        const r = await reconciliarLoteAutomaticas({ dryRun: false, adiantamentoDocCods: docCods })
+        const restantes = Math.max(0, totalPendentes - r.totalCasos)
+        const sufixoRestante = restantes > 0 ? ` Restam ${restantes} — clique em Executar de novo.` : ''
+        if (r.dryRun) {
+          toast.info('Escrita desabilitada no servidor (dry-run). Payloads validados, sem baixa real.')
+        } else {
+          if (r.totalSettled > 0)
+            toast.success(
+              `${r.totalSettled} baixa(s) no fin010 em ${r.borderos.length} borderô(s) (EM CADASTRO).${sufixoRestante}`,
+            )
+          if (r.totalErros > 0)
+            toast.error(`${r.totalErros} baixa(s) falharam — os casos seguem pendentes para retry.`)
+          if (r.totalSettled === 0 && r.totalErros === 0)
+            toast.info('Nada a executar — as automáticas já estavam processadas.')
+        }
+        await load()
+      } catch (err) {
+        toast.error(`Falha ao executar o lote${err instanceof Error ? `: ${err.message}` : ''}`)
+      } finally {
+        setExecutandoLote(false)
       }
-      await load()
-    } catch (err) {
-      toast.error(
-        `Falha ao executar o lote${err instanceof Error ? `: ${err.message}` : ''}`,
-      )
-    } finally {
-      setExecutandoLote(false)
-    }
-  }, [load])
+    },
+    [load],
+  )
 
   // --- Alocação manual (Fase 2) ---
   // A busca é SEMPRE escopada à filial do adiantamento — o priCod não é único entre
@@ -1066,14 +1075,28 @@ export default function GestaoPermutasPage() {
   // adiantamentos ainda SEM borderô vinculado (executáveis) + total a ser usado. Cobre TODAS as
   // automáticas (ignora filtros da tela) — o backend reconcilia o mesmo conjunto.
   const loteResumo = React.useMemo(() => {
-    const pendentes = casamentosSugeridos.flatMap((c) =>
-      c.adiantamentos.filter(
-        (a) => !statusPorAdto[a.docCod] && a.processamentoStatus !== 'processado',
-      ),
-    )
-    const totalUsd = pendentes.reduce((s, a) => s + (a.valorASerUsado ?? 0), 0)
-    const moeda = pendentes[0]?.moeda ?? 'USD'
-    return { casos: casamentosSugeridos.length, adtos: pendentes.length, totalUsd, moeda }
+    // Pendentes = adtos das automáticas SEM borderô vinculado e não-processados. Dedup por docCod.
+    const vistos = new Set<string>()
+    const pendentes: { docCod: string; valorASerUsado?: number; moeda?: string }[] = []
+    for (const c of casamentosSugeridos) {
+      for (const a of c.adiantamentos) {
+        if (statusPorAdto[a.docCod] || a.processamentoStatus === 'processado') continue
+        if (vistos.has(a.docCod)) continue
+        vistos.add(a.docCod)
+        pendentes.push(a)
+      }
+    }
+    // Próximo lote = os primeiros LOTE_MAX pendentes (o backend capa no mesmo número).
+    const proximos = pendentes.slice(0, LOTE_MAX)
+    const totalUsd = proximos.reduce((s, a) => s + (a.valorASerUsado ?? 0), 0)
+    return {
+      casos: casamentosSugeridos.length,
+      adtos: pendentes.length,
+      proximosN: proximos.length,
+      proximosDocCods: proximos.map((a) => a.docCod),
+      totalUsd,
+      moeda: proximos[0]?.moeda ?? 'USD',
+    }
   }, [casamentosSugeridos, statusPorAdto])
 
   // Regra 2026-06-24 — múltiplas AUTOMÁTICAS (adto cobre todas as invoices, Σ ≤ adto) já vêm como
@@ -1900,14 +1923,11 @@ export default function GestaoPermutasPage() {
                       disabled={
                         !PROCESSAMENTO_HABILITADO || executandoLote || loteResumo.adtos === 0
                       }
-                      title="Executar TODAS as automáticas de uma vez (cria os borderôs no ERP)"
+                      title={`Executar as próximas ${loteResumo.proximosN} automáticas (lotes de até ${LOTE_MAX}; cria os borderôs no ERP)`}
                     >
-                      {executandoLote ? (
-                        <Spinner aria-hidden />
-                      ) : (
-                        <Play aria-hidden />
-                      )}
-                      Executar todas ({loteResumo.adtos})
+                      {executandoLote ? <Spinner aria-hidden /> : <Play aria-hidden />}
+                      Executar próximas {loteResumo.proximosN}
+                      {loteResumo.adtos > loteResumo.proximosN ? ` de ${loteResumo.adtos}` : ''}
                     </Button>
                   </div>
                   {abaSimples.total === 0 ? (
@@ -2190,22 +2210,23 @@ export default function GestaoPermutasPage() {
           <Dialog open={confirmLoteOpen} onOpenChange={setConfirmLoteOpen}>
             <DialogContent size="md">
               <DialogHeader>
-                <DialogTitle>Executar todas as automáticas</DialogTitle>
+                <DialogTitle>Executar próximas {loteResumo.proximosN} automáticas</DialogTitle>
                 <DialogDescription>
-                  Cria os borderôs de todas as automáticas de uma vez (baixa real no ERP). Esta ação
-                  é irreversível e ignora os filtros da tela.
+                  Cria os borderôs deste lote (baixa real no ERP). A execução é em lotes de até{' '}
+                  {LOTE_MAX} — clique de novo para os próximos. Esta ação é irreversível e ignora os
+                  filtros da tela.
                 </DialogDescription>
               </DialogHeader>
               <DialogBody>
                 <dl className="grid grid-cols-2 gap-x-6 gap-y-3">
-                  <Campo label="Automáticas (processos)">{loteResumo.casos}</Campo>
-                  <Campo label="Adiantamentos a baixar">{loteResumo.adtos}</Campo>
-                  <Campo label="Total a ser usado">
+                  <Campo label="Neste lote">{loteResumo.proximosN}</Campo>
+                  <Campo label="Automáticas pendentes (total)">{loteResumo.adtos}</Campo>
+                  <Campo label="Total a ser usado (lote)">
                     <Moeda valor={loteResumo.totalUsd} moeda={loteResumo.moeda} />
                   </Campo>
                 </dl>
                 <p className="mt-3 text-xs text-muted-foreground">
-                  Cada adiantamento pendente vira um borderô <strong>EM CADASTRO</strong> no fin010.
+                  Cada adiantamento deste lote vira um borderô <strong>EM CADASTRO</strong> no fin010.
                   Os que falharem seguem pendentes para nova tentativa; os já processados são
                   ignorados. Revise e aprove na aba <strong>Borderôs</strong>.
                 </p>
@@ -2215,11 +2236,11 @@ export default function GestaoPermutasPage() {
                   Cancelar
                 </Button>
                 <Button
-                  disabled={!PROCESSAMENTO_HABILITADO || executandoLote || loteResumo.adtos === 0}
-                  onClick={() => void executarLote()}
+                  disabled={!PROCESSAMENTO_HABILITADO || executandoLote || loteResumo.proximosN === 0}
+                  onClick={() => void executarLote(loteResumo.proximosDocCods, loteResumo.adtos)}
                 >
                   {executandoLote ? <Spinner aria-hidden /> : <Play aria-hidden />}
-                  Executar {loteResumo.adtos} adiantamento(s)
+                  Executar {loteResumo.proximosN} adiantamento(s)
                 </Button>
               </DialogFooter>
             </DialogContent>

@@ -4,7 +4,7 @@ import type GestaoPermutasService from './GestaoPermutasService.js';
 import type ReconciliacaoPermutaService from './ReconciliacaoPermutaService.js';
 import type { ReconciliarResult } from './ReconciliacaoPermutaService.js';
 import type LogService from '../LogService.js';
-import ReconciliacaoLotePermutaService from './ReconciliacaoLotePermutaService.js';
+import ReconciliacaoLotePermutaService, { LOTE_MAX } from './ReconciliacaoLotePermutaService.js';
 
 const buildLog = () => ({ info: jest.fn().mockResolvedValue(undefined) }) as unknown as LogService;
 
@@ -222,5 +222,49 @@ describe('ReconciliacaoLotePermutaService.reconciliarLote', () => {
         expect(out.totalSettled).toBe(0);
         expect(out.totalErros).toBe(0);
         expect(out.resultados.every((r) => r.status === 'skipped')).toBe(true);
+    });
+
+    it(`capa o lote em LOTE_MAX (${LOTE_MAX}) por requisição`, async () => {
+        // 12 automáticas (1 adto cada) → só as primeiras LOTE_MAX são reconciliadas.
+        const muitos = Array.from({ length: 12 }, (_, i) => ({
+            priCod: `p${i}`,
+            invoice: invoiceStub(`I${i}`),
+            adiantamentos: [
+                { docCod: `D${i}`, referencia: `CT/${i}`, valorASerUsado: 100, moeda: 'USD' },
+            ],
+        }));
+        const { service, reconciliar } = buildService(
+            async (docCod) => resultSettled(docCod, 1),
+            gestaoComCasamentos(muitos),
+        );
+        const out = await service.reconciliarLote({
+            executadoPor: 'u',
+            dataMovto: 1,
+            requestId: 'r',
+        });
+        expect(reconciliar).toHaveBeenCalledTimes(LOTE_MAX);
+        expect(out.totalCasos).toBe(LOTE_MAX);
+        // Roda os primeiros da ordem (D0..D9), não D10/D11.
+        expect(out.resultados.map((r) => r.adiantamentoDocCod)).toEqual(
+            Array.from({ length: LOTE_MAX }, (_, i) => `D${i}`),
+        );
+    });
+
+    it('adiantamentoDocCods: executa só o subconjunto, interseccionado com as automáticas', async () => {
+        const chamados: string[] = [];
+        const { service } = buildService(async (docCod) => {
+            chamados.push(docCod);
+            return resultSettled(docCod, 1);
+        });
+        // Pede 19019 + 9026 + um docCod que NÃO é automática (XXX, ignorado).
+        const out = await service.reconciliarLote({
+            executadoPor: 'u',
+            dataMovto: 1,
+            requestId: 'r',
+            adiantamentoDocCods: ['19019', '9026', 'XXX-nao-automatica'],
+        });
+        // Só os que são de fato automáticas rodam; XXX é descartado. 11821 não foi pedido.
+        expect(chamados.sort()).toEqual(['19019', '9026']);
+        expect(out.totalCasos).toBe(2);
     });
 });

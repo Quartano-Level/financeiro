@@ -39,6 +39,12 @@ const reconciliarBodySchema = z.object({
     dryRun: z.boolean().optional(),
 });
 
+/** Zod no boundary — corpo do POST /reconciliar-lote (baixa em lote das automáticas). */
+const reconciliarLoteBodySchema = reconciliarBodySchema.extend({
+    /** Subconjunto a executar (os "próximos N" da tela). Interseccionado + capado no serviço. */
+    adiantamentoDocCods: z.array(z.string().trim().min(1)).optional(),
+});
+
 /**
  * Extrai uma mensagem AMIGÁVEL de um erro vindo do ERP (Conexos). As validações do `fin010`
  * voltam em `cause.response.data.messages[*].message` (ex.: FIN_IMPOSSIVEL_ALTERAR_REGISTRO
@@ -453,7 +459,7 @@ router.post(
     heavyRouteLimiter,
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
-        const parsed = reconciliarBodySchema.safeParse(req.body ?? {});
+        const parsed = reconciliarLoteBodySchema.safeParse(req.body ?? {});
         if (!parsed.success) {
             res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
             return;
@@ -465,6 +471,9 @@ router.post(
             dataMovto: parsed.data.dataMovto ?? todayUtcMidnightMs(),
             requestId: req.requestId,
             ...(parsed.data.dryRun !== undefined ? { dryRunOverride: parsed.data.dryRun } : {}),
+            ...(parsed.data.adiantamentoDocCods !== undefined
+                ? { adiantamentoDocCods: parsed.data.adiantamentoDocCods }
+                : {}),
         });
         res.json(result);
     }),

@@ -5,6 +5,17 @@
 **Resolvido nesta fatia:** log message → inglês (PatternGuardian). Identificadores em PT mantidos por
 consistência com a camada de serviço (`reconciliar`/`exporGestao`/…).
 
+### ✅ Mitigação adicionada (2026-06-25): cap de lote `LOTE_MAX=10`
+Decisão do Yuri: o "Executar" roda em **lotes de até 10 por clique** (cap server-side autoritativo em
+`ReconciliacaoLotePermutaService.LOTE_MAX`; a tela manda os "próximos 10" pendentes; o analista clica de
+novo até zerar). Impacto nos P1:
+- **`security-1` (cap blast radius) → RESOLVIDO.** Cap server-side de 10 por requisição.
+- **`performance-1` / `availability-1` → MUITO MITIGADOS.** Cada request agora é ≤10 casos × ~5 chamadas
+  ERP ≈ ≤25s — confortavelmente abaixo do timeout do proxy (~100s). Job assíncrono deixa de ser urgente
+  (só volta a ser relevante se quiserem 1-clique-roda-tudo). **Rebaixar `performance-1`/`availability-1` para P2/P3.**
+- **`fault-tolerance-1/2/3` (re-fire órfão) → menos expostos** (request curto = janela de timeout/órfão menor),
+  mas o risco de fundo (par `reconciling` no `reconciliar`) permanece — segue como follow-up.
+
 > ⚠️ Esta é uma feature de ESCRITA financeira. Os P1 abaixo NÃO bloqueiam (a escrita é gated por
 > `CONEXOS_WRITE_ENABLED`/`CONEXOS_DRY_RUN`, cada par é idempotente write-ahead e o borderô fica EM
 > CADASTRO aguardando aprovação humana), mas o cluster de risco merece priorização antes de escala.
