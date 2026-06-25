@@ -1,5 +1,22 @@
 # Columbia Financeiro — Changelog
 
+## v0.8.0 (2026-06-25) — Permutas: relatórios, execução em lote e fix do filtro de filial
+
+> Consolidação dos PRs #9, #10 e #11 num único release.
+
+- **feat(permutas):** exportação Excel (.xlsx) dos KPIs e relatórios do painel — Adiantamentos,
+  Invoices, Já permutado e Bloqueadas no nível de detalhe de cada documento, mais dois relatórios
+  analíticos derivados (Reconciliação por processo e Quebra por cliente). Novo endpoint READ-ONLY
+  `GET /permutas/relatorios/:tipo` (reusa o snapshot do `/gestao`; serialização via exceljs) e botão
+  "Exportar" no header do painel (um arquivo por relatório).
+- **feat(permutas):** botão **"Executar"** na aba Automáticas — cria os borderôs das automáticas em
+  **lotes de até 10 por clique** (cap server-side; baixa real no `fin010`). Novo endpoint
+  `POST /permutas/reconciliar-lote` (admin + heavyRouteLimiter) orquestrando `reconciliarPermuta` adto
+  a adto com **continue-on-error**; herda o gate de escrita, a idempotência write-ahead e a atomicidade
+  por par. O analista clica de novo até zerar. Diálogo de confirmação. O "Processar" individual continua intacto.
+- **fix(permutas):** o seletor "Filial" passa a incluir filiais que só têm invoices (sem adiantamento
+  PROFORMA) — ex.: filial 6. Agora a lista é a união das filiais de adiantamentos + invoices.
+
 ## v0.7.0 (2026-06-24) — Permutas: cliente, universo de invoices, ciclo de borderô e cache
 
 - **feat(permutas):** reclassificação automática — múltiplas onde o adiantamento **cobre todas as
