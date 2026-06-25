@@ -23,8 +23,10 @@
 - **feat(permutas):** tela de **Borderôs** carrega ao vivo ao entrar (sem clicar em "Atualizar") e
   ordena os EM ABERTO da nossa trilha no topo; o resto (finalizados + ERP) por data.
 - **fix(infra):** rate-limiters desligados sob `NODE_ENV=test` (evita 429 espúrios na suíte combinada).
-- **feat(permutas):** as abas de trabalho (Automáticas/Múltiplas/Cross-over/Cross-process) ordenam por
-  etapa — **pendentes de aprovação** no topo, **a processar/alocar/baixar** no meio, **finalizadas** no fundo.
+- **feat(permutas):** nova aba **Histórico** (ao lado de Borderôs) — tudo que já foi executado (borderô
+  criado) sai das abas de trabalho e cai lá (read-only; aprovar/cancelar é em Borderôs). As abas
+  Automáticas/Múltiplas/Cross-over/Cross-process passam a mostrar só o que falta processar/alocar/baixar.
+- **chore(permutas):** tamanho do lote do "Executar" reduzido de 10 para **6** por clique (FE + cap backend).
 
 ## v0.7.0 (2026-06-24) — Permutas: cliente, universo de invoices, ciclo de borderô e cache
 

@@ -11,7 +11,7 @@ import LogService from '../LogService.js';
  * (mantém o request curto, longe do timeout do proxy) E blast radius (limita a escrita por clique). O
  * analista clica de novo para o próximo lote (até zerar). Mude aqui = muda o tamanho do lote.
  */
-export const LOTE_MAX = 10;
+export const LOTE_MAX = 6;
 
 /** Status agregado de UM adiantamento dentro do lote. */
 export type LoteAdiantamentoStatus = 'settled' | 'parcial' | 'error' | 'dry-run' | 'skipped';

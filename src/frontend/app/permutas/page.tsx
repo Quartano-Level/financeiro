@@ -45,13 +45,7 @@ import type {
   StatusElegibilidade,
 } from '@/lib/types'
 import { RELATORIOS_DISPONIVEIS } from '@/lib/types'
-import {
-  cn,
-  type EtapaPermuta,
-  formatNumber,
-  ordenarPorEtapaPermuta,
-  progressoPagamento,
-} from '@/lib/utils'
+import { cn, formatNumber, ordenarPorEtapaPermuta, progressoPagamento } from '@/lib/utils'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -99,7 +93,23 @@ const PROCESSAMENTO_HABILITADO = true
 /** Tamanho máximo do lote por clique em "Executar" — espelha o cap server-side (LOTE_MAX no backend).
  * Mantém cada execução curta (longe do timeout do proxy) e limita o blast radius; o analista clica
  * de novo para o próximo lote até zerar. */
-const LOTE_MAX = 10
+const LOTE_MAX = 6
+
+/** Uma linha da aba Histórico — permuta JÁ EXECUTADA (tem borderô), normalizada das 4 categorias. */
+interface ItemHistorico {
+  key: string
+  tipo: string
+  filCod: number
+  priCod: string
+  cliente: string
+  exportador: string
+  adtoDocCod: string
+  valor: number | null
+  moeda: string
+  borCod?: number
+  finalizado: boolean
+  busca: string
+}
 
 /** Rótulos legíveis para os motivos de bloqueio do snapshot. */
 const MOTIVO_LABEL: Record<string, string> = {
@@ -1115,37 +1125,96 @@ export default function GestaoPermutasPage() {
   // (manuais = Σ invoices > adto). Cross-over e cross-process continuam separados.
   const multiplasManuais = multiplas.filter((p) => p.autoElegivel !== true)
 
-  // Etapa de um adiantamento (pelo vínculo de borderô): sem vínculo → a processar; vínculo finalizado
-  // → finalizada; senão (borderô em cadastro) → aguardando aprovação. Espelha o PermutaBorderoBadge.
-  const etapaDoAdto = (docCod: string): EtapaPermuta => {
-    const v = statusPorAdto[docCod]
-    if (!v) return 'a-processar'
-    return v.permutaStatus === 'finalizado' ? 'finalizada' : 'aguardando-aprovacao'
-  }
+  // EXECUTADO = adiantamento já tem borderô vinculado (aguardando finalização OU finalizado). Estes
+  // SAEM das abas de trabalho e vão para a aba "Histórico" — as abas de trabalho mostram só o que falta
+  // processar/alocar/baixar (deixa de poluir com o que já foi permutado).
+  const adtoExecutado = (docCod: string): boolean => statusPorAdto[docCod] !== undefined
+  // Um casamento (Automáticas) ainda é "de trabalho" enquanto tiver ALGUM adiantamento sem borderô.
+  const casamentoTrabalho = (c: CasamentoSugerido): boolean =>
+    c.adiantamentos.some((a) => !adtoExecutado(a.docCod))
 
-  // Filtro (filial + busca) + paginação por aba. Antes do filtro, ordena por ETAPA: pendentes de
-  // aprovação no topo, a processar no meio, finalizadas no fundo (pedido do analista).
+  const casamentosTrabalho = casamentosSugeridos.filter(casamentoTrabalho)
+  const multiplasTrabalho = multiplasManuais.filter((p) => !adtoExecutado(p.docCod))
+  const crossOverTrabalho = crossOver.filter((p) => !adtoExecutado(p.docCod))
+  const crossProcessTrabalho = crossProcess.filter((p) => !adtoExecutado(p.docCod))
+
+  // Filtro (filial + busca) + paginação por aba — só as NÃO executadas.
   const abaSimples = useTabelaFiltro(
-    ordenarPorEtapaPermuta(casamentosSugeridos, (c) =>
-      c.adiantamentos.map((a) => etapaDoAdto(a.docCod)),
-    ),
+    casamentosTrabalho,
     (c) => c.invoice.filCod,
     (c) => `${c.priCod} ${c.invoice.importador ?? ''} ${c.invoice.exportador} ${c.invoice.referencia ?? ''}`,
   )
   const abaMultiplas = useTabelaFiltro(
-    ordenarPorEtapaPermuta(multiplasManuais, (p) => [etapaDoAdto(p.docCod)]),
+    multiplasTrabalho,
     (p) => p.filCod,
     (p) => `${p.docCod} ${p.importador ?? ''} ${p.exportador}`,
   )
   const abaCrossOver = useTabelaFiltro(
-    ordenarPorEtapaPermuta(crossOver, (p) => [etapaDoAdto(p.docCod)]),
+    crossOverTrabalho,
     (p) => p.filCod,
     (p) => `${p.docCod} ${p.importador ?? ''} ${p.exportador}`,
   )
   const abaCrossProcess = useTabelaFiltro(
-    ordenarPorEtapaPermuta(crossProcess, (p) => [etapaDoAdto(p.docCod)]),
+    crossProcessTrabalho,
     (p) => p.filCod,
     (p) => `${p.docCod} ${p.importador ?? ''} ${p.exportador}`,
+  )
+
+  // HISTÓRICO — tudo que já foi executado (tem borderô), unificado das 4 categorias. Read-only: as
+  // ações (aprovar/cancelar/estornar) ficam na aba Borderôs. Ordem: aguardando aprovação no topo,
+  // finalizadas no fundo; dentro de cada grupo, borderô mais recente primeiro.
+  const historico: ItemHistorico[] = []
+  for (const c of casamentosSugeridos) {
+    for (const a of c.adiantamentos) {
+      const v = statusPorAdto[a.docCod]
+      if (!v) continue
+      historico.push({
+        key: `auto-${a.docCod}-${v.borCod}`,
+        tipo: 'Automática',
+        filCod: c.invoice.filCod,
+        priCod: c.priCod,
+        cliente: c.invoice.importador ?? '',
+        exportador: c.invoice.exportador,
+        adtoDocCod: a.docCod,
+        valor: a.valorASerUsado ?? null,
+        moeda: a.moeda ?? c.invoice.moeda,
+        borCod: v.borCod,
+        finalizado: v.permutaStatus === 'finalizado',
+        busca: `${c.priCod} ${c.invoice.importador ?? ''} ${a.docCod} ${v.borCod}`,
+      })
+    }
+  }
+  const pushPendentesHistorico = (lista: PermutaPendente[], tipo: string) => {
+    for (const p of lista) {
+      const v = statusPorAdto[p.docCod]
+      if (!v) continue
+      historico.push({
+        key: `${tipo}-${p.docCod}-${v.borCod}`,
+        tipo,
+        filCod: p.filCod,
+        priCod: p.detalhe?.priCod ?? '',
+        cliente: p.importador ?? '',
+        exportador: p.exportador,
+        adtoDocCod: p.docCod,
+        valor: p.valorMoedaNegociada,
+        moeda: p.moeda,
+        borCod: v.borCod,
+        finalizado: v.permutaStatus === 'finalizado',
+        busca: `${p.docCod} ${p.importador ?? ''} ${v.borCod}`,
+      })
+    }
+  }
+  pushPendentesHistorico(multiplasManuais, 'Múltipla')
+  pushPendentesHistorico(crossOver, 'Cross-over')
+  pushPendentesHistorico(crossProcess, 'Cross-process')
+  historico.sort((a, b) => (b.borCod ?? 0) - (a.borCod ?? 0)) // borderô mais recente primeiro
+  const historicoOrdenado = ordenarPorEtapaPermuta(historico, (h) => [
+    h.finalizado ? 'finalizada' : 'aguardando-aprovacao',
+  ])
+  const abaHistorico = useTabelaFiltro(
+    historicoOrdenado,
+    (h) => h.filCod,
+    (h) => h.busca,
   )
 
   // Consolidação por MOEDA NEGOCIADA por card: USD como valor principal, demais
@@ -1165,6 +1234,59 @@ export default function GestaoPermutasPage() {
   // Tabela de alocação manual (1 adto → N invoices) — compartilhada pelas abas
   // Múltiplas, Cross-over e Cross-process. Mostra saldo restante + nº de
   // alocações + ação "Alocar" (distribui o saldo em várias invoices).
+  // Tabela read-only do HISTÓRICO (permutas já executadas, com borderô). As ações ficam em Borderôs.
+  const renderHistoricoTable = (list: ItemHistorico[]) =>
+    list.length === 0 ? (
+      <EmptyState
+        title="Nada no histórico ainda"
+        description="Permutas executadas (com borderô criado) aparecem aqui — saem das abas de trabalho."
+      />
+    ) : (
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Filial</TableHead>
+            <TableHead>Tipo</TableHead>
+            <TableHead>Processo / Cliente</TableHead>
+            <TableHead>Adiantamento</TableHead>
+            <TableHead className="text-right">Valor</TableHead>
+            <TableHead>Borderô</TableHead>
+            <TableHead className="text-right">Situação</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {list.map((h) => (
+            <TableRow key={h.key}>
+              <TableCell>{h.filCod}</TableCell>
+              <TableCell>{h.tipo}</TableCell>
+              <TableCell className="font-medium">
+                {h.priCod}
+                <div className="text-xs font-normal text-muted-foreground">
+                  {h.cliente || h.exportador}
+                </div>
+              </TableCell>
+              <TableCell>{h.adtoDocCod}</TableCell>
+              <TableCell className="text-right">
+                <Moeda valor={h.valor} moeda={h.moeda} />
+              </TableCell>
+              <TableCell>{h.borCod ?? '—'}</TableCell>
+              <TableCell className="text-right">
+                {h.finalizado ? (
+                  <Badge className="border-transparent bg-success-subtle text-success-foreground">
+                    <CheckCircle2 aria-hidden /> Finalizado
+                  </Badge>
+                ) : (
+                  <Badge className="border-transparent bg-warning-subtle text-warning-foreground">
+                    Aguardando finalização
+                  </Badge>
+                )}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    )
+
   const renderCrossProcessTable = (list: PermutaPendente[]) =>
     list.length === 0 ? (
       <EmptyState
@@ -1877,20 +1999,23 @@ export default function GestaoPermutasPage() {
                 <TabsList>
                   <TabsTrigger value="automaticas">
                     <ArrowLeftRight className="size-4" aria-hidden /> Automáticas (
-                    {casamentosSugeridos.length})
+                    {casamentosTrabalho.length})
                   </TabsTrigger>
                   <TabsTrigger value="multiplas">
-                    <Layers className="size-4" aria-hidden /> Múltiplas ({multiplasManuais.length})
+                    <Layers className="size-4" aria-hidden /> Múltiplas ({multiplasTrabalho.length})
                   </TabsTrigger>
                   <TabsTrigger value="cross-over">
-                    <Layers className="size-4" aria-hidden /> Cross-over ({crossOver.length})
+                    <Layers className="size-4" aria-hidden /> Cross-over ({crossOverTrabalho.length})
                   </TabsTrigger>
                   <TabsTrigger value="cross-process">
                     <ArrowLeftRight className="size-4" aria-hidden /> Cross-process (
-                    {crossProcess.length})
+                    {crossProcessTrabalho.length})
                   </TabsTrigger>
                   <TabsTrigger value="borderos">
                     <Banknote className="size-4" aria-hidden /> Borderôs
+                  </TabsTrigger>
+                  <TabsTrigger value="historico">
+                    <CheckCircle2 className="size-4" aria-hidden /> Histórico ({historico.length})
                   </TabsTrigger>
                 </TabsList>
               </CardHeader>
@@ -2123,6 +2248,17 @@ export default function GestaoPermutasPage() {
                 {/* Borderôs in-place (lazy: o Radix só monta o conteúdo da aba ativa). */}
                 <TabsContent value="borderos">
                   <BorderosPanel embedded />
+                </TabsContent>
+
+                <TabsContent value="historico" className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    <strong>Histórico</strong>: permutas já executadas (borderô criado) — saíram das
+                    abas de trabalho para não poluir. Read-only; aprovar/cancelar é na aba{' '}
+                    <strong>Borderôs</strong>. Aguardando finalização no topo, finalizadas no fundo.
+                  </p>
+                  <FiltroBarra aba={abaHistorico} buscaPlaceholder="Buscar processo, cliente ou borderô…" />
+                  {renderHistoricoTable(abaHistorico.slice)}
+                  <Paginacao aba={abaHistorico} />
                 </TabsContent>
               </CardContent>
             </Tabs>
