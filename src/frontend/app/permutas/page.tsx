@@ -1239,6 +1239,13 @@ export default function GestaoPermutasPage() {
   // Tabela de alocação manual (1 adto → N invoices) — compartilhada pelas abas
   // Múltiplas, Cross-over e Cross-process. Mostra saldo restante + nº de
   // alocações + ação "Alocar" (distribui o saldo em várias invoices).
+  // Botão "Atualizar" por aba — rebusca gestão + status do nosso banco (mesmo `load` do header).
+  const botaoAtualizar = () => (
+    <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+      <RefreshCw className={cn(loading && 'animate-spin')} aria-hidden /> Atualizar
+    </Button>
+  )
+
   // Tabela read-only do HISTÓRICO (permutas já executadas, com borderô). As ações ficam em Borderôs.
   const renderHistoricoTable = (list: ItemHistorico[]) =>
     list.length === 0 ? (
@@ -2039,7 +2046,10 @@ export default function GestaoPermutasPage() {
                     invoices <strong>ultrapassa</strong> o saldo do adiantamento — exige o analista
                     decidir a distribuição. Escolha a invoice e o valor a abater.
                   </p>
-                  <FiltroBarra aba={abaMultiplas} buscaPlaceholder="Buscar código ou cliente…" />
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <FiltroBarra aba={abaMultiplas} buscaPlaceholder="Buscar código ou cliente…" />
+                    {botaoAtualizar()}
+                  </div>
                   {renderCrossProcessTable(abaMultiplas.slice)}
                   <Paginacao aba={abaMultiplas} />
                 </TabsContent>
@@ -2049,7 +2059,10 @@ export default function GestaoPermutasPage() {
                     <strong>N adiantamentos ↔ M invoices</strong> (mesmo processo): vários
                     adiantamentos e várias invoices se cruzam. Você decide cada ligação e o valor.
                   </p>
-                  <FiltroBarra aba={abaCrossOver} buscaPlaceholder="Buscar código ou cliente…" />
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <FiltroBarra aba={abaCrossOver} buscaPlaceholder="Buscar código ou cliente…" />
+                    {botaoAtualizar()}
+                  </div>
                   {renderCrossProcessTable(abaCrossOver.slice)}
                   <Paginacao aba={abaCrossOver} />
                 </TabsContent>
@@ -2060,10 +2073,13 @@ export default function GestaoPermutasPage() {
                     <strong>outro processo</strong>. Busque a invoice pelo número do processo e
                     distribua o valor (a invoice precisa ter D.I/DUIMP).
                   </p>
-                  <FiltroBarra
-                    aba={abaCrossProcess}
-                    buscaPlaceholder="Buscar código ou cliente…"
-                  />
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <FiltroBarra
+                      aba={abaCrossProcess}
+                      buscaPlaceholder="Buscar código ou cliente…"
+                    />
+                    {botaoAtualizar()}
+                  </div>
                   {renderCrossProcessTable(abaCrossProcess.slice)}
                   <Paginacao aba={abaCrossProcess} />
                 </TabsContent>
@@ -2077,17 +2093,20 @@ export default function GestaoPermutasPage() {
                   </p>
                   <div className="flex flex-wrap items-end justify-between gap-3">
                     <FiltroBarra aba={abaSimples} buscaPlaceholder="Buscar processo ou cliente…" />
-                    <Button
-                      onClick={() => setConfirmLoteOpen(true)}
-                      disabled={
-                        !PROCESSAMENTO_HABILITADO || executandoLote || loteResumo.adtos === 0
-                      }
-                      title={`Executar as próximas ${loteResumo.proximosN} automáticas (lotes de até ${LOTE_MAX}; cria os borderôs no ERP)`}
-                    >
-                      {executandoLote ? <Spinner aria-hidden /> : <Play aria-hidden />}
-                      Executar próximas {loteResumo.proximosN}
-                      {loteResumo.adtos > loteResumo.proximosN ? ` de ${loteResumo.adtos}` : ''}
-                    </Button>
+                    <div className="flex items-end gap-2">
+                      {botaoAtualizar()}
+                      <Button
+                        onClick={() => setConfirmLoteOpen(true)}
+                        disabled={
+                          !PROCESSAMENTO_HABILITADO || executandoLote || loteResumo.adtos === 0
+                        }
+                        title={`Executar as próximas ${loteResumo.proximosN} automáticas (lotes de até ${LOTE_MAX}; cria os borderôs no ERP)`}
+                      >
+                        {executandoLote ? <Spinner aria-hidden /> : <Play aria-hidden />}
+                        Executar próximas {loteResumo.proximosN}
+                        {loteResumo.adtos > loteResumo.proximosN ? ` de ${loteResumo.adtos}` : ''}
+                      </Button>
+                    </div>
                   </div>
                   {abaSimples.total === 0 ? (
                 <EmptyState
@@ -2269,7 +2288,10 @@ export default function GestaoPermutasPage() {
                     abas de trabalho para não poluir. Read-only; aprovar/cancelar é na aba{' '}
                     <strong>Borderôs</strong>. Aguardando finalização no topo, finalizadas no fundo.
                   </p>
-                  <FiltroBarra aba={abaHistorico} buscaPlaceholder="Buscar processo, cliente ou borderô…" />
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <FiltroBarra aba={abaHistorico} buscaPlaceholder="Buscar processo, cliente ou borderô…" />
+                    {botaoAtualizar()}
+                  </div>
                   {renderHistoricoTable(abaHistorico.slice)}
                   <Paginacao aba={abaHistorico} />
                 </TabsContent>
