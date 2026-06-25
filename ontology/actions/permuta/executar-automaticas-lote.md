@@ -46,9 +46,12 @@ side_effects:
    (status por adto: `settled` / `parcial` / `error` / `dry-run` / `skipped`).
 
 ## Decisões (entrevista 2026-06-25)
-- **Escopo:** executa TODAS as automáticas (ignora filtros Filial/Busca da tela).
+- **Escopo:** roda as automáticas (ignora filtros Filial/Busca da tela).
+- **Lotes de até `LOTE_MAX=10` por clique** (cap server-side autoritativo). A tela manda os "próximos 10"
+  pendentes; ao recarregar, os baixados ganham borderô e somem → o analista clica de novo até zerar.
+  O cap mantém o request curto (longe do timeout do proxy) e limita o blast radius por clique.
 - **Falha parcial:** continua e reporta os que falharam.
-- **Confirmação:** diálogo com resumo (nº automáticas, nº adiantamentos, total a ser usado) antes de disparar.
+- **Confirmação:** diálogo com resumo (lote atual, pendentes totais, total a ser usado) antes de disparar.
 
 ## Segurança / consistência
 - Mesmo gate de escrita do `reconciliarPermuta` — em ambiente sem `CONEXOS_WRITE_ENABLED` o lote roda

@@ -274,7 +274,7 @@ export async function reconciliarAdiantamento(
  * agregado. Mesmo gating de escrita do reconciliar individual (dry-run por padrão).
  */
 export async function reconciliarLoteAutomaticas(
-  opts?: { dryRun?: boolean; dataMovto?: number },
+  opts?: { dryRun?: boolean; dataMovto?: number; adiantamentoDocCods?: string[] },
 ): Promise<ReconciliarLoteResult> {
   const res = await fetch(`${API}/permutas/reconciliar-lote`, {
     method: 'POST',
@@ -282,6 +282,9 @@ export async function reconciliarLoteAutomaticas(
     body: JSON.stringify({
       ...(opts?.dryRun !== undefined ? { dryRun: opts.dryRun } : {}),
       ...(opts?.dataMovto !== undefined ? { dataMovto: opts.dataMovto } : {}),
+      ...(opts?.adiantamentoDocCods !== undefined
+        ? { adiantamentoDocCods: opts.adiantamentoDocCods }
+        : {}),
     }),
   })
   if (!res.ok) {

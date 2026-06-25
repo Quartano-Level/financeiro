@@ -2,11 +2,12 @@
 
 ## v0.8.0 (2026-06-25) — Permutas: execução em lote das automáticas (botão "Executar")
 
-- **feat(permutas):** botão **"Executar todas"** na aba Automáticas — cria os borderôs de TODAS as
-  automáticas de uma vez (baixa real no `fin010`), num único request server-side. Novo endpoint
+- **feat(permutas):** botão **"Executar"** na aba Automáticas — cria os borderôs das automáticas em
+  **lotes de até 10 por clique** (cap server-side; baixa real no `fin010`). Novo endpoint
   `POST /permutas/reconciliar-lote` (admin + heavyRouteLimiter) orquestrando `reconciliarPermuta` adto
   a adto com **continue-on-error**; herda o gate de escrita, a idempotência write-ahead e a atomicidade
-  por par. Diálogo de confirmação com resumo do lote. O "Processar" individual continua intacto.
+  por par. O cap mantém cada request curto (longe do timeout do proxy) e limita o blast radius; o
+  analista clica de novo até zerar. Diálogo de confirmação com resumo. O "Processar" individual continua intacto.
 
 ## v0.7.0 (2026-06-24) — Permutas: cliente, universo de invoices, ciclo de borderô e cache
 

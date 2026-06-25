@@ -6,6 +6,13 @@ import ReconciliacaoPermutaService, {
 } from './ReconciliacaoPermutaService.js';
 import LogService from '../LogService.js';
 
+/**
+ * Teto de adiantamentos por requisição de lote. Cap server-side (autoritativo): bound execution time
+ * (mantém o request curto, longe do timeout do proxy) E blast radius (limita a escrita por clique). O
+ * analista clica de novo para o próximo lote (até zerar). Mude aqui = muda o tamanho do lote.
+ */
+export const LOTE_MAX = 10;
+
 /** Status agregado de UM adiantamento dentro do lote. */
 export type LoteAdiantamentoStatus = 'settled' | 'parcial' | 'error' | 'dry-run' | 'skipped';
 
@@ -42,6 +49,12 @@ export interface ReconciliarLoteInput {
     dataMovto: number;
     /** Força dry-run mesmo com escrita habilitada (preview sem POST). */
     dryRunOverride?: boolean;
+    /**
+     * Subconjunto de adiantamentos a executar (os "próximos N" que a tela escolheu). Quando presente,
+     * é interseccionado com o conjunto das automáticas (só executa o que é de fato automática) e capado
+     * em LOTE_MAX. Ausente → todas as automáticas, também capadas em LOTE_MAX.
+     */
+    adiantamentoDocCods?: string[];
     requestId: string;
 }
 
@@ -65,7 +78,7 @@ export default class ReconciliacaoLotePermutaService {
     public reconciliarLote = async (
         input: ReconciliarLoteInput,
     ): Promise<ReconciliarLoteResult> => {
-        const { executadoPor, dataMovto, dryRunOverride, requestId } = input;
+        const { executadoPor, dataMovto, dryRunOverride, adiantamentoDocCods, requestId } = input;
         const gestao = await this.gestaoService.exporGestao(requestId);
 
         // Conjunto das automáticas: cada adiantamento dos casamentos sugeridos cujo analista ainda
@@ -81,6 +94,15 @@ export default class ReconciliacaoLotePermutaService {
             }
         }
 
+        // Seleção do lote: se a tela mandou os "próximos N", interseccciona com as automáticas (só
+        // executa o que é de fato automática — não confia cegamente no cliente) preservando a ordem;
+        // senão, todas. Sempre capado em LOTE_MAX (bound execution time + blast radius).
+        const filtro = adiantamentoDocCods !== undefined ? new Set(adiantamentoDocCods) : undefined;
+        const selecionados = (filtro ? ordem.filter((d) => filtro.has(d)) : ordem).slice(
+            0,
+            LOTE_MAX,
+        );
+
         const resultados: ReconciliarLoteItem[] = [];
         const borderos = new Set<number>();
         let totalSettled = 0;
@@ -88,7 +110,7 @@ export default class ReconciliacaoLotePermutaService {
         let dryRun = false;
         let writeEnabled = false;
 
-        for (const docCod of ordem) {
+        for (const docCod of selecionados) {
             const priCod = priCodPorAdto.get(docCod);
             try {
                 const r = await this.reconciliacaoService.reconciliar({
@@ -132,7 +154,7 @@ export default class ReconciliacaoLotePermutaService {
             data: {
                 requestId,
                 executadoPor,
-                totalCasos: ordem.length,
+                totalCasos: selecionados.length,
                 totalSettled,
                 totalErros,
                 borderos: borderos.size,
@@ -143,7 +165,7 @@ export default class ReconciliacaoLotePermutaService {
         return {
             dryRun,
             writeEnabled,
-            totalCasos: ordem.length,
+            totalCasos: selecionados.length,
             totalSettled,
             totalErros,
             borderos: [...borderos],

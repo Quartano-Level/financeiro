@@ -716,14 +716,18 @@ describe('POST /permutas/reconciliar-lote', () => {
             const res = await fetch(`${server.url}/permutas/reconciliar-lote`, {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ dryRun: true }),
+                body: JSON.stringify({ dryRun: true, adiantamentoDocCods: ['9026', '11821'] }),
             });
             const body = await readJson(res);
             expect(res.status).toBe(200);
             expect(body).toMatchObject({ totalCasos: 3, totalSettled: 2, borderos: [100, 101] });
-            // executadoPor = identidade autenticada; dryRun passado adiante.
+            // executadoPor = identidade autenticada; dryRun + subconjunto passados adiante.
             expect(reconciliarLote).toHaveBeenCalledWith(
-                expect.objectContaining({ executadoPor: 'user-abc', dryRunOverride: true }),
+                expect.objectContaining({
+                    executadoPor: 'user-abc',
+                    dryRunOverride: true,
+                    adiantamentoDocCods: ['9026', '11821'],
+                }),
             );
         } finally {
             await server.close();
