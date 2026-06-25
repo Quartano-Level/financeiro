@@ -1133,10 +1133,19 @@ export default function GestaoPermutasPage() {
   const casamentoTrabalho = (c: CasamentoSugerido): boolean =>
     c.adiantamentos.some((a) => !adtoExecutado(a.docCod))
 
+  // Manual (Múltipla/Cross-over/Cross-process): só SAI da aba de trabalho quando TOTALMENTE permutado —
+  // tem borderô E não sobra saldo a permutar (saldoRestante ≈ 0). Baixa PARCIAL (sobrou saldo p/ alocar
+  // mais invoices) CONTINUA na aba; o que foi lançado vai pra Borderôs + Histórico. Cancelar remove o
+  // vínculo → reaparece (igual às automáticas). saldoRestante = saldo negociado − Σ alocações (as
+  // alocações persistem após a baixa; o saldo do adto só zera de fato quando tudo é alocado).
+  const SALDO_TOL = 1 // tolerância (moeda negociada) p/ ruído de centavos
+  const permutaManualCompleta = (p: PermutaPendente): boolean =>
+    adtoExecutado(p.docCod) && p.saldoRestante !== undefined && p.saldoRestante <= SALDO_TOL
+
   const casamentosTrabalho = casamentosSugeridos.filter(casamentoTrabalho)
-  const multiplasTrabalho = multiplasManuais.filter((p) => !adtoExecutado(p.docCod))
-  const crossOverTrabalho = crossOver.filter((p) => !adtoExecutado(p.docCod))
-  const crossProcessTrabalho = crossProcess.filter((p) => !adtoExecutado(p.docCod))
+  const multiplasTrabalho = multiplasManuais.filter((p) => !permutaManualCompleta(p))
+  const crossOverTrabalho = crossOver.filter((p) => !permutaManualCompleta(p))
+  const crossProcessTrabalho = crossProcess.filter((p) => !permutaManualCompleta(p))
 
   // Filtro (filial + busca) + paginação por aba — só as NÃO executadas.
   const abaSimples = useTabelaFiltro(
@@ -1201,7 +1210,12 @@ export default function GestaoPermutasPage() {
         cliente: p.importador ?? '',
         exportador: p.exportador,
         adtoDocCod: p.docCod,
-        valor: p.valorMoedaNegociada,
+        // "Só o que foi lançado": soma das alocações (o que entrou no borderô), não o adto inteiro.
+        // Sem alocações detalhadas, cai no valor negociado do adto.
+        valor:
+          p.alocacoes && p.alocacoes.length > 0
+            ? p.alocacoes.reduce((s, al) => s + al.valorAlocado, 0)
+            : p.valorMoedaNegociada,
         moeda: p.moeda,
         borCod: v.borCod,
         finalizado: v.permutaStatus === 'finalizado',
