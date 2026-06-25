@@ -913,11 +913,15 @@ export default function GestaoPermutasPage() {
     dispInvoice ?? Number.POSITIVE_INFINITY,
   )
 
-  // Filiais distintas presentes nos pendentes (para o seletor de filial).
-  const filiais = React.useMemo(
-    () => [...new Set((data?.pendentes ?? []).map((p) => p.filCod))].sort((a, b) => a - b),
-    [data],
-  )
+  // Filiais distintas presentes nos dados (para o seletor de filial). UNIÃO de adiantamentos E
+  // invoices: filiais que só têm invoice (sem adiantamento PROFORMA) — ex.: filial 6 — também precisam
+  // ser selecionáveis, senão suas invoices ficam visíveis em "Todas as filiais" mas impossíveis de filtrar.
+  const filiais = React.useMemo(() => {
+    const s = new Set<number>()
+    for (const p of data?.pendentes ?? []) s.add(p.filCod)
+    for (const i of data?.invoicesEmAberto ?? []) s.add(i.filCod)
+    return [...s].sort((a, b) => a - b)
+  }, [data])
 
   // Invoice casada de cada adiantamento (a partir dos casamentos automáticos) —
   // usado no detalhe p/ o analista ver a cobertura (adto × invoice).
