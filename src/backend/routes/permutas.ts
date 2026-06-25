@@ -6,6 +6,8 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
 import AlocacaoSaldoError from '../domain/errors/AlocacaoSaldoError.js';
 import IngestLockBusyError from '../domain/errors/IngestLockBusyError.js';
 import { PROCESSAMENTO_STATUS } from '../domain/interface/permutas/Processamento.js';
+import { LOG_TYPE } from '../domain/interface/log/LogInterface.js';
+import LogService from '../domain/service/LogService.js';
 import AlocacaoPermutasService from '../domain/service/permutas/AlocacaoPermutasService.js';
 import ClienteFiltroRepository from '../domain/repository/permutas/ClienteFiltroRepository.js';
 import PermutaProcessamentoRepository from '../domain/repository/permutas/PermutaProcessamentoRepository.js';
@@ -46,31 +48,101 @@ const ERP_MESSAGE_PT: Record<string, string> = {
         'Não é possível excluir: este borderô tem um estorno vinculado no ERP.',
     'FIN_014.FIN_IMPOSSIVEL_ALTERAR_REGISTRO':
         'Não é possível alterar: borderô finalizado. Estorne antes de mexer.',
+    'FIN_010.FIN_IMPOSSIVEL_ALTERAR_REGISTRO': 'Borderô finalizado — não é possível alterar.',
+    'FIN_010.DATA_BLOQUEADA_PELA_CONTABILIDADE':
+        'Data do borderô bloqueada pela contabilidade (período fechado). Use uma data em período aberto.',
+    CnxValidatorMny: 'Valor monetário inválido (precisão > 2 casas).',
+    CnxValidatorDescr: 'Descrição/comentário inválido (precisa estar em MAIÚSCULAS).',
     'Generic.ERROR_MESSAGE':
         'O ERP recusou esta operação para o borderô (estado incompatível com a ação).',
 };
 
-const erpErrorMessage = (err: unknown): string => {
+/**
+ * Extrai o detalhe CRU do erro do ERP (Conexos). As validações do `fin010` voltam em
+ * `cause.response.data.messages[*].message` (a key) + um `status` HTTP. `friendly` é a tradução PT
+ * (ou a própria key quando não mapeada). NOTA: o token/sid do Conexos vive no header `Cookie` da
+ * request, NÃO em `response.data` — logar `data` é seguro (não vaza credencial).
+ */
+const extractErpDetail = (
+    err: unknown,
+): { status?: number; data?: unknown; key?: string; friendly: string } => {
     const cause = (err as { cause?: unknown })?.cause;
-    const data = (cause as { response?: { data?: unknown } })?.response?.data as
-        | { messages?: Array<{ message?: string }> }
-        | undefined;
+    const resp = (cause as { response?: { status?: number; data?: unknown } })?.response;
+    const data = resp?.data as { messages?: Array<{ message?: string }> } | undefined;
     const key = data?.messages?.[0]?.message;
-    if (key) return ERP_MESSAGE_PT[key] ?? String(key);
-    return err instanceof Error ? err.message : 'erro ao executar a ação no Conexos';
+    const friendly = key
+        ? (ERP_MESSAGE_PT[key] ?? String(key))
+        : err instanceof Error
+          ? err.message
+          : 'erro ao executar a ação no Conexos';
+    return {
+        ...(resp?.status !== undefined ? { status: resp.status } : {}),
+        ...(data !== undefined ? { data } : {}),
+        ...(key !== undefined ? { key } : {}),
+        friendly,
+    };
 };
+
+/** Contexto de uma ação de borderô — alimenta o log estruturado da falha. */
+interface AcaoBorderoCtx {
+    requestId: string;
+    acao: string;
+    borCod: number;
+    executadoPor: string;
+}
 
 /**
  * Mapeia erro de ação de borderô para a resposta HTTP. `FORBIDDEN:` (autorização — borderô não é da
  * trilha deste sistema) → 403; demais (recusa do ERP, validação) → 400 com mensagem traduzida.
+ * SEMPRE devolve `requestId` (correlação com o log) e LOGA a resposta CRUA do ERP (status + messages)
+ * via `LogService.error` — antes a causa real do ERP era descartada (cegueira de diagnóstico).
  */
-const respondActionError = (res: import('express').Response, err: unknown): void => {
+const respondActionError = async (
+    res: import('express').Response,
+    err: unknown,
+    ctx: AcaoBorderoCtx,
+): Promise<void> => {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.startsWith('FORBIDDEN:')) {
-        res.status(403).json({ error: msg.replace(/^FORBIDDEN:\s*/, '') });
+        res.status(403).json({
+            error: msg.replace(/^FORBIDDEN:\s*/, ''),
+            requestId: ctx.requestId,
+        });
         return;
     }
-    res.status(400).json({ error: erpErrorMessage(err) });
+    const detail = extractErpDetail(err);
+    // Log estruturado da resposta crua do ERP (best-effort — nunca quebra a resposta ao usuário).
+    try {
+        const logService = container.resolve(LogService);
+        await logService.error({
+            type: LOG_TYPE.CONEXOS_ERROR,
+            message: `borderô ${ctx.acao} recusado pelo ERP`,
+            statusCode: 400,
+            // NÃO passar o Error cru: seu `cause` é o AxiosError, cujo `config.headers` carrega o
+            // Cookie/sid do Conexos. A causa real do ERP já está capturada em `erpData`/`erpKey` abaixo.
+            data: {
+                requestId: ctx.requestId,
+                acao: ctx.acao,
+                borCod: ctx.borCod,
+                executadoPor: ctx.executadoPor,
+                erpStatus: detail.status,
+                erpKey: detail.key,
+                erpData: detail.data,
+            },
+        });
+    } catch {
+        // logging é best-effort: nunca deve impedir a resposta de erro.
+    }
+    // Key não mapeada/genérica → inclui o texto cru do ERP no corpo, pra ser acionável sem ler log.
+    const erpDetail =
+        detail.key !== undefined && ERP_MESSAGE_PT[detail.key] === undefined
+            ? detail.key
+            : undefined;
+    res.status(400).json({
+        error: detail.friendly,
+        requestId: ctx.requestId,
+        ...(erpDetail !== undefined ? { erpDetail } : {}),
+    });
 };
 
 /** Meia-noite UTC do dia atual em epoch-ms (default do borDtaMvto). */
@@ -467,7 +539,12 @@ router.post(
         try {
             res.json(await service.finalizarBordero({ borCod, executadoPor }));
         } catch (err) {
-            respondActionError(res, err);
+            await respondActionError(res, err, {
+                requestId: req.requestId,
+                acao: 'finalizar',
+                borCod,
+                executadoPor,
+            });
         }
     }),
 );
@@ -489,7 +566,12 @@ router.post(
         try {
             res.json(await service.cancelarBordero({ borCod, executadoPor }));
         } catch (err) {
-            respondActionError(res, err);
+            await respondActionError(res, err, {
+                requestId: req.requestId,
+                acao: 'cancelar',
+                borCod,
+                executadoPor,
+            });
         }
     }),
 );
@@ -511,7 +593,12 @@ router.post(
         try {
             res.json(await service.estornarBordero({ borCod, executadoPor }));
         } catch (err) {
-            respondActionError(res, err);
+            await respondActionError(res, err, {
+                requestId: req.requestId,
+                acao: 'estornar',
+                borCod,
+                executadoPor,
+            });
         }
     }),
 );
@@ -533,7 +620,12 @@ router.delete(
         try {
             res.json(await service.excluirBordero({ borCod, executadoPor }));
         } catch (err) {
-            respondActionError(res, err);
+            await respondActionError(res, err, {
+                requestId: req.requestId,
+                acao: 'excluir-borderô',
+                borCod,
+                executadoPor,
+            });
         }
     }),
 );
@@ -557,7 +649,12 @@ router.delete(
         try {
             res.json(await service.excluirBaixa({ borCod, invoiceDocCod, executadoPor }));
         } catch (err) {
-            respondActionError(res, err);
+            await respondActionError(res, err, {
+                requestId: req.requestId,
+                acao: 'excluir-baixa',
+                borCod,
+                executadoPor,
+            });
         }
     }),
 );
