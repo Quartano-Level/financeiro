@@ -1,5 +1,13 @@
 # Columbia Financeiro — Changelog
 
+## v0.7.1 (2026-06-25)
+
+- **fix(permutas):** observabilidade das ações de borderô — quando o Conexos (`fin010`) recusa
+  finalizar/cancelar/estornar/excluir, o backend agora **loga a resposta crua do ERP** (status +
+  `messages`) e devolve `requestId` no corpo do erro (antes o motivo real era descartado). Quando o
+  código de erro do ERP não é mapeado, a resposta inclui `erpDetail` (key crua). Sem vazamento de
+  credencial (não loga headers/Cookie nem o Error cru). Base para corrigir o contrato de finalização.
+
 ## v0.7.0 (2026-06-24) — Permutas: cliente, universo de invoices, ciclo de borderô e cache
 
 - **feat(permutas):** reclassificação automática — múltiplas onde o adiantamento **cobre todas as
