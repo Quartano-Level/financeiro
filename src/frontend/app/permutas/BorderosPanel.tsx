@@ -433,12 +433,12 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
                             <Button
                               size="sm"
                               variant="outline"
-                              disabled={!noso || b.situacao !== 'EM_CADASTRO'}
+                              disabled={!noso || b.situacao !== 'FINALIZADO'}
                               title={
                                 !noso
                                   ? foraTip
-                                  : b.situacao !== 'EM_CADASTRO'
-                                    ? 'Só dá para cancelar borderô em aberto'
+                                  : b.situacao !== 'FINALIZADO'
+                                    ? 'Só dá para cancelar borderô já finalizado (aprovado)'
                                     : 'Cancelar o borderô no fin010'
                               }
                               onClick={() =>
@@ -648,7 +648,7 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
               {confirmaAcao?.tipo === 'finalizar'
                 ? `Finalizar/aprovar o borderô ${confirmaAcao.borCod} no fin010? Isso confirma a baixa da permuta — depois de finalizado, só por estorno.`
                 : confirmaAcao?.tipo === 'cancelar'
-                  ? `Cancelar o borderô ${confirmaAcao.borCod} no fin010? Ele deixa de ficar em cadastro (não é excluído).`
+                  ? `Cancelar o borderô ${confirmaAcao.borCod} (finalizado) no fin010? A permuta reabre (não é excluído).`
                   : confirmaAcao?.tipo === 'bordero'
                     ? `Excluir o borderô ${confirmaAcao.borCod} INTEIRO — todas as baixas e o próprio borderô serão removidos no fin010. Não pode ser desfeito por aqui.`
                     : confirmaAcao?.tipo === 'baixa'
