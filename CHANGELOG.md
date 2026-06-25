@@ -2,7 +2,7 @@
 
 ## v0.8.0 (2026-06-25) — Permutas: relatórios, execução em lote e fix do filtro de filial
 
-> Consolidação dos PRs #9, #10 e #11 num único release.
+> Consolidação dos PRs #9, #10, #11, #13, #14 e #15 num único release.
 
 - **feat(permutas):** exportação Excel (.xlsx) dos KPIs e relatórios do painel — Adiantamentos,
   Invoices, Já permutado e Bloqueadas no nível de detalhe de cada documento, mais dois relatórios
@@ -16,6 +16,13 @@
   por par. O analista clica de novo até zerar. Diálogo de confirmação. O "Processar" individual continua intacto.
 - **fix(permutas):** o seletor "Filial" passa a incluir filiais que só têm invoices (sem adiantamento
   PROFORMA) — ex.: filial 6. Agora a lista é a união das filiais de adiantamentos + invoices.
+- **fix(permutas):** baixa de **DESCONTO** grava a **conta de desconto (130 = VAR. CAMBIAL ATIVA)** —
+  antes ia `null` e o ERP recusava a finalização do borderô ("CONTA DE DESCONTO NÃO INFORMADA").
+- **fix(permutas):** observabilidade das ações de borderô — loga a resposta crua do ERP + devolve
+  `requestId` quando o Conexos recusa finalizar/cancelar/estornar/excluir.
+- **feat(permutas):** tela de **Borderôs** carrega ao vivo ao entrar (sem clicar em "Atualizar") e
+  ordena os EM ABERTO da nossa trilha no topo; o resto (finalizados + ERP) por data.
+- **fix(infra):** rate-limiters desligados sob `NODE_ENV=test` (evita 429 espúrios na suíte combinada).
 
 ## v0.7.0 (2026-06-24) — Permutas: cliente, universo de invoices, ciclo de borderô e cache
 

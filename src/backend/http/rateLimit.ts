@@ -7,6 +7,13 @@ import rateLimit, { type RateLimitRequestHandler } from 'express-rate-limit';
  * exhaust its session pool.
  */
 
+/**
+ * Sob o ambiente de teste (jest seta `NODE_ENV=test`) os limiters são DESLIGADOS: a suíte dispara
+ * dezenas de requisições do mesmo IP (`127.0.0.1`) na mesma janela de 60s e bateria no teto, gerando
+ * 429 espúrios/flaky. Rate-limit é infra de borda, não unidade de teste de regra de negócio.
+ */
+const skipInTest = (): boolean => process.env.NODE_ENV === 'test';
+
 /** Global limiter — ~100 requests per minute per IP. */
 export const globalLimiter: RateLimitRequestHandler = rateLimit({
     windowMs: 60_000,
@@ -14,6 +21,7 @@ export const globalLimiter: RateLimitRequestHandler = rateLimit({
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     message: { error: 'Too many requests' },
+    skip: skipInTest,
 });
 
 /** Strict limiter — ~10 requests per minute per IP, for heavy routes. */
@@ -23,4 +31,5 @@ export const heavyRouteLimiter: RateLimitRequestHandler = rateLimit({
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     message: { error: 'Too many requests' },
+    skip: skipInTest,
 });
