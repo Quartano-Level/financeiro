@@ -1,5 +1,33 @@
 # Columbia Financeiro — Changelog
 
+## v0.8.0 (2026-06-25) — Permutas: relatórios, execução em lote e fix do filtro de filial
+
+> Consolidação dos PRs #9, #10, #11, #13, #14 e #15 num único release.
+
+- **feat(permutas):** exportação Excel (.xlsx) dos KPIs e relatórios do painel — Adiantamentos,
+  Invoices, Já permutado e Bloqueadas no nível de detalhe de cada documento, mais dois relatórios
+  analíticos derivados (Reconciliação por processo e Quebra por cliente). Novo endpoint READ-ONLY
+  `GET /permutas/relatorios/:tipo` (reusa o snapshot do `/gestao`; serialização via exceljs) e botão
+  "Exportar" no header do painel (um arquivo por relatório).
+- **feat(permutas):** botão **"Executar"** na aba Automáticas — cria os borderôs das automáticas em
+  **lotes de até 10 por clique** (cap server-side; baixa real no `fin010`). Novo endpoint
+  `POST /permutas/reconciliar-lote` (admin + heavyRouteLimiter) orquestrando `reconciliarPermuta` adto
+  a adto com **continue-on-error**; herda o gate de escrita, a idempotência write-ahead e a atomicidade
+  por par. O analista clica de novo até zerar. Diálogo de confirmação. O "Processar" individual continua intacto.
+- **fix(permutas):** o seletor "Filial" passa a incluir filiais que só têm invoices (sem adiantamento
+  PROFORMA) — ex.: filial 6. Agora a lista é a união das filiais de adiantamentos + invoices.
+- **fix(permutas):** baixa de **DESCONTO** grava a **conta de desconto (130 = VAR. CAMBIAL ATIVA)** —
+  antes ia `null` e o ERP recusava a finalização do borderô ("CONTA DE DESCONTO NÃO INFORMADA").
+- **fix(permutas):** observabilidade das ações de borderô — loga a resposta crua do ERP + devolve
+  `requestId` quando o Conexos recusa finalizar/cancelar/estornar/excluir.
+- **feat(permutas):** tela de **Borderôs** carrega ao vivo ao entrar (sem clicar em "Atualizar") e
+  ordena os EM ABERTO da nossa trilha no topo; o resto (finalizados + ERP) por data.
+- **fix(infra):** rate-limiters desligados sob `NODE_ENV=test` (evita 429 espúrios na suíte combinada).
+- **feat(permutas):** nova aba **Histórico** (ao lado de Borderôs) — tudo que já foi executado (borderô
+  criado) sai das abas de trabalho e cai lá (read-only; aprovar/cancelar é em Borderôs). As abas
+  Automáticas/Múltiplas/Cross-over/Cross-process passam a mostrar só o que falta processar/alocar/baixar.
+- **chore(permutas):** tamanho do lote do "Executar" reduzido de 10 para **6** por clique (FE + cap backend).
+
 ## v0.7.0 (2026-06-24) — Permutas: cliente, universo de invoices, ciclo de borderô e cache
 
 - **feat(permutas):** reclassificação automática — múltiplas onde o adiantamento **cobre todas as

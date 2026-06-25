@@ -9,7 +9,9 @@ import {
   CheckCircle2,
   ChevronRight,
   DatabaseZap,
+  Download,
   Layers,
+  Play,
   RefreshCw,
   Users,
 } from 'lucide-react'
@@ -18,11 +20,13 @@ import {
   AlocacaoExcedeSaldoError,
   buscarInvoicesPorProcesso,
   criarAlocacao,
+  exportarRelatorio,
   fetchGestaoPermutas,
   fetchPermutaRuns,
   fetchPermutaStatus,
   IngestaoEmAndamentoError,
   reconciliarAdiantamento,
+  reconciliarLoteAutomaticas,
   removerAlocacao,
   runIngestaoManual,
 } from '@/lib/api'
@@ -35,10 +39,13 @@ import type {
   PermutaPendente,
   PermutaRun,
   ProcessamentoStatus,
+  ReconciliarLoteResult,
   ReconciliarResult,
+  RelatorioTipo,
   StatusElegibilidade,
 } from '@/lib/types'
-import { cn, formatNumber, progressoPagamento } from '@/lib/utils'
+import { RELATORIOS_DISPONIVEIS } from '@/lib/types'
+import { cn, formatNumber, ordenarPorEtapaPermuta, progressoPagamento } from '@/lib/utils'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -63,6 +70,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { BorderosPanel } from './BorderosPanel'
 import { Input } from '@/components/ui/input'
 import {
@@ -81,6 +89,27 @@ import {
  * libera também os botões legados de Processar/Lançar e remove o aviso de indisponibilidade.
  */
 const PROCESSAMENTO_HABILITADO = true
+
+/** Tamanho máximo do lote por clique em "Executar" — espelha o cap server-side (LOTE_MAX no backend).
+ * Mantém cada execução curta (longe do timeout do proxy) e limita o blast radius; o analista clica
+ * de novo para o próximo lote até zerar. */
+const LOTE_MAX = 6
+
+/** Uma linha da aba Histórico — permuta JÁ EXECUTADA (tem borderô), normalizada das 4 categorias. */
+interface ItemHistorico {
+  key: string
+  tipo: string
+  filCod: number
+  priCod: string
+  cliente: string
+  exportador: string
+  adtoDocCod: string
+  valor: number | null
+  moeda: string
+  borCod?: number
+  finalizado: boolean
+  busca: string
+}
 
 /** Rótulos legíveis para os motivos de bloqueio do snapshot. */
 const MOTIVO_LABEL: Record<string, string> = {
@@ -670,6 +699,24 @@ export default function GestaoPermutasPage() {
     }
   }, [load, carregarRuns])
 
+  // Exportação de relatórios (.xlsx). Guarda o `tipo` em andamento para o
+  // spinner por item; um clique baixa o arquivo (snapshot completo no backend).
+  const [exportando, setExportando] = React.useState<RelatorioTipo | null>(null)
+
+  const exportar = React.useCallback(async (tipo: RelatorioTipo, label: string) => {
+    setExportando(tipo)
+    try {
+      await exportarRelatorio(tipo)
+      toast.success(`Relatório "${label}" exportado.`)
+    } catch (err) {
+      toast.error(
+        `Falha ao exportar "${label}"${err instanceof Error ? ` — ${err.message}` : ''}.`,
+      )
+    } finally {
+      setExportando(null)
+    }
+  }, [])
+
   // Carga inicial: resolve a promise num callback (sem setState síncrono no
   // corpo do effect) e ignora o resultado se o componente desmontar.
   React.useEffect(() => {
@@ -686,6 +733,10 @@ export default function GestaoPermutasPage() {
   }, [carregarStatus])
 
   const [processando, setProcessando] = React.useState<string | null>(null)
+
+  // Execução em LOTE das automáticas (botão "Executar"): diálogo de confirmação + estado de execução.
+  const [confirmLoteOpen, setConfirmLoteOpen] = React.useState(false)
+  const [executandoLote, setExecutandoLote] = React.useState(false)
 
   // Alocação manual cross-process (Fase 2): adto + busca de invoice por processo.
   const [alocando, setAlocando] = React.useState<PermutaPendente | null>(null)
@@ -737,6 +788,40 @@ export default function GestaoPermutasPage() {
       setProcessando(null)
     }
   }, [confirmacao, load])
+
+  // Executa o PRÓXIMO LOTE de automáticas (até LOTE_MAX) — um request ao backend (`/reconciliar-lote`),
+  // que itera server-side com continue-on-error e capa em LOTE_MAX. Manda os "próximos N" pendentes; ao
+  // recarregar, os baixados ganham borderô e somem da contagem → o analista clica de novo até zerar. O
+  // "Processar" individual segue intacto. Decisão 2026-06-25: ignora filtros; lotes de 10 em 10.
+  const executarLote = React.useCallback(
+    async (docCods: string[], totalPendentes: number) => {
+      setConfirmLoteOpen(false)
+      setExecutandoLote(true)
+      try {
+        const r = await reconciliarLoteAutomaticas({ dryRun: false, adiantamentoDocCods: docCods })
+        const restantes = Math.max(0, totalPendentes - r.totalCasos)
+        const sufixoRestante = restantes > 0 ? ` Restam ${restantes} — clique em Executar de novo.` : ''
+        if (r.dryRun) {
+          toast.info('Escrita desabilitada no servidor (dry-run). Payloads validados, sem baixa real.')
+        } else {
+          if (r.totalSettled > 0)
+            toast.success(
+              `${r.totalSettled} baixa(s) no fin010 em ${r.borderos.length} borderô(s) (EM CADASTRO).${sufixoRestante}`,
+            )
+          if (r.totalErros > 0)
+            toast.error(`${r.totalErros} baixa(s) falharam — os casos seguem pendentes para retry.`)
+          if (r.totalSettled === 0 && r.totalErros === 0)
+            toast.info('Nada a executar — as automáticas já estavam processadas.')
+        }
+        await load()
+      } catch (err) {
+        toast.error(`Falha ao executar o lote${err instanceof Error ? `: ${err.message}` : ''}`)
+      } finally {
+        setExecutandoLote(false)
+      }
+    },
+    [load],
+  )
 
   // --- Alocação manual (Fase 2) ---
   // A busca é SEMPRE escopada à filial do adiantamento — o priCod não é único entre
@@ -913,11 +998,15 @@ export default function GestaoPermutasPage() {
     dispInvoice ?? Number.POSITIVE_INFINITY,
   )
 
-  // Filiais distintas presentes nos pendentes (para o seletor de filial).
-  const filiais = React.useMemo(
-    () => [...new Set((data?.pendentes ?? []).map((p) => p.filCod))].sort((a, b) => a - b),
-    [data],
-  )
+  // Filiais distintas presentes nos dados (para o seletor de filial). UNIÃO de adiantamentos E
+  // invoices: filiais que só têm invoice (sem adiantamento PROFORMA) — ex.: filial 6 — também precisam
+  // ser selecionáveis, senão suas invoices ficam visíveis em "Todas as filiais" mas impossíveis de filtrar.
+  const filiais = React.useMemo(() => {
+    const s = new Set<number>()
+    for (const p of data?.pendentes ?? []) s.add(p.filCod)
+    for (const i of data?.invoicesEmAberto ?? []) s.add(i.filCod)
+    return [...s].sort((a, b) => a - b)
+  }, [data])
 
   // Invoice casada de cada adiantamento (a partir dos casamentos automáticos) —
   // usado no detalhe p/ o analista ver a cobertura (adto × invoice).
@@ -1002,32 +1091,135 @@ export default function GestaoPermutasPage() {
   // Casamentos automáticos (sugeridos).
   const casamentosSugeridos = data?.casamentos ?? []
 
+  // Resumo do lote de automáticas (para o diálogo de confirmação do botão "Executar"):
+  // adiantamentos ainda SEM borderô vinculado (executáveis) + total a ser usado. Cobre TODAS as
+  // automáticas (ignora filtros da tela) — o backend reconcilia o mesmo conjunto.
+  const loteResumo = React.useMemo(() => {
+    // Pendentes = adtos das automáticas SEM borderô vinculado e não-processados. Dedup por docCod.
+    const vistos = new Set<string>()
+    const pendentes: { docCod: string; valorASerUsado?: number; moeda?: string }[] = []
+    for (const c of casamentosSugeridos) {
+      for (const a of c.adiantamentos) {
+        if (statusPorAdto[a.docCod] || a.processamentoStatus === 'processado') continue
+        if (vistos.has(a.docCod)) continue
+        vistos.add(a.docCod)
+        pendentes.push(a)
+      }
+    }
+    // Próximo lote = os primeiros LOTE_MAX pendentes (o backend capa no mesmo número).
+    const proximos = pendentes.slice(0, LOTE_MAX)
+    const totalUsd = proximos.reduce((s, a) => s + (a.valorASerUsado ?? 0), 0)
+    return {
+      casos: casamentosSugeridos.length,
+      adtos: pendentes.length,
+      proximosN: proximos.length,
+      proximosDocCods: proximos.map((a) => a.docCod),
+      totalUsd,
+      moeda: proximos[0]?.moeda ?? 'USD',
+    }
+  }, [casamentosSugeridos, statusPorAdto])
+
   // Regra 2026-06-24 — múltiplas AUTOMÁTICAS (adto cobre todas as invoices, Σ ≤ adto) já vêm como
   // CASAMENTOS sintéticos do backend (pré-distribuídos) → aparecem na tabela de casamentos da aba
   // Automáticas, com "Processar", como um caso simples. Aqui só tiramos elas da aba Múltiplas
   // (manuais = Σ invoices > adto). Cross-over e cross-process continuam separados.
   const multiplasManuais = multiplas.filter((p) => p.autoElegivel !== true)
 
-  // Filtro (filial + busca) + paginação por aba.
+  // EXECUTADO = adiantamento já tem borderô vinculado (aguardando finalização OU finalizado). Estes
+  // SAEM das abas de trabalho e vão para a aba "Histórico" — as abas de trabalho mostram só o que falta
+  // processar/alocar/baixar (deixa de poluir com o que já foi permutado).
+  const adtoExecutado = (docCod: string): boolean => statusPorAdto[docCod] !== undefined
+  // Um casamento (Automáticas) ainda é "de trabalho" enquanto tiver ALGUM adiantamento sem borderô.
+  const casamentoTrabalho = (c: CasamentoSugerido): boolean =>
+    c.adiantamentos.some((a) => !adtoExecutado(a.docCod))
+
+  const casamentosTrabalho = casamentosSugeridos.filter(casamentoTrabalho)
+  const multiplasTrabalho = multiplasManuais.filter((p) => !adtoExecutado(p.docCod))
+  const crossOverTrabalho = crossOver.filter((p) => !adtoExecutado(p.docCod))
+  const crossProcessTrabalho = crossProcess.filter((p) => !adtoExecutado(p.docCod))
+
+  // Filtro (filial + busca) + paginação por aba — só as NÃO executadas.
   const abaSimples = useTabelaFiltro(
-    casamentosSugeridos,
+    casamentosTrabalho,
     (c) => c.invoice.filCod,
     (c) => `${c.priCod} ${c.invoice.importador ?? ''} ${c.invoice.exportador} ${c.invoice.referencia ?? ''}`,
   )
   const abaMultiplas = useTabelaFiltro(
-    multiplasManuais,
+    multiplasTrabalho,
     (p) => p.filCod,
     (p) => `${p.docCod} ${p.importador ?? ''} ${p.exportador}`,
   )
   const abaCrossOver = useTabelaFiltro(
-    crossOver,
+    crossOverTrabalho,
     (p) => p.filCod,
     (p) => `${p.docCod} ${p.importador ?? ''} ${p.exportador}`,
   )
   const abaCrossProcess = useTabelaFiltro(
-    crossProcess,
+    crossProcessTrabalho,
     (p) => p.filCod,
     (p) => `${p.docCod} ${p.importador ?? ''} ${p.exportador}`,
+  )
+
+  // HISTÓRICO — tudo que já foi executado (tem borderô), unificado das 4 categorias. Read-only: as
+  // ações (aprovar/cancelar/estornar) ficam na aba Borderôs. Ordem: aguardando aprovação no topo,
+  // finalizadas no fundo; dentro de cada grupo, borderô mais recente primeiro.
+  const historico: ItemHistorico[] = []
+  for (const c of casamentosSugeridos) {
+    for (const a of c.adiantamentos) {
+      const v = statusPorAdto[a.docCod]
+      if (!v) continue
+      historico.push({
+        key: `auto-${a.docCod}-${v.borCod}`,
+        tipo: 'Automática',
+        filCod: c.invoice.filCod,
+        priCod: c.priCod,
+        cliente: c.invoice.importador ?? '',
+        exportador: c.invoice.exportador,
+        adtoDocCod: a.docCod,
+        // `valorASerUsado` zera quando a automática FINALIZA (a invoice foi abatida). Nesse caso usa o
+        // valor negociado do PRÓPRIO adiantamento (estável), pra não mostrar 0 no histórico.
+        valor:
+          (a.valorASerUsado ?? 0) > 0
+            ? a.valorASerUsado
+            : (pendenteByDocCod.get(a.docCod)?.valorMoedaNegociada ?? a.valorASerUsado ?? null),
+        moeda: a.moeda ?? c.invoice.moeda,
+        borCod: v.borCod,
+        finalizado: v.permutaStatus === 'finalizado',
+        busca: `${c.priCod} ${c.invoice.importador ?? ''} ${a.docCod} ${v.borCod}`,
+      })
+    }
+  }
+  const pushPendentesHistorico = (lista: PermutaPendente[], tipo: string) => {
+    for (const p of lista) {
+      const v = statusPorAdto[p.docCod]
+      if (!v) continue
+      historico.push({
+        key: `${tipo}-${p.docCod}-${v.borCod}`,
+        tipo,
+        filCod: p.filCod,
+        priCod: p.detalhe?.priCod ?? '',
+        cliente: p.importador ?? '',
+        exportador: p.exportador,
+        adtoDocCod: p.docCod,
+        valor: p.valorMoedaNegociada,
+        moeda: p.moeda,
+        borCod: v.borCod,
+        finalizado: v.permutaStatus === 'finalizado',
+        busca: `${p.docCod} ${p.importador ?? ''} ${v.borCod}`,
+      })
+    }
+  }
+  pushPendentesHistorico(multiplasManuais, 'Múltipla')
+  pushPendentesHistorico(crossOver, 'Cross-over')
+  pushPendentesHistorico(crossProcess, 'Cross-process')
+  historico.sort((a, b) => (b.borCod ?? 0) - (a.borCod ?? 0)) // borderô mais recente primeiro
+  const historicoOrdenado = ordenarPorEtapaPermuta(historico, (h) => [
+    h.finalizado ? 'finalizada' : 'aguardando-aprovacao',
+  ])
+  const abaHistorico = useTabelaFiltro(
+    historicoOrdenado,
+    (h) => h.filCod,
+    (h) => h.busca,
   )
 
   // Consolidação por MOEDA NEGOCIADA por card: USD como valor principal, demais
@@ -1047,6 +1239,66 @@ export default function GestaoPermutasPage() {
   // Tabela de alocação manual (1 adto → N invoices) — compartilhada pelas abas
   // Múltiplas, Cross-over e Cross-process. Mostra saldo restante + nº de
   // alocações + ação "Alocar" (distribui o saldo em várias invoices).
+  // Botão "Atualizar" por aba — rebusca gestão + status do nosso banco (mesmo `load` do header).
+  const botaoAtualizar = () => (
+    <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+      <RefreshCw className={cn(loading && 'animate-spin')} aria-hidden /> Atualizar
+    </Button>
+  )
+
+  // Tabela read-only do HISTÓRICO (permutas já executadas, com borderô). As ações ficam em Borderôs.
+  const renderHistoricoTable = (list: ItemHistorico[]) =>
+    list.length === 0 ? (
+      <EmptyState
+        title="Nada no histórico ainda"
+        description="Permutas executadas (com borderô criado) aparecem aqui — saem das abas de trabalho."
+      />
+    ) : (
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Filial</TableHead>
+            <TableHead>Tipo</TableHead>
+            <TableHead>Processo / Cliente</TableHead>
+            <TableHead>Adiantamento</TableHead>
+            <TableHead className="text-right">Valor</TableHead>
+            <TableHead>Borderô</TableHead>
+            <TableHead className="text-right">Situação</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {list.map((h) => (
+            <TableRow key={h.key}>
+              <TableCell>{h.filCod}</TableCell>
+              <TableCell>{h.tipo}</TableCell>
+              <TableCell className="font-medium">
+                {h.priCod}
+                <div className="text-xs font-normal text-muted-foreground">
+                  {h.cliente || h.exportador}
+                </div>
+              </TableCell>
+              <TableCell>{h.adtoDocCod}</TableCell>
+              <TableCell className="text-right">
+                <Moeda valor={h.valor} moeda={h.moeda} />
+              </TableCell>
+              <TableCell>{h.borCod ?? '—'}</TableCell>
+              <TableCell className="text-right">
+                {h.finalizado ? (
+                  <Badge className="border-transparent bg-success-subtle text-success-foreground">
+                    <CheckCircle2 aria-hidden /> Finalizado
+                  </Badge>
+                ) : (
+                  <Badge className="border-transparent bg-warning-subtle text-warning-foreground">
+                    Aguardando finalização
+                  </Badge>
+                )}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    )
+
   const renderCrossProcessTable = (list: PermutaPendente[]) =>
     list.length === 0 ? (
       <EmptyState
@@ -1153,6 +1405,43 @@ export default function GestaoPermutasPage() {
                 <Banknote aria-hidden /> Borderôs
               </Link>
             </Button>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  title="Exportar os relatórios do painel para Excel (.xlsx)"
+                  disabled={exportando !== null}
+                >
+                  <Download aria-hidden /> Exportar
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" aria-labelledby="exportar-titulo" className="w-72 p-1">
+                <p
+                  id="exportar-titulo"
+                  className="px-2 py-1.5 text-xs font-medium text-muted-foreground"
+                >
+                  Exportar para Excel (.xlsx)
+                </p>
+                {RELATORIOS_DISPONIVEIS.map((r) => (
+                  <button
+                    key={r.tipo}
+                    type="button"
+                    onClick={() => void exportar(r.tipo, r.label)}
+                    disabled={exportando !== null}
+                    title={r.descricao}
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    {exportando === r.tipo ? (
+                      <Spinner className="size-4 shrink-0" aria-hidden />
+                    ) : (
+                      <Download className="size-4 shrink-0" aria-hidden />
+                    )}
+                    <span className="truncate">{r.label}</span>
+                  </button>
+                ))}
+              </PopoverContent>
+            </Popover>
             <Button
               size="sm"
               onClick={abrirIngestao}
@@ -1717,25 +2006,36 @@ export default function GestaoPermutasPage() {
 
           {/* Casamento — sugerido (auto 1:N) × manual (N:M), alternados por aba */}
           <Card>
-            <Tabs defaultValue="automaticas">
+            <Tabs
+              defaultValue="automaticas"
+              onValueChange={(v) => {
+                // Auto-reload ao abrir uma aba de trabalho/histórico: rebusca os vínculos (status) do
+                // NOSSO banco — é o que move as linhas entre trabalho/histórico e atualiza os badges.
+                // (A aba Borderôs já se recarrega sozinha ao montar.)
+                if (v !== 'borderos') void carregarStatus()
+              }}
+            >
               <CardHeader>
                 <TabsList>
                   <TabsTrigger value="automaticas">
                     <ArrowLeftRight className="size-4" aria-hidden /> Automáticas (
-                    {casamentosSugeridos.length})
+                    {casamentosTrabalho.length})
                   </TabsTrigger>
                   <TabsTrigger value="multiplas">
-                    <Layers className="size-4" aria-hidden /> Múltiplas ({multiplasManuais.length})
+                    <Layers className="size-4" aria-hidden /> Múltiplas ({multiplasTrabalho.length})
                   </TabsTrigger>
                   <TabsTrigger value="cross-over">
-                    <Layers className="size-4" aria-hidden /> Cross-over ({crossOver.length})
+                    <Layers className="size-4" aria-hidden /> Cross-over ({crossOverTrabalho.length})
                   </TabsTrigger>
                   <TabsTrigger value="cross-process">
                     <ArrowLeftRight className="size-4" aria-hidden /> Cross-process (
-                    {crossProcess.length})
+                    {crossProcessTrabalho.length})
                   </TabsTrigger>
                   <TabsTrigger value="borderos">
                     <Banknote className="size-4" aria-hidden /> Borderôs
+                  </TabsTrigger>
+                  <TabsTrigger value="historico">
+                    <CheckCircle2 className="size-4" aria-hidden /> Histórico ({historico.length})
                   </TabsTrigger>
                 </TabsList>
               </CardHeader>
@@ -1746,7 +2046,10 @@ export default function GestaoPermutasPage() {
                     invoices <strong>ultrapassa</strong> o saldo do adiantamento — exige o analista
                     decidir a distribuição. Escolha a invoice e o valor a abater.
                   </p>
-                  <FiltroBarra aba={abaMultiplas} buscaPlaceholder="Buscar código ou cliente…" />
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <FiltroBarra aba={abaMultiplas} buscaPlaceholder="Buscar código ou cliente…" />
+                    {botaoAtualizar()}
+                  </div>
                   {renderCrossProcessTable(abaMultiplas.slice)}
                   <Paginacao aba={abaMultiplas} />
                 </TabsContent>
@@ -1756,7 +2059,10 @@ export default function GestaoPermutasPage() {
                     <strong>N adiantamentos ↔ M invoices</strong> (mesmo processo): vários
                     adiantamentos e várias invoices se cruzam. Você decide cada ligação e o valor.
                   </p>
-                  <FiltroBarra aba={abaCrossOver} buscaPlaceholder="Buscar código ou cliente…" />
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <FiltroBarra aba={abaCrossOver} buscaPlaceholder="Buscar código ou cliente…" />
+                    {botaoAtualizar()}
+                  </div>
                   {renderCrossProcessTable(abaCrossOver.slice)}
                   <Paginacao aba={abaCrossOver} />
                 </TabsContent>
@@ -1767,10 +2073,13 @@ export default function GestaoPermutasPage() {
                     <strong>outro processo</strong>. Busque a invoice pelo número do processo e
                     distribua o valor (a invoice precisa ter D.I/DUIMP).
                   </p>
-                  <FiltroBarra
-                    aba={abaCrossProcess}
-                    buscaPlaceholder="Buscar código ou cliente…"
-                  />
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <FiltroBarra
+                      aba={abaCrossProcess}
+                      buscaPlaceholder="Buscar código ou cliente…"
+                    />
+                    {botaoAtualizar()}
+                  </div>
                   {renderCrossProcessTable(abaCrossProcess.slice)}
                   <Paginacao aba={abaCrossProcess} />
                 </TabsContent>
@@ -1779,9 +2088,26 @@ export default function GestaoPermutasPage() {
                   <p className="text-sm text-muted-foreground">
                     <strong>Automáticas</strong>: casamento direto (1 invoice ← N adiantamentos) e
                     múltiplas onde o adiantamento <strong>cobre todas as invoices</strong> do processo
-                    (adto ≥ Σ invoices) — já vêm distribuídas (adto → cada invoice). Use o Processar.
+                    (adto ≥ Σ invoices) — já vêm distribuídas (adto → cada invoice). Use o Processar
+                    para uma a uma, ou <strong>Executar</strong> para criar todos os borderôs de uma vez.
                   </p>
-                  <FiltroBarra aba={abaSimples} buscaPlaceholder="Buscar processo ou cliente…" />
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <FiltroBarra aba={abaSimples} buscaPlaceholder="Buscar processo ou cliente…" />
+                    <div className="flex items-end gap-2">
+                      {botaoAtualizar()}
+                      <Button
+                        onClick={() => setConfirmLoteOpen(true)}
+                        disabled={
+                          !PROCESSAMENTO_HABILITADO || executandoLote || loteResumo.adtos === 0
+                        }
+                        title={`Executar as próximas ${loteResumo.proximosN} automáticas (lotes de até ${LOTE_MAX}; cria os borderôs no ERP)`}
+                      >
+                        {executandoLote ? <Spinner aria-hidden /> : <Play aria-hidden />}
+                        Executar próximas {loteResumo.proximosN}
+                        {loteResumo.adtos > loteResumo.proximosN ? ` de ${loteResumo.adtos}` : ''}
+                      </Button>
+                    </div>
+                  </div>
                   {abaSimples.total === 0 ? (
                 <EmptyState
                   title="Nenhum casamento sugerido"
@@ -1955,6 +2281,20 @@ export default function GestaoPermutasPage() {
                 <TabsContent value="borderos">
                   <BorderosPanel embedded />
                 </TabsContent>
+
+                <TabsContent value="historico" className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    <strong>Histórico</strong>: permutas já executadas (borderô criado) — saíram das
+                    abas de trabalho para não poluir. Read-only; aprovar/cancelar é na aba{' '}
+                    <strong>Borderôs</strong>. Aguardando finalização no topo, finalizadas no fundo.
+                  </p>
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <FiltroBarra aba={abaHistorico} buscaPlaceholder="Buscar processo, cliente ou borderô…" />
+                    {botaoAtualizar()}
+                  </div>
+                  {renderHistoricoTable(abaHistorico.slice)}
+                  <Paginacao aba={abaHistorico} />
+                </TabsContent>
               </CardContent>
             </Tabs>
           </Card>
@@ -2053,6 +2393,46 @@ export default function GestaoPermutasPage() {
                       ).length
                     : 0}{' '}
                   adiantamento(s)
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Confirmação do lote — "Executar todas" as automáticas de uma vez */}
+          <Dialog open={confirmLoteOpen} onOpenChange={setConfirmLoteOpen}>
+            <DialogContent size="md">
+              <DialogHeader>
+                <DialogTitle>Executar próximas {loteResumo.proximosN} automáticas</DialogTitle>
+                <DialogDescription>
+                  Cria os borderôs deste lote (baixa real no ERP). A execução é em lotes de até{' '}
+                  {LOTE_MAX} — clique de novo para os próximos. Esta ação é irreversível e ignora os
+                  filtros da tela.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogBody>
+                <dl className="grid grid-cols-2 gap-x-6 gap-y-3">
+                  <Campo label="Neste lote">{loteResumo.proximosN}</Campo>
+                  <Campo label="Automáticas pendentes (total)">{loteResumo.adtos}</Campo>
+                  <Campo label="Total a ser usado (lote)">
+                    <Moeda valor={loteResumo.totalUsd} moeda={loteResumo.moeda} />
+                  </Campo>
+                </dl>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Cada adiantamento deste lote vira um borderô <strong>EM CADASTRO</strong> no fin010.
+                  Os que falharem seguem pendentes para nova tentativa; os já processados são
+                  ignorados. Revise e aprove na aba <strong>Borderôs</strong>.
+                </p>
+              </DialogBody>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setConfirmLoteOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  disabled={!PROCESSAMENTO_HABILITADO || executandoLote || loteResumo.proximosN === 0}
+                  onClick={() => void executarLote(loteResumo.proximosDocCods, loteResumo.adtos)}
+                >
+                  {executandoLote ? <Spinner aria-hidden /> : <Play aria-hidden />}
+                  Executar {loteResumo.proximosN} adiantamento(s)
                 </Button>
               </DialogFooter>
             </DialogContent>

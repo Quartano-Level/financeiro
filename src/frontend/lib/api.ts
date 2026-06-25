@@ -10,6 +10,8 @@ import type {
   InvoiceBuscada,
   PermutaRun,
   PermutaStatusResponse,
+  ReconciliarLoteResult,
+  RelatorioTipo,
   ReconciliarResult,
 } from './types'
 import { gestaoPermutasFixture } from './permutas-fixture'
@@ -267,6 +269,36 @@ export async function reconciliarAdiantamento(
   return (await res.json()) as ReconciliarResult
 }
 
+/**
+ * Executa em LOTE a baixa de TODAS as automáticas (aba "Automáticas") num único request —
+ * `POST /permutas/reconciliar-lote`. O backend itera server-side (continue-on-error) e devolve o
+ * agregado. Mesmo gating de escrita do reconciliar individual (dry-run por padrão).
+ */
+export async function reconciliarLoteAutomaticas(
+  opts?: { dryRun?: boolean; dataMovto?: number; adiantamentoDocCods?: string[] },
+): Promise<ReconciliarLoteResult> {
+  const res = await fetch(`${API}/permutas/reconciliar-lote`, {
+    method: 'POST',
+    headers: await withAuthHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({
+      ...(opts?.dryRun !== undefined ? { dryRun: opts.dryRun } : {}),
+      ...(opts?.dataMovto !== undefined ? { dataMovto: opts.dataMovto } : {}),
+      ...(opts?.adiantamentoDocCods !== undefined
+        ? { adiantamentoDocCods: opts.adiantamentoDocCods }
+        : {}),
+    }),
+  })
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const j = await res.json()
+      detail = j?.error ? ` — ${j.error}` : ''
+    } catch {}
+    throw new Error(`API ${res.status}${detail}`)
+  }
+  return (await res.json()) as ReconciliarLoteResult
+}
+
 /** Memo curto do último resultado de borderôs — torna a reabertura da aba instantânea (a aba
  * desmonta/remonta a cada troca). `live`/expira em 30s ignora o memo e rebusca. */
 let borderosMemo: { at: number; data: BorderoResumo[] } | null = null
@@ -409,6 +441,49 @@ export async function fetchImportadores(): Promise<Importador[]> {
   if (!res.ok) throw new Error(`API ${res.status}`)
   const json = (await res.json()) as { importadores?: Importador[] }
   return json.importadores ?? []
+}
+
+/** Extrai o `filename="..."` de um header Content-Disposition (ou undefined). */
+function parseContentDispositionFilename(header: string | null): string | undefined {
+  if (!header) return undefined
+  const match = /filename="?([^"]+)"?/.exec(header)
+  return match?.[1]
+}
+
+/**
+ * Exporta um relatório do painel em Excel (.xlsx). Bate em
+ * `GET /permutas/relatorios/:tipo` com o token de auth, lê o blob e dispara o
+ * download no browser (o nome do arquivo vem do Content-Disposition). Lança em
+ * erro de rede/HTTP para o caller exibir um toast. Snapshot completo no backend
+ * (sem filtros da tela) — ver ADR de relatórios.
+ */
+export async function exportarRelatorio(tipo: RelatorioTipo): Promise<void> {
+  const res = await fetch(`${API}/permutas/relatorios/${encodeURIComponent(tipo)}`, {
+    headers: await withAuthHeaders(),
+  })
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const j = await res.json()
+      detail = j?.error ? ` — ${j.error}` : ''
+    } catch {}
+    throw new Error(`API ${res.status}${detail}`)
+  }
+  const blob = await res.blob()
+  const filename =
+    parseContentDispositionFilename(res.headers.get('content-disposition')) ??
+    `permutas-${tipo}.xlsx`
+  const url = URL.createObjectURL(blob)
+  try {
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }
 
 /**

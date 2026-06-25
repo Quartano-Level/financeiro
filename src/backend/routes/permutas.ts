@@ -6,6 +6,8 @@ import { bootstrapAppContainer } from '../domain/appContainer.js';
 import AlocacaoSaldoError from '../domain/errors/AlocacaoSaldoError.js';
 import IngestLockBusyError from '../domain/errors/IngestLockBusyError.js';
 import { PROCESSAMENTO_STATUS } from '../domain/interface/permutas/Processamento.js';
+import { LOG_TYPE } from '../domain/interface/log/LogInterface.js';
+import LogService from '../domain/service/LogService.js';
 import AlocacaoPermutasService from '../domain/service/permutas/AlocacaoPermutasService.js';
 import ClienteFiltroRepository from '../domain/repository/permutas/ClienteFiltroRepository.js';
 import PermutaProcessamentoRepository from '../domain/repository/permutas/PermutaProcessamentoRepository.js';
@@ -14,9 +16,12 @@ import PermutaRelationalRepository from '../domain/repository/permutas/PermutaRe
 import PermutaSnapshotRepository from '../domain/repository/permutas/PermutaSnapshotRepository.js';
 import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasService.js';
 import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasService.js';
+import RelatorioExportService from '../domain/service/permutas/RelatorioExportService.js';
+import { isRelatorioTipo } from '../domain/interface/permutas/Relatorio.js';
 import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
 import ReconciliacaoPermutaService from '../domain/service/permutas/ReconciliacaoPermutaService.js';
+import ReconciliacaoLotePermutaService from '../domain/service/permutas/ReconciliacaoLotePermutaService.js';
 import BorderoGestaoService from '../domain/service/permutas/BorderoGestaoService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { requireRole } from '../http/auth.js';
@@ -36,6 +41,12 @@ const reconciliarBodySchema = z.object({
     dryRun: z.boolean().optional(),
 });
 
+/** Zod no boundary — corpo do POST /reconciliar-lote (baixa em lote das automáticas). */
+const reconciliarLoteBodySchema = reconciliarBodySchema.extend({
+    /** Subconjunto a executar (os "próximos N" da tela). Interseccionado + capado no serviço. */
+    adiantamentoDocCods: z.array(z.string().trim().min(1)).optional(),
+});
+
 /**
  * Extrai uma mensagem AMIGÁVEL de um erro vindo do ERP (Conexos). As validações do `fin010`
  * voltam em `cause.response.data.messages[*].message` (ex.: FIN_IMPOSSIVEL_ALTERAR_REGISTRO
@@ -46,31 +57,101 @@ const ERP_MESSAGE_PT: Record<string, string> = {
         'Não é possível excluir: este borderô tem um estorno vinculado no ERP.',
     'FIN_014.FIN_IMPOSSIVEL_ALTERAR_REGISTRO':
         'Não é possível alterar: borderô finalizado. Estorne antes de mexer.',
+    'FIN_010.FIN_IMPOSSIVEL_ALTERAR_REGISTRO': 'Borderô finalizado — não é possível alterar.',
+    'FIN_010.DATA_BLOQUEADA_PELA_CONTABILIDADE':
+        'Data do borderô bloqueada pela contabilidade (período fechado). Use uma data em período aberto.',
+    CnxValidatorMny: 'Valor monetário inválido (precisão > 2 casas).',
+    CnxValidatorDescr: 'Descrição/comentário inválido (precisa estar em MAIÚSCULAS).',
     'Generic.ERROR_MESSAGE':
         'O ERP recusou esta operação para o borderô (estado incompatível com a ação).',
 };
 
-const erpErrorMessage = (err: unknown): string => {
+/**
+ * Extrai o detalhe CRU do erro do ERP (Conexos). As validações do `fin010` voltam em
+ * `cause.response.data.messages[*].message` (a key) + um `status` HTTP. `friendly` é a tradução PT
+ * (ou a própria key quando não mapeada). NOTA: o token/sid do Conexos vive no header `Cookie` da
+ * request, NÃO em `response.data` — logar `data` é seguro (não vaza credencial).
+ */
+const extractErpDetail = (
+    err: unknown,
+): { status?: number; data?: unknown; key?: string; friendly: string } => {
     const cause = (err as { cause?: unknown })?.cause;
-    const data = (cause as { response?: { data?: unknown } })?.response?.data as
-        | { messages?: Array<{ message?: string }> }
-        | undefined;
+    const resp = (cause as { response?: { status?: number; data?: unknown } })?.response;
+    const data = resp?.data as { messages?: Array<{ message?: string }> } | undefined;
     const key = data?.messages?.[0]?.message;
-    if (key) return ERP_MESSAGE_PT[key] ?? String(key);
-    return err instanceof Error ? err.message : 'erro ao executar a ação no Conexos';
+    const friendly = key
+        ? (ERP_MESSAGE_PT[key] ?? String(key))
+        : err instanceof Error
+          ? err.message
+          : 'erro ao executar a ação no Conexos';
+    return {
+        ...(resp?.status !== undefined ? { status: resp.status } : {}),
+        ...(data !== undefined ? { data } : {}),
+        ...(key !== undefined ? { key } : {}),
+        friendly,
+    };
 };
+
+/** Contexto de uma ação de borderô — alimenta o log estruturado da falha. */
+interface AcaoBorderoCtx {
+    requestId: string;
+    acao: string;
+    borCod: number;
+    executadoPor: string;
+}
 
 /**
  * Mapeia erro de ação de borderô para a resposta HTTP. `FORBIDDEN:` (autorização — borderô não é da
  * trilha deste sistema) → 403; demais (recusa do ERP, validação) → 400 com mensagem traduzida.
+ * SEMPRE devolve `requestId` (correlação com o log) e LOGA a resposta CRUA do ERP (status + messages)
+ * via `LogService.error` — antes a causa real do ERP era descartada (cegueira de diagnóstico).
  */
-const respondActionError = (res: import('express').Response, err: unknown): void => {
+const respondActionError = async (
+    res: import('express').Response,
+    err: unknown,
+    ctx: AcaoBorderoCtx,
+): Promise<void> => {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.startsWith('FORBIDDEN:')) {
-        res.status(403).json({ error: msg.replace(/^FORBIDDEN:\s*/, '') });
+        res.status(403).json({
+            error: msg.replace(/^FORBIDDEN:\s*/, ''),
+            requestId: ctx.requestId,
+        });
         return;
     }
-    res.status(400).json({ error: erpErrorMessage(err) });
+    const detail = extractErpDetail(err);
+    // Log estruturado da resposta crua do ERP (best-effort — nunca quebra a resposta ao usuário).
+    try {
+        const logService = container.resolve(LogService);
+        await logService.error({
+            type: LOG_TYPE.CONEXOS_ERROR,
+            message: `borderô ${ctx.acao} recusado pelo ERP`,
+            statusCode: 400,
+            // NÃO passar o Error cru: seu `cause` é o AxiosError, cujo `config.headers` carrega o
+            // Cookie/sid do Conexos. A causa real do ERP já está capturada em `erpData`/`erpKey` abaixo.
+            data: {
+                requestId: ctx.requestId,
+                acao: ctx.acao,
+                borCod: ctx.borCod,
+                executadoPor: ctx.executadoPor,
+                erpStatus: detail.status,
+                erpKey: detail.key,
+                erpData: detail.data,
+            },
+        });
+    } catch {
+        // logging é best-effort: nunca deve impedir a resposta de erro.
+    }
+    // Key não mapeada/genérica → inclui o texto cru do ERP no corpo, pra ser acionável sem ler log.
+    const erpDetail =
+        detail.key !== undefined && ERP_MESSAGE_PT[detail.key] === undefined
+            ? detail.key
+            : undefined;
+    res.status(400).json({
+        error: detail.friendly,
+        requestId: ctx.requestId,
+        ...(erpDetail !== undefined ? { erpDetail } : {}),
+    });
 };
 
 /** Meia-noite UTC do dia atual em epoch-ms (default do borDtaMvto). */
@@ -362,6 +443,28 @@ router.get(
     }),
 );
 
+// GET /permutas/relatorios/:tipo — exporta um relatório do painel em Excel (.xlsx).
+// Projeção READ-ONLY de `/gestao` (snapshot completo, sem filtros) — mesma faixa de
+// acesso de `/gestao` (auth global). `:tipo` validado contra o enum de relatórios.
+const CONTENT_TYPE_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+router.get(
+    '/relatorios/:tipo',
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const tipo = String(req.params.tipo);
+        if (!isRelatorioTipo(tipo)) {
+            res.status(400).json({ error: 'invalid report type' });
+            return;
+        }
+        const service = container.resolve(RelatorioExportService);
+        const { filename, buffer } = await service.exportar(tipo, req.requestId);
+        res.setHeader('Content-Type', CONTENT_TYPE_XLSX);
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(buffer);
+    }),
+);
+
 // POST /permutas/adiantamentos/:docCod/processar — registra o estado do analista
 // (botão "Processar"). UPSERT status='processado'; sobrevive à re-ingestão.
 router.post(
@@ -418,6 +521,36 @@ router.post(
     }),
 );
 
+// POST /permutas/reconciliar-lote — Fase 3: executa a BAIXA de TODAS as automáticas de uma vez
+// (cada adiantamento dos casamentos sugeridos → seu borderô). Server-side e sequencial (1 request,
+// continue-on-error). admin + heavyRouteLimiter. Mesmo gating de escrita do /reconciliar individual
+// (CONEXOS_WRITE_ENABLED/DRY_RUN) — o lote reusa o ReconciliacaoPermutaService integralmente.
+router.post(
+    '/reconciliar-lote',
+    requireRole('admin'),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = reconciliarLoteBodySchema.safeParse(req.body ?? {});
+        if (!parsed.success) {
+            res.status(400).json({ error: 'invalid body', details: parsed.error.flatten() });
+            return;
+        }
+        const executadoPor = req.user?.sub ?? req.user?.email ?? 'unknown';
+        const service = container.resolve(ReconciliacaoLotePermutaService);
+        const result = await service.reconciliarLote({
+            executadoPor,
+            dataMovto: parsed.data.dataMovto ?? todayUtcMidnightMs(),
+            requestId: req.requestId,
+            ...(parsed.data.dryRun !== undefined ? { dryRunOverride: parsed.data.dryRun } : {}),
+            ...(parsed.data.adiantamentoDocCods !== undefined
+                ? { adiantamentoDocCods: parsed.data.adiantamentoDocCods }
+                : {}),
+        });
+        res.json(result);
+    }),
+);
+
 // GET /permutas/borderos — gestão de borderôs (Fase 3.1). Lê do CACHE local (rápido); `?live=true`
 // (botão Atualizar) faz refresh ao vivo no ERP antes de ler. Enriquece com a trilha local.
 router.get(
@@ -467,7 +600,12 @@ router.post(
         try {
             res.json(await service.finalizarBordero({ borCod, executadoPor }));
         } catch (err) {
-            respondActionError(res, err);
+            await respondActionError(res, err, {
+                requestId: req.requestId,
+                acao: 'finalizar',
+                borCod,
+                executadoPor,
+            });
         }
     }),
 );
@@ -489,7 +627,12 @@ router.post(
         try {
             res.json(await service.cancelarBordero({ borCod, executadoPor }));
         } catch (err) {
-            respondActionError(res, err);
+            await respondActionError(res, err, {
+                requestId: req.requestId,
+                acao: 'cancelar',
+                borCod,
+                executadoPor,
+            });
         }
     }),
 );
@@ -511,7 +654,12 @@ router.post(
         try {
             res.json(await service.estornarBordero({ borCod, executadoPor }));
         } catch (err) {
-            respondActionError(res, err);
+            await respondActionError(res, err, {
+                requestId: req.requestId,
+                acao: 'estornar',
+                borCod,
+                executadoPor,
+            });
         }
     }),
 );
@@ -533,7 +681,12 @@ router.delete(
         try {
             res.json(await service.excluirBordero({ borCod, executadoPor }));
         } catch (err) {
-            respondActionError(res, err);
+            await respondActionError(res, err, {
+                requestId: req.requestId,
+                acao: 'excluir-borderô',
+                borCod,
+                executadoPor,
+            });
         }
     }),
 );
@@ -557,7 +710,12 @@ router.delete(
         try {
             res.json(await service.excluirBaixa({ borCod, invoiceDocCod, executadoPor }));
         } catch (err) {
-            respondActionError(res, err);
+            await respondActionError(res, err, {
+                requestId: req.requestId,
+                acao: 'excluir-baixa',
+                borCod,
+                executadoPor,
+            });
         }
     }),
 );

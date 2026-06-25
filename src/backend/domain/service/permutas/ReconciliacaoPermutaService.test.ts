@@ -302,6 +302,15 @@ describe('ReconciliacaoPermutaService', () => {
         const payload = conexosClient.gravarBaixaPermuta.mock.calls[0][0].payload;
         expect(payload.bxaMnyJuros).toBe(0);
         expect(payload.bxaMnyDesconto).toBe(150);
+        // OBRIGATÓRIO: a conta de desconto (130 = VAR. CAMBIAL ATIVA) precisa ir setada — senão o ERP
+        // recusa a FINALIZAÇÃO ("CONTA DE DESCONTO NÃO INFORMADA"). É uma CONSTANTE, não vem do ERP.
+        expect(payload.bxaCodGerDesconto).toBe(130);
+        expect(payload.gerDesDesconto).toBe('VARIAÇÃO CAMBIAL ATIVA REALIZADA');
+        // No caso DESCONTO o lado de juros fica nulo (espelha o padrão validado da baixa de juros).
+        expect(payload.bxaCodGerJuros).toBeNull();
+        expect(payload.bxaMnyJuros).toBe(0);
+        // Comentário nomeia a conta 130.
+        expect(payload.bxaEspComplemento).toContain('130');
     });
 
     it('anti-drift (I-Write-1): aborts when the baixa exceeds the ERP em-aberto (over-pay)', async () => {

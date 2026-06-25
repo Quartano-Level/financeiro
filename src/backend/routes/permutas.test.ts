@@ -15,6 +15,10 @@ import IngestLockBusyError from '../domain/errors/IngestLockBusyError.js';
 import AlocacaoPermutasService from '../domain/service/permutas/AlocacaoPermutasService.js';
 import EleicaoPermutasService from '../domain/service/permutas/EleicaoPermutasService.js';
 import GestaoPermutasService from '../domain/service/permutas/GestaoPermutasService.js';
+import RelatorioExportService from '../domain/service/permutas/RelatorioExportService.js';
+import ReconciliacaoLotePermutaService from '../domain/service/permutas/ReconciliacaoLotePermutaService.js';
+import BorderoGestaoService from '../domain/service/permutas/BorderoGestaoService.js';
+import LogService from '../domain/service/LogService.js';
 import IngestaoCoalescerService from '../domain/service/permutas/IngestaoCoalescerService.js';
 import PainelService from '../domain/service/permutas/PainelService.js';
 import ClienteFiltroRepository from '../domain/repository/permutas/ClienteFiltroRepository.js';
@@ -687,6 +691,229 @@ describe('RBAC — requireRole nas rotas de mutação (security-1)', () => {
             } as never);
             const leitura = await fetch(`${server.url}/permutas/painel`);
             expect(leitura.status).not.toBe(403);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+describe('GET /permutas/relatorios/:tipo', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    it('exports a known report as xlsx with attachment filename', async () => {
+        const exportar = jest.fn().mockResolvedValue({
+            filename: 'permutas-adiantamentos-2026-06-24.xlsx',
+            buffer: Buffer.from('PK-fake-xlsx'),
+        });
+        container.registerInstance(RelatorioExportService, { exportar } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/relatorios/adiantamentos`);
+            expect(res.status).toBe(200);
+            expect(res.headers.get('content-type')).toBe(
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            );
+            expect(res.headers.get('content-disposition')).toBe(
+                'attachment; filename="permutas-adiantamentos-2026-06-24.xlsx"',
+            );
+            expect(exportar).toHaveBeenCalledWith('adiantamentos', expect.any(String));
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('returns 400 for an unknown report type (and does not resolve the service)', async () => {
+        const exportar = jest.fn();
+        container.registerInstance(RelatorioExportService, { exportar } as never);
+
+        const server = await listen(buildApp({ authenticated: true }));
+        try {
+            const res = await fetch(`${server.url}/permutas/relatorios/inexistente`);
+            const body = await readJson(res);
+            expect(res.status).toBe(400);
+            expect(body.error).toMatch(/invalid report type/);
+            expect(exportar).not.toHaveBeenCalled();
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('requires authentication (401 when unauthenticated)', async () => {
+        const server = await listen(buildApp({ authenticated: false }));
+        try {
+            const res = await fetch(`${server.url}/permutas/relatorios/invoices`);
+            expect(res.status).toBe(401);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+describe('POST /permutas/reconciliar-lote', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    it('executa o lote das automáticas via service e devolve o agregado', async () => {
+        const reconciliarLote = jest.fn().mockResolvedValue({
+            dryRun: false,
+            writeEnabled: true,
+            totalCasos: 3,
+            totalSettled: 2,
+            totalErros: 1,
+            borderos: [100, 101],
+            resultados: [],
+        });
+        container.registerInstance(ReconciliacaoLotePermutaService, { reconciliarLote } as never);
+
+        const server = await listen(buildApp({ authenticated: true, role: 'admin' }));
+        try {
+            const res = await fetch(`${server.url}/permutas/reconciliar-lote`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ dryRun: true, adiantamentoDocCods: ['9026', '11821'] }),
+            });
+            const body = await readJson(res);
+            expect(res.status).toBe(200);
+            expect(body).toMatchObject({ totalCasos: 3, totalSettled: 2, borderos: [100, 101] });
+            // executadoPor = identidade autenticada; dryRun + subconjunto passados adiante.
+            expect(reconciliarLote).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    executadoPor: 'user-abc',
+                    dryRunOverride: true,
+                    adiantamentoDocCods: ['9026', '11821'],
+                }),
+            );
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('exige role admin (403 para não-admin)', async () => {
+        const reconciliarLote = jest.fn();
+        container.registerInstance(ReconciliacaoLotePermutaService, { reconciliarLote } as never);
+
+        const server = await listen(buildApp({ authenticated: true, role: 'viewer' }));
+        try {
+            const res = await fetch(`${server.url}/permutas/reconciliar-lote`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({}),
+            });
+            expect(res.status).toBe(403);
+            expect(reconciliarLote).not.toHaveBeenCalled();
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('exige autenticação (401)', async () => {
+        const server = await listen(buildApp({ authenticated: false }));
+        try {
+            const res = await fetch(`${server.url}/permutas/reconciliar-lote`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({}),
+            });
+            expect(res.status).toBe(401);
+        } finally {
+            await server.close();
+        }
+    });
+});
+
+describe('POST /permutas/borderos/:borCod/finalizar (erro do ERP — observabilidade)', () => {
+    afterEach(() => {
+        container.clearInstances();
+    });
+
+    const erpError = (key: string) =>
+        Object.assign(new Error('conexos'), {
+            cause: { response: { status: 400, data: { messages: [{ message: key }] } } },
+        });
+
+    it('loga a resposta CRUA do ERP e responde 400 com requestId + mensagem amigável', async () => {
+        const finalizarBordero = jest.fn().mockRejectedValue(erpError('Generic.ERROR_MESSAGE'));
+        const logError = jest.fn().mockResolvedValue(undefined);
+        container.registerInstance(BorderoGestaoService, { finalizarBordero } as never);
+        container.registerInstance(LogService, { error: logError } as never);
+
+        const server = await listen(buildApp({ authenticated: true, role: 'admin' }));
+        try {
+            const res = await fetch(`${server.url}/permutas/borderos/14918/finalizar`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ filCod: 2 }),
+            });
+            const body = await readJson(res);
+            expect(res.status).toBe(400);
+            expect(body.error).toMatch(/ERP recusou/);
+            expect(typeof body.requestId).toBe('string');
+            // A resposta crua do ERP (status + key + data) agora é logada — antes era descartada.
+            expect(logError).toHaveBeenCalledTimes(1);
+            const logArg = logError.mock.calls[0][0];
+            expect(logArg.data).toMatchObject({
+                acao: 'finalizar',
+                borCod: 14918,
+                erpStatus: 400,
+                erpKey: 'Generic.ERROR_MESSAGE',
+            });
+            expect(logArg.data.erpData).toMatchObject({
+                messages: [{ message: 'Generic.ERROR_MESSAGE' }],
+            });
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('inclui erpDetail (key crua) quando o código do ERP não é mapeado', async () => {
+        container.registerInstance(BorderoGestaoService, {
+            finalizarBordero: jest.fn().mockRejectedValue(erpError('FIN_010.ALGO_NAO_MAPEADO')),
+        } as never);
+        container.registerInstance(LogService, {
+            error: jest.fn().mockResolvedValue(undefined),
+        } as never);
+
+        const server = await listen(buildApp({ authenticated: true, role: 'admin' }));
+        try {
+            const res = await fetch(`${server.url}/permutas/borderos/14918/finalizar`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: '{}',
+            });
+            const body = await readJson(res);
+            expect(res.status).toBe(400);
+            expect(body.erpDetail).toBe('FIN_010.ALGO_NAO_MAPEADO');
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('FORBIDDEN (borderô fora da trilha) → 403 com requestId', async () => {
+        const forbidden = new Error(
+            'FORBIDDEN: borderô 14918 não foi criado por este sistema — ação não permitida',
+        );
+        container.registerInstance(BorderoGestaoService, {
+            finalizarBordero: jest.fn().mockRejectedValue(forbidden),
+        } as never);
+        container.registerInstance(LogService, {
+            error: jest.fn().mockResolvedValue(undefined),
+        } as never);
+
+        const server = await listen(buildApp({ authenticated: true, role: 'admin' }));
+        try {
+            const res = await fetch(`${server.url}/permutas/borderos/14918/finalizar`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: '{}',
+            });
+            const body = await readJson(res);
+            expect(res.status).toBe(403);
+            expect(body.error).toMatch(/não foi criado por este sistema/);
+            expect(typeof body.requestId).toBe('string');
         } finally {
             await server.close();
         }

@@ -74,9 +74,14 @@ valores ecoados, `borDtaMvto`, `vldPermuta:1`. **`bxaCodSeq` é a confirmação*
 
 - **I-Write-1 (anti-drift):** antes do passo 5, `|bxaMnyValor(passo 2) − valorEsperadoDaAlocacao|` deve estar
   dentro da tolerância (≤ 0,005 na moeda do título); divergência ⇒ **abortar** (em-aberto mudou no ERP).
-- **I-Write-2 (conta de juros):** `JUROS` → `bxaCodGerJuros=131`, `gerDesJuros="VARIAÇÃO CAMBIAL PASSIVA
-  REALIZADA"`. `DESCONTO` → valor em `bxaMnyDesconto` + `bxaCodGerDesconto=94`, `bxaMnyJuros=0`.
-  Ver `classificacao-juros-desconto.md`.
+- **I-Write-2 (conta da variação cambial):** seta a conta SÓ do lado ativo (a outra fica `null`).
+  `JUROS` → `bxaCodGerJuros=131`, `gerDesJuros="VARIAÇÃO CAMBIAL PASSIVA REALIZADA"`, `bxaMnyDesconto=0`,
+  `bxaCodGerDesconto=null`. `DESCONTO` → valor em `bxaMnyDesconto` + **`bxaCodGerDesconto=130`,
+  `gerDesDesconto="VARIAÇÃO CAMBIAL ATIVA REALIZADA"`**, `bxaMnyJuros=0`, `bxaCodGerJuros=null`.
+  Ver `classificacao-juros-desconto.md`. **Correção 2026-06-25:** este doc dizia `bxaCodGerDesconto=94`
+  (errado, conflitava com 130 nos demais docs) e o código lia a conta do `val2` do ERP (que volta `null`)
+  → o ERP gravava a baixa mas RECUSAVA a finalização com "CONTA DE DESCONTO NÃO INFORMADA" (borderô 14918).
+  Agora a conta 130 é constante no código (espelha o 131 do juros).
 - **I-Write-3 (um adto por vez):** escreve-se **adto a adto** (como no manual). Em múltipla, cada par
   adto→invoice é um passo 2–5 separado, no MESMO `borCod`.
 - **I-Write-4 (idempotência):** a execução carrega uma `idempotency_key`; uma re-execução com a mesma chave
@@ -137,6 +142,10 @@ ruído de ponto flutuante (ex.: `1000×(5.2887−4.9806)=308.1000000000005`).
 
 ## Fora do contrato (a confirmar em campo)
 - Comportamento quando a invoice **já tem baixa parcial** anterior (passo 2 pode mudar `bxaMnyValor`).
-- Finalização do borderô (`borVldFinalizado`/`borDtaFinalizado`) — o HAR ficou com `borVldFinalizado:0`
-  (borderô aberto); confirmar se a permuta exige um passo de "finalizar".
 - Estorno programático (hoje o analista estorna pela UI).
+
+## Resolvido em campo (2026-06-25)
+- **Finalização do borderô** (`POST fin010/finalizar/{borCod}`, body vazio + filCod no header): o
+  endpoint estava CORRETO. A finalização falhava com `Generic.ERROR_MESSAGE` cujo `vars.msg` real era
+  **"CONTA DE DESCONTO NÃO INFORMADA!!!"** — causa: a baixa de DESCONTO ia sem `bxaCodGerDesconto` (ver
+  I-Write-2). Corrigido setando a conta 130. (Sonda HAR `25columbiatrading.conexos.cloud.har`, borderô 14918.)

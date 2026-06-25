@@ -36,6 +36,55 @@ export function formatNumber(val: number): string {
   }).format(val)
 }
 
+/** Etapa do ciclo de uma permuta nas abas de trabalho (Automáticas/Múltiplas/Cross-over/Cross-process). */
+export type EtapaPermuta = 'aguardando-aprovacao' | 'a-processar' | 'finalizada'
+
+/**
+ * Bucket de ordenação de uma linha a partir das etapas dos seus adiantamentos:
+ * 0 = **pendente de aprovação** (tem borderô em aberto a aprovar) → topo;
+ * 1 = **a processar** (sem borderô — falta processar/alocar/baixar) → meio;
+ * 2 = **finalizada** (todos os borderôs finalizados) → fundo.
+ * Regra: se QUALQUER adto está aguardando aprovação → 0; senão se QUALQUER falta processar → 1; senão 2.
+ */
+export function bucketEtapaPermuta(etapas: EtapaPermuta[]): 0 | 1 | 2 {
+  if (etapas.some((e) => e === 'aguardando-aprovacao')) return 0
+  if (etapas.some((e) => e === 'a-processar')) return 1
+  return 2
+}
+
+/**
+ * Ordena as linhas de uma aba de trabalho por etapa: aguardando aprovação (topo) → a processar (meio)
+ * → finalizadas (fundo). Estável: dentro do mesmo bucket preserva a ordem original. Não muta a entrada.
+ * `etapasDe(x)` devolve as etapas de cada adiantamento da linha (1 para pendente, N para casamento).
+ */
+export function ordenarPorEtapaPermuta<T>(items: T[], etapasDe: (x: T) => EtapaPermuta[]): T[] {
+  return items
+    .map((x, i) => ({ x, i, bucket: bucketEtapaPermuta(etapasDe(x)) }))
+    .sort((a, b) => a.bucket - b.bucket || a.i - b.i)
+    .map((e) => e.x)
+}
+
+/**
+ * Ordena os borderôs do painel: os EM ABERTO **da nossa trilha** (`daTrilha === true` e
+ * `situacao === 'EM_CADASTRO'`) sobem para o topo — são os acionáveis (aprovar/cancelar). O resto
+ * (nossos finalizados/cancelados + os que vêm do ERP) mantém a ordem por DATA decrescente (`criadoEm`),
+ * como o ERP entrega. Em-aberto vindos do ERP (sem trilha) NÃO sobem — ficam na ordem por data.
+ * Retorna uma cópia ordenada (não muta a entrada).
+ */
+export function ordenarBorderosPainel<
+  T extends { daTrilha?: boolean; situacao: string; criadoEm?: string },
+>(borderos: T[]): T[] {
+  const prioridade = (b: T): number =>
+    b.daTrilha === true && b.situacao === 'EM_CADASTRO' ? 0 : 1
+  return [...borderos].sort((a, b) => {
+    const pa = prioridade(a)
+    const pb = prioridade(b)
+    if (pa !== pb) return pa - pb
+    // Mesma prioridade → data desc (mais recentes primeiro), como o ERP entrega.
+    return (b.criadoEm ?? '').localeCompare(a.criadoEm ?? '')
+  })
+}
+
 /**
  * Progresso de pagamento de um adiantamento parcialmente pago (ADR-0006).
  * `valorTotal`/`valorAberto` vêm em BRL (`mnyTitValor`/`mnyTitAberto`). Retorna

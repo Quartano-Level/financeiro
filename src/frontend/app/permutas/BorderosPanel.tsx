@@ -45,7 +45,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { cn, formatNumber } from '@/lib/utils'
+import { cn, formatNumber, ordenarBorderosPainel } from '@/lib/utils'
 
 type FiltroSituacao = 'todos' | 'abertos' | 'finalizados' | 'cancelados'
 
@@ -108,9 +108,11 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
     }
   }, [])
 
+  // Carga inicial AO VIVO (live=true): ao entrar na tela já traz o estado fresco do ERP, sem o
+  // usuário precisar clicar em "Atualizar" (o memo de 30s é ignorado no modo live).
   React.useEffect(() => {
     let active = true
-    fetchBorderos(false)
+    fetchBorderos(true)
       .then((b) => {
         if (active) setBorderos(b)
       })
@@ -147,20 +149,23 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
   const filiais = [...new Set((borderos ?? []).map((b) => b.filCod))].sort((a, b) => a - b)
 
   const borderoNorm = borderoBusca.trim()
-  const lista = (borderos ?? [])
-    .filter((b) =>
-      filtro === 'todos'
-        ? true
-        : filtro === 'finalizados'
-          ? b.situacao === 'FINALIZADO'
-          : filtro === 'cancelados'
-            ? b.situacao === 'CANCELADO'
-            : b.situacao === 'EM_CADASTRO',
-    )
-    .filter((b) => borderoNorm === '' || String(b.borCod).includes(borderoNorm))
-    .filter((b) => usuarioFiltro === 'todos' || b.criadoPor === usuarioFiltro)
-    .filter((b) => filialFiltro === 'todos' || String(b.filCod) === filialFiltro)
-    .filter((b) => dataFiltro === '' || (b.criadoEm ?? '').slice(0, 10) === dataFiltro)
+  // Ordena: EM ABERTO da nossa trilha no topo; resto (nossos finalizados + ERP) por data desc.
+  const lista = ordenarBorderosPainel(
+    (borderos ?? [])
+      .filter((b) =>
+        filtro === 'todos'
+          ? true
+          : filtro === 'finalizados'
+            ? b.situacao === 'FINALIZADO'
+            : filtro === 'cancelados'
+              ? b.situacao === 'CANCELADO'
+              : b.situacao === 'EM_CADASTRO',
+      )
+      .filter((b) => borderoNorm === '' || String(b.borCod).includes(borderoNorm))
+      .filter((b) => usuarioFiltro === 'todos' || b.criadoPor === usuarioFiltro)
+      .filter((b) => filialFiltro === 'todos' || String(b.filCod) === filialFiltro)
+      .filter((b) => dataFiltro === '' || (b.criadoEm ?? '').slice(0, 10) === dataFiltro),
+  )
 
   // Paginação (50/página) sobre a lista filtrada.
   const PAGE_SIZE = 50
@@ -428,12 +433,12 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
                             <Button
                               size="sm"
                               variant="outline"
-                              disabled={!noso || b.situacao !== 'EM_CADASTRO'}
+                              disabled={!noso || b.situacao !== 'FINALIZADO'}
                               title={
                                 !noso
                                   ? foraTip
-                                  : b.situacao !== 'EM_CADASTRO'
-                                    ? 'Só dá para cancelar borderô em aberto'
+                                  : b.situacao !== 'FINALIZADO'
+                                    ? 'Só dá para cancelar borderô já finalizado (aprovado)'
                                     : 'Cancelar o borderô no fin010'
                               }
                               onClick={() =>
@@ -643,7 +648,7 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
               {confirmaAcao?.tipo === 'finalizar'
                 ? `Finalizar/aprovar o borderô ${confirmaAcao.borCod} no fin010? Isso confirma a baixa da permuta — depois de finalizado, só por estorno.`
                 : confirmaAcao?.tipo === 'cancelar'
-                  ? `Cancelar o borderô ${confirmaAcao.borCod} no fin010? Ele deixa de ficar em cadastro (não é excluído).`
+                  ? `Cancelar o borderô ${confirmaAcao.borCod} (finalizado) no fin010? A permuta reabre (não é excluído).`
                   : confirmaAcao?.tipo === 'bordero'
                     ? `Excluir o borderô ${confirmaAcao.borCod} INTEIRO — todas as baixas e o próprio borderô serão removidos no fin010. Não pode ser desfeito por aqui.`
                     : confirmaAcao?.tipo === 'baixa'
