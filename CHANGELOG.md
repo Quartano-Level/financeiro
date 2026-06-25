@@ -1,5 +1,11 @@
 # Columbia Financeiro — Changelog
 
+## v0.8.0 (2026-06-25) — Permutas: tela de borderôs (auto-refresh + ordenação)
+
+- **feat(permutas):** a tela de **Borderôs** carrega **ao vivo do ERP ao entrar** (sem precisar clicar
+  em "Atualizar") e ordena os borderôs **EM ABERTO da nossa trilha no topo** (por data); o resto
+  (nossos finalizados + os que vêm do ERP) mantém a ordem por data.
+
 ## v0.7.0 (2026-06-24) — Permutas: cliente, universo de invoices, ciclo de borderô e cache
 
 - **feat(permutas):** reclassificação automática — múltiplas onde o adiantamento **cobre todas as
