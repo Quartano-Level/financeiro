@@ -10,6 +10,12 @@
 - **perf(permutas) [performance-1]:** `AlocacaoPermutasService.buscarInvoices` passa a **capar a
   concorrência** das chamadas ao Conexos (cada invoice dispara ~3 chamadas) via `BoundedConcurrency`
   (teto 8), em vez de `Promise.all` sem limite — evita estourar o ERP em processos com muitas invoices.
+- **perf(permutas) [performance-2]:** auto-alocação em lote (`autoAlocarSeElegivel`) deixa de ser
+  **O(N²)** chamadas ao Conexos — a lista de invoices é buscada **uma vez** e reusada por cada `alocar`
+  (param `prefetchedInvoices`) em vez de re-buscar LIVE por item. Snapshot consistente + ~N× menos I/O.
+- **test(permutas) [testability-2]:** cobre os 14 métodos públicos restantes do `PermutaExecucaoRepository`
+  (idempotência da baixa) — cobertura **49% → 96% stmts / 100% lines** (SQL parametrizado, cache de borderô,
+  delete/rename de chave). BE 494 testes.
 - **docs:** relatório completo do **Regis-Review** (8 QAs, Bass & Clements) em
   `docs/regis-review/2026-06-26-0058/` (REPORT.md + KANBAN.md de 66 cards). Overall 5.35; Fault Tolerance 8.1.
 

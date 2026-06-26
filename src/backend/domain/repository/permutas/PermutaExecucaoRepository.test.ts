@@ -172,3 +172,144 @@ describe('PermutaExecucaoRepository', () => {
         expect(await repo.findByIdempotencyKey('nope')).toBeNull();
     });
 });
+
+describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () => {
+    const sqlOf = (m: jest.Mock) => m.mock.calls[0][0] as string;
+    const paramsOf = (m: jest.Mock) => m.mock.calls[0][1] as Record<string, unknown>;
+
+    it('listByAdiantamento: filtra por adiantamento_doc_cod, parametrizado', async () => {
+        const db = buildDb();
+        await new PermutaExecucaoRepository(db).listByAdiantamento('A1');
+        const sql = sqlOf(db.selectMany as jest.Mock);
+        expect(sql).toContain('FROM permuta_alocacao_execucao');
+        expect(sql).toContain('adiantamento_doc_cod = $adtoDocCod');
+        expect(sql).not.toMatch(/'\s*\+|\$\{/);
+        expect(paramsOf(db.selectMany as jest.Mock)).toEqual({ adtoDocCod: 'A1' });
+    });
+
+    it('listComBordero: só linhas com bor_cod NOT NULL', async () => {
+        const db = buildDb();
+        await new PermutaExecucaoRepository(db).listComBordero();
+        expect(sqlOf(db.selectMany as jest.Mock)).toContain('bor_cod IS NOT NULL');
+    });
+
+    it('findByBorCodInvoice: WHERE bor_cod AND invoice_doc_cod, parametrizado', async () => {
+        const db = buildDb();
+        await new PermutaExecucaoRepository(db).findByBorCodInvoice(2039, '4117');
+        const sql = sqlOf(db.selectFirst as jest.Mock);
+        expect(sql).toContain('bor_cod = $borCod');
+        expect(sql).toContain('invoice_doc_cod = $invoiceDocCod');
+        expect(paramsOf(db.selectFirst as jest.Mock)).toEqual({
+            borCod: 2039,
+            invoiceDocCod: '4117',
+        });
+    });
+
+    it('deleteByBorCodInvoice: DELETE por par, retorna nº de linhas', async () => {
+        const db = buildDb();
+        const n = await new PermutaExecucaoRepository(db).deleteByBorCodInvoice(2039, '4117');
+        const sql = sqlOf(db.update as jest.Mock);
+        expect(sql).toContain('DELETE FROM permuta_alocacao_execucao');
+        expect(sql).toContain('bor_cod = $borCod');
+        expect(sql).toContain('invoice_doc_cod = $invoiceDocCod');
+        expect(paramsOf(db.update as jest.Mock)).toEqual({ borCod: 2039, invoiceDocCod: '4117' });
+        expect(n).toBe(1);
+    });
+
+    it('listByBorCod: filtra por bor_cod', async () => {
+        const db = buildDb();
+        await new PermutaExecucaoRepository(db).listByBorCod(2039);
+        expect(sqlOf(db.selectMany as jest.Mock)).toContain('WHERE bor_cod = $borCod');
+        expect(paramsOf(db.selectMany as jest.Mock)).toEqual({ borCod: 2039 });
+    });
+
+    it('countByBorCod: count(*) → número (0 quando null)', async () => {
+        const db = buildDb();
+        (db.selectFirst as jest.Mock).mockResolvedValue({ n: '3' });
+        expect(await new PermutaExecucaoRepository(db).countByBorCod(2039)).toBe(3);
+        expect(sqlOf(db.selectFirst as jest.Mock)).toContain('count(*)');
+        const db2 = buildDb();
+        expect(await new PermutaExecucaoRepository(db2).countByBorCod(1)).toBe(0);
+    });
+
+    it('deleteByBorCod / deleteByKey / setRequestPayload / renameKey: parametrizados', async () => {
+        const db = buildDb();
+        const repo = new PermutaExecucaoRepository(db);
+        await repo.deleteByBorCod(2039);
+        await repo.deleteByKey('permuta:A:I');
+        await repo.setRequestPayload('permuta:A:I', { a: 1 });
+        await repo.renameKey('old', 'new');
+        const calls = (db.update as jest.Mock).mock.calls;
+        expect(calls[0][0]).toContain(
+            'DELETE FROM permuta_alocacao_execucao WHERE bor_cod = $borCod',
+        );
+        expect(calls[0][1]).toEqual({ borCod: 2039 });
+        expect(calls[1][1]).toEqual({ key: 'permuta:A:I' });
+        expect(calls[2][0]).toContain('request_payload = $payload::jsonb');
+        expect(calls[2][1]).toEqual({ key: 'permuta:A:I', payload: JSON.stringify({ a: 1 }) });
+        expect(calls[3][0]).toContain('SET idempotency_key = $newKey');
+        expect(calls[3][1]).toEqual({ oldKey: 'old', newKey: 'new' });
+    });
+
+    it('listBorderoCache: ordena por data desc, LIMIT clampado, mapeia situação', async () => {
+        const db = buildDb();
+        (db.selectMany as jest.Mock).mockResolvedValue([
+            {
+                bor_cod: 9,
+                fil_cod: 4,
+                bor_vld_finalizado: 2,
+                bor_cod_estornado: null,
+                vlr_total_liquido: 10,
+                bor_dta_mvto: 5,
+                usn_des_nome_cad: 'admin',
+            },
+        ]);
+        const out = await new PermutaExecucaoRepository(db).listBorderoCache(50);
+        const sql = sqlOf(db.selectMany as jest.Mock);
+        expect(sql).toContain('FROM permuta_bordero');
+        expect(sql).toContain('ORDER BY bor_dta_mvto DESC');
+        expect(sql).toContain('LIMIT 50');
+        expect(out[0]).toMatchObject({ borCod: 9, filCod: 4, borVldFinalizado: 2 });
+    });
+
+    it('replaceBorderoCache: no-op com lista vazia; upsert + delete-dos-ausentes com itens', async () => {
+        const db = buildDb();
+        const repo = new PermutaExecucaoRepository(db);
+        await repo.replaceBorderoCache([]);
+        expect(db.update as jest.Mock).not.toHaveBeenCalled(); // fetch vazio NÃO limpa o cache
+        await repo.replaceBorderoCache([
+            {
+                borCod: 1,
+                filCod: 4,
+                borVldFinalizado: 1,
+                borCodEstornado: null,
+                usnDesNomeCad: null,
+            },
+        ]);
+        const calls = (db.update as jest.Mock).mock.calls;
+        expect(calls[0][0]).toContain('INSERT INTO permuta_bordero');
+        expect(calls[0][0]).toContain('ON CONFLICT (bor_cod) DO UPDATE');
+        expect(calls[1][0]).toContain('DELETE FROM permuta_bordero WHERE bor_cod NOT IN');
+        expect(calls[0][1]).toMatchObject({ bor_0: 1, fil_0: 4, fin_0: 1 });
+    });
+
+    it('updateBorderoCacheSituacao: seta finalizado/estornado por bor_cod (cancelar → 2)', async () => {
+        const db = buildDb();
+        await new PermutaExecucaoRepository(db).updateBorderoCacheSituacao(2038, {
+            borVldFinalizado: 2,
+        });
+        const sql = sqlOf(db.update as jest.Mock);
+        expect(sql).toContain('UPDATE permuta_bordero');
+        expect(sql).toContain('bor_vld_finalizado = $fin');
+        expect(paramsOf(db.update as jest.Mock)).toEqual({ bor: 2038, fin: 2, est: null });
+    });
+
+    it('deleteBorderoCache: DELETE por bor_cod', async () => {
+        const db = buildDb();
+        await new PermutaExecucaoRepository(db).deleteBorderoCache(2038);
+        expect(sqlOf(db.update as jest.Mock)).toContain(
+            'DELETE FROM permuta_bordero WHERE bor_cod = $bor',
+        );
+        expect(paramsOf(db.update as jest.Mock)).toEqual({ bor: 2038 });
+    });
+});

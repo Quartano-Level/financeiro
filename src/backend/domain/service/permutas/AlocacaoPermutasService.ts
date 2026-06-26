@@ -178,7 +178,12 @@ export default class AlocacaoPermutasService {
      * (saldo/taxa/D.I atuais), valida os invariantes de saldo dos dois lados,
      * recalcula a variação cambial pela taxa da invoice + valor alocado e persiste.
      */
-    public alocar = async (input: AlocarInput): Promise<void> => {
+    public alocar = async (
+        input: AlocarInput,
+        // performance-1/2: lista de invoices já buscada (mesmo processo/filial), p/ a auto-alocação em
+        // lote NÃO re-buscar o Conexos a cada item (era O(N²)). `undefined` → busca normalmente.
+        prefetchedInvoices?: InvoiceBuscada[],
+    ): Promise<void> => {
         const { adiantamentoDocCod, invoiceDocCod, invoicePriCod, valorAlocado } = input;
         if (!(valorAlocado > 0)) {
             throw new AlocacaoSaldoError({
@@ -205,7 +210,10 @@ export default class AlocacaoPermutasService {
         if (adto.filCod === undefined) {
             throw new Error(`adiantamento ${adiantamentoDocCod} without filial`);
         }
-        const invoices = await this.buscarInvoices(invoicePriCod, adto.filCod);
+        // Reusa a lista pré-buscada quando o caller já a tem (auto-alocação em lote, mesmo processo) —
+        // snapshot consistente E sem re-fetch O(N²). Senão busca ao vivo.
+        const invoices =
+            prefetchedInvoices ?? (await this.buscarInvoices(invoicePriCod, adto.filCod));
         const invoice = invoices.find((i) => i.docCod === invoiceDocCod);
         if (!invoice)
             throw new Error(`invoice ${invoiceDocCod} not found in process ${invoicePriCod}`);
@@ -350,10 +358,9 @@ export default class AlocacaoPermutasService {
         ).length;
         if (casamManualDoProcesso !== 1) return false;
 
-        // Invoices vivas do processo com D.I/DUIMP (sem D.I não permuta).
-        const invoices = (await this.buscarInvoices(adto.priCod, adto.filCod)).filter(
-            (i) => i.temDi,
-        );
+        // Invoices vivas do processo (buscadas UMA vez — reusadas no lote, performance-2).
+        const invoicesAll = await this.buscarInvoices(adto.priCod, adto.filCod);
+        const invoices = invoicesAll.filter((i) => i.temDi); // sem D.I não permuta
         if (invoices.length === 0) return false;
 
         // O adto COBRE todas as invoices? saldoNeg(USD) ≥ Σ invoices(USD). Senão → manual.
@@ -370,7 +377,8 @@ export default class AlocacaoPermutasService {
                 valorAlocado: (inv.valorMoedaNegociada ?? 0) - inv.jaAlocado,
             }))
             .filter((it) => it.valorAlocado > 0);
-        return this.criarRascunhosAtomico(adiantamentoDocCod, itens, criadoPor);
+        // Passa a lista já buscada → `alocar` não re-busca por item (O(N) em vez de O(N²)).
+        return this.criarRascunhosAtomico(adiantamentoDocCod, itens, criadoPor, invoicesAll);
     };
 
     /**
@@ -383,12 +391,15 @@ export default class AlocacaoPermutasService {
         adiantamentoDocCod: string,
         itens: Array<{ invoiceDocCod: string; invoicePriCod: string; valorAlocado: number }>,
         criadoPor: string,
+        // performance-2: quando todos os itens são do MESMO processo, passa a lista já buscada uma vez
+        // (evita o re-fetch do Conexos a cada `alocar` — antes O(N²)).
+        prefetchedInvoices?: InvoiceBuscada[],
     ): Promise<boolean> => {
         if (itens.length === 0) return false;
         const criadas: string[] = [];
         try {
             for (const it of itens) {
-                await this.alocar({ adiantamentoDocCod, ...it, criadoPor });
+                await this.alocar({ adiantamentoDocCod, ...it, criadoPor }, prefetchedInvoices);
                 criadas.push(it.invoiceDocCod);
             }
         } catch (err) {
