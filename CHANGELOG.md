@@ -1,5 +1,19 @@
 # Columbia Financeiro — Changelog
 
+## v0.9.2 (2026-06-26) — Permutas: aba Borderôs abre instantânea (stale-while-revalidate)
+
+- **perf(permutas) [Borderôs]:** a aba Borderôs deixava de renderizar **esperando o refresh AO VIVO do
+  ERP em todas as filiais** (carga inicial `live=true`). Agora usa **stale-while-revalidate**: mostra o
+  **cache na hora** (lê do banco em ms) e revalida o ERP **em background** — chip discreto "atualizando…"
+  ao lado do Atualizar; a lista se refresca sozinha quando volta; se o ERP falhar, mantém o cache (sem
+  travar). O botão **Atualizar** segue como refresh ao vivo explícito. Mudança contida em `BorderosPanel`.
+- **refactor (estrutural, sem mudança de comportamento) — landou junto nesta janela:**
+  - **CC-2** (`#24`): o god-client `ConexosClient` (1.972 LOC) foi quebrado em `ConexosBaseClient` +
+    `ConexosBaixaClient`/`…FinanceiroClient`/`…TitulosClient`/`…CadastroClient` (por família de endpoint),
+    7 call sites migrados, 496 testes verdes. Destrava SISPAG/GED.
+  - **CC-1** (`#23`): o god-component `page.tsx` (2.981 → 1.026 LOC) foi quebrado em componentes por aba +
+    modais (`next/dynamic`) + hooks; **+14 testes de componente** (antes 0 na tela).
+
 ## v0.9.1 (2026-06-26) — Permutas: coluna "Referência Externa" no lugar de "Código" (thread completo)
 
 - **feat(permutas):** nas listas **"Adiantamentos pendentes de permuta"** e **"Invoices em aberto"** do
