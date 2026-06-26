@@ -51,6 +51,10 @@ describe('PermutaExecucaoRepository', () => {
         expect(sql).toContain('FROM permuta_alocacao_execucao');
         expect(sql).toContain('dry_run = false');
         expect(sql).toContain('bor_cod IS NOT NULL');
+        // IGNORA borderô CANCELADO (bor_vld_finalizado = 2) — baixa estornada no ERP → não trava.
+        expect(sql).toContain('NOT EXISTS');
+        expect(sql).toContain('permuta_bordero');
+        expect(sql).toContain('bor_vld_finalizado = 2');
         expect(sql).toContain('$adtoDocCod');
         expect(sql).toContain('$invoiceDocCod');
         expect(sql).not.toMatch(/'\s*\+|\$\{/); // sem interpolação
@@ -58,7 +62,7 @@ describe('PermutaExecucaoRepository', () => {
         expect(out).toBe(2039);
     });
 
-    it('borderoDoPar: sem linha → null (par nunca virou borderô → alocação removível)', async () => {
+    it('borderoDoPar: sem linha → null (par sem borderô vivo: nunca baixou OU borderô cancelado/excluído)', async () => {
         const db = buildDb();
         (db.selectFirst as jest.Mock).mockResolvedValue(null);
         const repo = new PermutaExecucaoRepository(db);

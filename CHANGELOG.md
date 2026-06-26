@@ -1,5 +1,14 @@
 # Columbia Financeiro — Changelog
 
+## v0.8.3 (2026-06-26) — Permutas: trava ignora borderô CANCELADO
+
+- **fix(permutas):** a trava de remoção de alocação (v0.8.2) passa a **ignorar borderôs CANCELADOS**
+  (`permuta_bordero.bor_vld_finalizado = 2`). Cancelar estorna a baixa no ERP → a alocação volta a
+  estar livre → não deve mais travar. Antes, depois de cancelar um borderô, a "perna" da permuta ficava
+  presa (a trava ainda citava o borderô cancelado). Borderô **em cadastro / finalizado / estornado**
+  continua travando (baixa viva); **excluído** já sai da trilha. `PermutaExecucaoRepository.borderoDoPar`
+  ganha um `NOT EXISTS` contra o cache de borderô.
+
 ## v0.8.2 (2026-06-26) — Permutas: trava remoção de alocação já usada em borderô
 
 - **fix(permutas) [crítico — integridade financeira]:** **bloqueia a remoção** de uma alocação (par
