@@ -37,6 +37,8 @@ export default interface InvoiceLancamento {
      * ignoram. `undefined` quando o `com298/list` não traz o campo.
      */
     referencia?: string;
+    /** Referência EXTERNA do processo (cliente) — `priEspRefcliente` (ex.: "0052INX/26"). */
+    referenciaExterna?: string;
     /**
      * Valor residual a permutar (`mnyTitPermutar` no detail endpoint Conexos).
      * Hidratado via fan-out GET `/com298/<docCod>` em `enrichValorPermutar`.

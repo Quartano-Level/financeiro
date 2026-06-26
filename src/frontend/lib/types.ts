@@ -117,6 +117,8 @@ export interface PermutaPendente {
   docCod: string
   filCod: number
   referencia: string
+  /** Referência externa do processo (cliente) — `priEspRefcliente` (ex.: "0052INX/26"). */
+  referenciaExterna?: string
   exportador: string
   /** Cliente = importador do processo (`imp021`). Analistas buscam por ele. */
   importador?: string
@@ -157,6 +159,8 @@ export interface InvoiceEmAberto {
   /** Data de emissão da invoice (ISO). */
   dataEmissao?: string
   referencia: string
+  /** Referência externa do processo (cliente) — `priEspRefcliente` (ex.: "0052INX/26"). */
+  referenciaExterna?: string
   exportador: string
   /** Cliente = importador do processo (`imp021`), juntado por priCod. */
   importador?: string

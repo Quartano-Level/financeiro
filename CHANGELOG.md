@@ -1,5 +1,18 @@
 # Columbia Financeiro — Changelog
 
+## v0.9.1 (2026-06-26) — Permutas: coluna "Referência Externa" no lugar de "Código" (thread completo)
+
+- **feat(permutas):** nas listas **"Adiantamentos pendentes de permuta"** e **"Invoices em aberto"** do
+  painel, a coluna **"Código"** passa a mostrar a **"Referência Externa" do processo (cliente)** —
+  Conexos `priEspRefcliente` (ex.: `0052INX/26`), igual para todos os documentos do processo — em vez do
+  código interno (docCod). O docCod segue no detalhe expandido (campo "Código").
+  - Esse campo **não estava no snapshot** (só era usado como fallback do nº do documento), então foi
+    adicionado **fim-a-fim**: `ConexosClient.mapDocPagar` expõe `referenciaExterna`; migration `0021`
+    (coluna `referencia_externa` em `permuta_adiantamento`/`permuta_invoice`); ingestão + repositório +
+    payload do `/gestao`; e a coluna no front (com fallback pro nº do documento enquanto o re-ingest não
+    popula). **Requer rodar a migration + uma ingestão** para preencher (linhas antigas ficam com o
+    fallback até lá). As abas de trabalho não mudaram.
+
 ## v0.9.0 (2026-06-26) — Permutas: baixa de invoice com MÚLTIPLOS TÍTULOS (parcelas)
 
 - **feat(permutas) [escrita ERP — Opção A]:** a baixa no `fin010` passa a tratar invoices com **N títulos

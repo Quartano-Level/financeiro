@@ -216,6 +216,9 @@ export default class IngestaoPermutasService {
         ...(c.adiantamento.referencia !== undefined
             ? { referencia: c.adiantamento.referencia }
             : {}),
+        ...(c.adiantamento.referenciaExterna !== undefined
+            ? { referenciaExterna: c.adiantamento.referenciaExterna }
+            : {}),
         ...(c.adiantamento.exportador !== undefined
             ? { exportador: c.adiantamento.exportador }
             : {}),
@@ -300,6 +303,9 @@ export default class IngestaoPermutasService {
                 priCod: inv.priCod,
                 ...(filCod != null ? { filCod } : {}),
                 ...(inv.referencia !== undefined ? { referencia: inv.referencia } : {}),
+                ...(inv.referenciaExterna !== undefined
+                    ? { referenciaExterna: inv.referenciaExterna }
+                    : {}),
                 ...(inv.exportador !== undefined ? { exportador: inv.exportador } : {}),
                 ...(inv.dataEmissao !== undefined ? { dataEmissao: inv.dataEmissao } : {}),
                 ...(inv.valor !== undefined ? { valor: inv.valor } : {}),
@@ -334,6 +340,9 @@ export default class IngestaoPermutasService {
                 priCod: inv.priCod,
                 ...(filCod != null ? { filCod } : {}),
                 ...(inv.referencia !== undefined ? { referencia: inv.referencia } : {}),
+                ...(inv.referenciaExterna !== undefined
+                    ? { referenciaExterna: inv.referenciaExterna }
+                    : {}),
                 ...(inv.exportador !== undefined ? { exportador: inv.exportador } : {}),
                 ...(inv.dataEmissao !== undefined ? { dataEmissao: inv.dataEmissao } : {}),
                 ...(inv.valor !== undefined ? { valor: inv.valor } : {}),

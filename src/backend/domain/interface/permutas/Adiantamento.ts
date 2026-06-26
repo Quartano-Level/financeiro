@@ -42,6 +42,8 @@ export default interface Adiantamento {
      * Opcional: ausente quando o `com298/list` não traz o campo.
      */
     referencia?: string;
+    /** Referência EXTERNA do processo (cliente) — `priEspRefcliente` (ex.: "0052INX/26"). */
+    referenciaExterna?: string;
     /**
      * Valor do documento em moeda estrangeira negociada (`titMnyValorMneg` /
      * `TituloAPagar.valorNegociado`). Distinto de `valor` (face). Exibido na

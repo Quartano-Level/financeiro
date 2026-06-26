@@ -338,6 +338,7 @@ export default class GestaoPermutasService {
             docCod: a.docCod,
             filCod: a.filCod ?? 0,
             referencia: a.referencia ?? a.docCod,
+            ...(a.referenciaExterna != null ? { referenciaExterna: a.referenciaExterna } : {}),
             exportador: a.exportador ?? '',
             // Cliente (importador do processo) — analistas buscam por ele. Vem do adto (imp021).
             ...(a.importador !== undefined ? { importador: a.importador } : {}),
@@ -453,6 +454,7 @@ export default class GestaoPermutasService {
         priCod: i.priCod,
         ...(i.dataEmissao !== undefined ? { dataEmissao: i.dataEmissao.toISOString() } : {}),
         referencia: i.referencia ?? i.docCod,
+        ...(i.referenciaExterna != null ? { referenciaExterna: i.referenciaExterna } : {}),
         exportador: i.exportador ?? '',
         ...(importador !== undefined ? { importador } : {}),
         valorMoedaNegociada: i.valorMoedaNegociada ?? null,

@@ -511,6 +511,9 @@ export default class EleicaoPermutasService {
                     pago: i.pago,
                     ...(i.exportador !== undefined ? { exportador: i.exportador } : {}),
                     ...(i.referencia !== undefined ? { referencia: i.referencia } : {}),
+                    ...(i.referenciaExterna !== undefined
+                        ? { referenciaExterna: i.referenciaExterna }
+                        : {}),
                 };
                 try {
                     const tit = await this.conexosClient.listTitulosAPagar({
@@ -559,6 +562,9 @@ export default class EleicaoPermutasService {
             pago: raw.pago,
             ...(raw.exportador !== undefined ? { exportador: raw.exportador } : {}),
             ...(raw.referencia !== undefined ? { referencia: raw.referencia } : {}),
+            ...(raw.referenciaExterna !== undefined
+                ? { referenciaExterna: raw.referenciaExterna }
+                : {}),
         };
         try {
             const tit = await this.conexosClient.listTitulosAPagar({ docCod: raw.docCod, filCod });

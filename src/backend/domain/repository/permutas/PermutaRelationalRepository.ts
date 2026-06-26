@@ -11,6 +11,7 @@ export interface AdiantamentoRow {
     priCod: string;
     filCod?: number;
     referencia?: string;
+    referenciaExterna?: string;
     exportador?: string;
     dataEmissao?: Date;
     valor?: number;
@@ -46,6 +47,7 @@ export interface InvoiceRow {
     priCod: string;
     filCod?: number;
     referencia?: string;
+    referenciaExterna?: string;
     exportador?: string;
     dataEmissao?: Date;
     valor?: number;
@@ -230,6 +232,7 @@ export default class PermutaRelationalRepository {
             params[`priCod_${i}`] = r.priCod;
             params[`filCod_${i}`] = r.filCod ?? null;
             params[`referencia_${i}`] = r.referencia ?? null;
+            params[`referenciaExterna_${i}`] = r.referenciaExterna ?? null;
             params[`exportador_${i}`] = r.exportador ?? null;
             params[`dataEmissao_${i}`] = r.dataEmissao ? r.dataEmissao.toISOString() : null;
             params[`valor_${i}`] = r.valor ?? null;
@@ -247,7 +250,7 @@ export default class PermutaRelationalRepository {
             params[`pesCod_${i}`] = r.pesCod ?? null;
             params[`importador_${i}`] = r.importador ?? null;
             return (
-                `($docCod_${i}, $priCod_${i}, $filCod_${i}, $referencia_${i}, ` +
+                `($docCod_${i}, $priCod_${i}, $filCod_${i}, $referencia_${i}, $referenciaExterna_${i}, ` +
                 `$exportador_${i}, $dataEmissao_${i}, $valor_${i}, $valorMoedaNegociada_${i}, ` +
                 `$moeda_${i}, $moedaNegociada_${i}, $pago_${i}, $valorPermutar_${i}, ` +
                 `$estado_${i}, $motivo_${i}, ` +
@@ -258,7 +261,7 @@ export default class PermutaRelationalRepository {
         });
         await tx.insert(
             `INSERT INTO permuta_adiantamento (
-                doc_cod, pri_cod, fil_cod, referencia, exportador, data_emissao,
+                doc_cod, pri_cod, fil_cod, referencia, referencia_externa, exportador, data_emissao,
                 valor, valor_moeda_negociada, moeda, moeda_negociada, pago, valor_permutar,
                 estado_elegibilidade, motivo_bloqueio, aging_days, taxa,
                 valor_total, valor_aberto, pes_cod, importador,
@@ -268,6 +271,7 @@ export default class PermutaRelationalRepository {
                 pri_cod = EXCLUDED.pri_cod,
                 fil_cod = EXCLUDED.fil_cod,
                 referencia = EXCLUDED.referencia,
+                referencia_externa = EXCLUDED.referencia_externa,
                 exportador = EXCLUDED.exportador,
                 data_emissao = EXCLUDED.data_emissao,
                 valor = EXCLUDED.valor,
@@ -315,6 +319,7 @@ export default class PermutaRelationalRepository {
             params[`priCod_${i}`] = r.priCod;
             params[`filCod_${i}`] = r.filCod ?? null;
             params[`referencia_${i}`] = r.referencia ?? null;
+            params[`referenciaExterna_${i}`] = r.referenciaExterna ?? null;
             params[`exportador_${i}`] = r.exportador ?? null;
             params[`dataEmissao_${i}`] = r.dataEmissao ? r.dataEmissao.toISOString() : null;
             params[`valor_${i}`] = r.valor ?? null;
@@ -326,7 +331,7 @@ export default class PermutaRelationalRepository {
             params[`pesCod_${i}`] = r.pesCod ?? null;
             params[`importador_${i}`] = r.importador ?? null;
             return (
-                `($docCod_${i}, $priCod_${i}, $filCod_${i}, $referencia_${i}, ` +
+                `($docCod_${i}, $priCod_${i}, $filCod_${i}, $referencia_${i}, $referenciaExterna_${i}, ` +
                 `$exportador_${i}, $dataEmissao_${i}, $valor_${i}, $valorMoedaNegociada_${i}, ` +
                 `$moeda_${i}, $moedaNegociada_${i}, $pago_${i}, $taxa_${i}, ` +
                 `$pesCod_${i}, $importador_${i}, $runId, now(), FALSE, now())`
@@ -334,7 +339,7 @@ export default class PermutaRelationalRepository {
         });
         await tx.insert(
             `INSERT INTO permuta_invoice (
-                doc_cod, pri_cod, fil_cod, referencia, exportador, data_emissao,
+                doc_cod, pri_cod, fil_cod, referencia, referencia_externa, exportador, data_emissao,
                 valor, valor_moeda_negociada, moeda, moeda_negociada, pago, taxa,
                 pes_cod, importador,
                 last_ingest_run_id, last_seen_at, stale, updated_at
@@ -343,6 +348,7 @@ export default class PermutaRelationalRepository {
                 pri_cod = EXCLUDED.pri_cod,
                 fil_cod = EXCLUDED.fil_cod,
                 referencia = EXCLUDED.referencia,
+                referencia_externa = EXCLUDED.referencia_externa,
                 exportador = EXCLUDED.exportador,
                 data_emissao = EXCLUDED.data_emissao,
                 valor = EXCLUDED.valor,
@@ -562,6 +568,9 @@ export default class PermutaRelationalRepository {
         priCod: String(r.pri_cod),
         ...(r.fil_cod != null ? { filCod: Number(r.fil_cod) } : {}),
         ...(r.referencia != null ? { referencia: String(r.referencia) } : {}),
+        ...(r.referencia_externa != null
+            ? { referenciaExterna: String(r.referencia_externa) }
+            : {}),
         ...(r.exportador != null ? { exportador: String(r.exportador) } : {}),
         ...(r.data_emissao != null ? { dataEmissao: new Date(String(r.data_emissao)) } : {}),
         ...(r.valor != null ? { valor: Number(r.valor) } : {}),
@@ -590,6 +599,9 @@ export default class PermutaRelationalRepository {
         priCod: String(r.pri_cod),
         ...(r.fil_cod != null ? { filCod: Number(r.fil_cod) } : {}),
         ...(r.referencia != null ? { referencia: String(r.referencia) } : {}),
+        ...(r.referencia_externa != null
+            ? { referenciaExterna: String(r.referencia_externa) }
+            : {}),
         ...(r.exportador != null ? { exportador: String(r.exportador) } : {}),
         ...(r.data_emissao != null ? { dataEmissao: new Date(String(r.data_emissao)) } : {}),
         ...(r.valor != null ? { valor: Number(r.valor) } : {}),

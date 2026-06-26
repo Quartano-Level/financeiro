@@ -1631,7 +1631,7 @@ export default function GestaoPermutasPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Filial</TableHead>
-                      <TableHead>Código</TableHead>
+                      <TableHead>Referência Externa</TableHead>
                       <TableHead>Processo</TableHead>
                       <TableHead>Exportador</TableHead>
                       <TableHead className="text-right">Valor Moeda Negociada</TableHead>
@@ -1663,7 +1663,9 @@ export default function GestaoPermutasPage() {
                                 {inv.filCod}
                               </span>
                             </TableCell>
-                            <TableCell className="font-medium">{inv.docCod}</TableCell>
+                            <TableCell className="font-medium">
+                              {inv.referenciaExterna ?? inv.referencia}
+                            </TableCell>
                             <TableCell>{inv.priCod ?? '—'}</TableCell>
                             <TableCell>{inv.exportador}</TableCell>
                             <TableCell className="text-right">
@@ -1710,7 +1712,7 @@ export default function GestaoPermutasPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Filial</TableHead>
-                      <TableHead>Código</TableHead>
+                      <TableHead>Referência Externa</TableHead>
                       <TableHead>Exportador</TableHead>
                       <TableHead className="text-right">Valor Moeda Negociada</TableHead>
                       <TableHead className="text-right">Dias em Aberto</TableHead>
@@ -1771,7 +1773,9 @@ export default function GestaoPermutasPage() {
                                 {p.filCod}
                               </span>
                             </TableCell>
-                            <TableCell className="font-medium">{p.docCod}</TableCell>
+                            <TableCell className="font-medium">
+                              {p.referenciaExterna ?? p.referencia}
+                            </TableCell>
                             <TableCell>{p.exportador}</TableCell>
                             <TableCell className="text-right">
                               <Moeda valor={p.valorMoedaNegociada} moeda={p.moeda} />

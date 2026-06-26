@@ -619,6 +619,9 @@ export default class ConexosClient {
                     exportador: mapped.exportador,
                     faturada: Boolean(row.faturada ?? row.flagFaturada ?? false),
                     ...(mapped.referencia !== undefined ? { referencia: mapped.referencia } : {}),
+                    ...(mapped.referenciaExterna !== undefined
+                        ? { referenciaExterna: mapped.referenciaExterna }
+                        : {}),
                 };
                 if (mapped.valorPermutar !== undefined) {
                     invoice.valorPermutar = mapped.valorPermutar;
@@ -691,6 +694,9 @@ export default class ConexosClient {
                 pago: mapped.pago,
                 ...(mapped.exportador !== undefined ? { exportador: mapped.exportador } : {}),
                 ...(mapped.referencia !== undefined ? { referencia: mapped.referencia } : {}),
+                ...(mapped.referenciaExterna !== undefined
+                    ? { referenciaExterna: mapped.referenciaExterna }
+                    : {}),
                 ...(mapped.valorPermutar !== undefined
                     ? { valorPermutar: mapped.valorPermutar }
                     : {}),
@@ -742,6 +748,9 @@ export default class ConexosClient {
                 exportador: mapped.exportador,
                 faturada: Boolean(row.faturada ?? row.flagFaturada ?? false),
                 ...(mapped.referencia !== undefined ? { referencia: mapped.referencia } : {}),
+                ...(mapped.referenciaExterna !== undefined
+                    ? { referenciaExterna: mapped.referenciaExterna }
+                    : {}),
             };
             return [invoice];
         });
@@ -1844,6 +1853,13 @@ export default class ConexosClient {
                 : row.priEspRefcliente != null && row.priEspRefcliente !== ''
                   ? String(row.priEspRefcliente)
                   : undefined,
+        // Referência EXTERNA do PROCESSO (cliente) — `priEspRefcliente` (ex.: "0052INX/26"), igual p/
+        // todos os docs do processo. Distinta do nº do documento (`referencia`/docEspNumero). É a coluna
+        // que a tela mostra. Separada porque o `referencia` acima prefere o nº do doc quando existe.
+        referenciaExterna:
+            row.priEspRefcliente != null && row.priEspRefcliente !== ''
+                ? String(row.priEspRefcliente)
+                : undefined,
         /**
          * `mnyTitPermutar` no `com298/list` (saldo a permutar disponível
          * conforme exibido na UI Conexos). **IMPORTANTE:** validado
