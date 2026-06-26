@@ -1,5 +1,19 @@
 # Columbia Financeiro — Changelog
 
+## v0.8.1 (2026-06-26) — Permutas: baixa parcial nas abas manuais
+
+- **fix(permutas):** nas abas **Múltipla / Cross-over / Cross-process**, uma permuta só sai da aba de
+  trabalho para o **Histórico** quando o adiantamento está **totalmente permutado** (`tem borderô` E
+  `saldoRestante ≈ 0`). Baixa **parcial** (sobrou saldo a permutar) **continua na aba**; o que foi lançado
+  vai para Borderôs + Histórico. Cancelar o borderô faz a permuta reaparecer (igual às automáticas).
+- **fix(permutas):** na baixa **parcial**, os botões **Alocar** e **Baixar** continuam liberados para lançar
+  o saldo restante (antes travavam ao ter qualquer borderô). O já baixado é ignorado por idempotência. O
+  status passa a mostrar **"Parcial · borderô X"** enquanto sobra saldo.
+- **chore:** Histórico das manuais mostra o valor **efetivamente lançado** (Σ alocações), não o adiantamento
+  inteiro; botões "Atualizar" por aba; auto-reload do status ao trocar de aba.
+- **Pendente (documentado):** invoice com **múltiplos títulos/parcelas** (`ontology/_inbox/permuta-multi-titulo-pendente.md`)
+  — a baixa hoje assume 1 título por invoice; aguardando definição do time.
+
 ## v0.8.0 (2026-06-25) — Permutas: relatórios, execução em lote e fix do filtro de filial
 
 > Consolidação dos PRs #9, #10, #11, #13, #14 e #15 num único release.
