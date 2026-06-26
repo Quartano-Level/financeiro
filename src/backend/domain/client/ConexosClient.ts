@@ -619,6 +619,9 @@ export default class ConexosClient {
                     exportador: mapped.exportador,
                     faturada: Boolean(row.faturada ?? row.flagFaturada ?? false),
                     ...(mapped.referencia !== undefined ? { referencia: mapped.referencia } : {}),
+                    ...(mapped.referenciaExterna !== undefined
+                        ? { referenciaExterna: mapped.referenciaExterna }
+                        : {}),
                 };
                 if (mapped.valorPermutar !== undefined) {
                     invoice.valorPermutar = mapped.valorPermutar;
@@ -691,6 +694,9 @@ export default class ConexosClient {
                 pago: mapped.pago,
                 ...(mapped.exportador !== undefined ? { exportador: mapped.exportador } : {}),
                 ...(mapped.referencia !== undefined ? { referencia: mapped.referencia } : {}),
+                ...(mapped.referenciaExterna !== undefined
+                    ? { referenciaExterna: mapped.referenciaExterna }
+                    : {}),
                 ...(mapped.valorPermutar !== undefined
                     ? { valorPermutar: mapped.valorPermutar }
                     : {}),
@@ -742,6 +748,9 @@ export default class ConexosClient {
                 exportador: mapped.exportador,
                 faturada: Boolean(row.faturada ?? row.flagFaturada ?? false),
                 ...(mapped.referencia !== undefined ? { referencia: mapped.referencia } : {}),
+                ...(mapped.referenciaExterna !== undefined
+                    ? { referenciaExterna: mapped.referenciaExterna }
+                    : {}),
             };
             return [invoice];
         });
