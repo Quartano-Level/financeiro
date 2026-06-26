@@ -91,22 +91,31 @@ export default class PermutaExecucaoRepository {
     };
 
     /**
-     * `bor_cod` de uma execução REAL (não dry-run) que abriu borderô para o par adto↔invoice — ou `null`.
-     * Insumo da trava que IMPEDE remover uma alocação já usada num borderô (integridade trilha × ERP).
-     * Inclui baixas `error` num borderô real (o borderô existe), não só as `settled`.
+     * `bor_cod` de uma execução REAL (não dry-run) que abriu um borderô VIVO para o par adto↔invoice —
+     * ou `null`. Insumo da trava que IMPEDE remover uma alocação já usada num borderô (integridade
+     * trilha × ERP). Inclui baixas `error` num borderô real (o borderô existe).
+     *
+     * IGNORA borderôs CANCELADOS (`permuta_bordero.bor_vld_finalizado = 2`): cancelar estorna a baixa no
+     * ERP → a alocação volta a estar livre → não deve travar. Borderô EXCLUÍDO já some da trilha
+     * (`deleteByBorCod`). Em cadastro / finalizado / estornado seguem TRAVANDO (baixa viva).
      */
     public borderoDoPar = async (
         adiantamentoDocCod: string,
         invoiceDocCod: string,
     ): Promise<number | null> => {
         const row = await this.databaseClient.selectFirst<{ bor_cod: number }>(
-            `SELECT bor_cod
-             FROM permuta_alocacao_execucao
-             WHERE adiantamento_doc_cod = $adtoDocCod
-               AND invoice_doc_cod = $invoiceDocCod
-               AND dry_run = false
-               AND bor_cod IS NOT NULL
-             ORDER BY criado_em DESC
+            `SELECT e.bor_cod
+             FROM permuta_alocacao_execucao e
+             WHERE e.adiantamento_doc_cod = $adtoDocCod
+               AND e.invoice_doc_cod = $invoiceDocCod
+               AND e.dry_run = false
+               AND e.bor_cod IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM permuta_bordero b
+                   WHERE b.bor_cod = e.bor_cod
+                     AND b.bor_vld_finalizado = 2
+               )
+             ORDER BY e.criado_em DESC
              LIMIT 1`,
             { adtoDocCod: adiantamentoDocCod, invoiceDocCod },
         );
