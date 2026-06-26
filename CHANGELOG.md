@@ -1,5 +1,13 @@
 # Columbia Financeiro — Changelog
 
+## v0.8.5 (2026-06-26) — Permutas: libera "Alocar" para remover alocação de adto totalmente alocado
+
+- **fix(permutas):** o botão **Alocar** (Múltipla/Cross-over/Cross-process) ficava **desabilitado** quando
+  o adiantamento estava **totalmente alocado** (saldo restante 0) — mas é dentro do modal de Alocar que se
+  **remove** a alocação. Resultado: um adto totalmente alocado **sem borderô ainda** (Pendente) ficava com
+  a alocação **presa**, impossível de remover. Agora o Alocar só desabilita quando **não há saldo E não há
+  alocação** pra gerenciar; com alocações, ele abre pra você **ver/remover**.
+
 ## v0.8.4 (2026-06-26) — Regis-Review quick wins (segurança + performance)
 
 - **fix(security) [R-5 / security-1]:** guard do `DEV_AUTH_BYPASS` vira **deny-by-default**. Antes era uma

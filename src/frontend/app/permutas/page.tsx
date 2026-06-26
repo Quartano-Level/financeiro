@@ -1340,6 +1340,7 @@ export default function GestaoPermutasPage() {
             // (baixa parcial) → Alocar/Baixar continuam liberados pra lançar o resto.
             const semSaldo = p.saldoRestante !== undefined && p.saldoRestante <= SALDO_TOL
             const parcial = vinculo !== undefined && !semSaldo
+            const temAlocacoes = (p.alocacoes?.length ?? 0) > 0
             return (
               <TableRow key={p.docCod}>
                 <TableCell>{p.filCod}</TableCell>
@@ -1370,10 +1371,15 @@ export default function GestaoPermutasPage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={semSaldo}
+                      // Só desabilita quando NÃO há saldo a alocar E NÃO há alocação pra gerenciar.
+                      // Totalmente alocado mas com alocações → ABRE pra poder REMOVER (o "remover" vive
+                      // dentro deste modal); senão a alocação ficava presa.
+                      disabled={semSaldo && !temAlocacoes}
                       title={
                         semSaldo
-                          ? 'Adiantamento totalmente alocado — sem saldo a permutar'
+                          ? temAlocacoes
+                            ? 'Totalmente alocado — abra para ver/remover as alocações'
+                            : 'Adiantamento totalmente alocado — sem saldo a permutar'
                           : parcial
                             ? 'Alocar o saldo restante em mais invoices'
                             : 'Alocar saldo em invoices'
