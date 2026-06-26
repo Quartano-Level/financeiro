@@ -1663,7 +1663,9 @@ export default function GestaoPermutasPage() {
                                 {inv.filCod}
                               </span>
                             </TableCell>
-                            <TableCell className="font-medium">{inv.referencia}</TableCell>
+                            <TableCell className="font-medium">
+                              {inv.referenciaExterna ?? inv.referencia}
+                            </TableCell>
                             <TableCell>{inv.priCod ?? '—'}</TableCell>
                             <TableCell>{inv.exportador}</TableCell>
                             <TableCell className="text-right">
@@ -1771,7 +1773,9 @@ export default function GestaoPermutasPage() {
                                 {p.filCod}
                               </span>
                             </TableCell>
-                            <TableCell className="font-medium">{p.referencia}</TableCell>
+                            <TableCell className="font-medium">
+                              {p.referenciaExterna ?? p.referencia}
+                            </TableCell>
                             <TableCell>{p.exportador}</TableCell>
                             <TableCell className="text-right">
                               <Moeda valor={p.valorMoedaNegociada} moeda={p.moeda} />

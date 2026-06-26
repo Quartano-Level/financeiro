@@ -20,6 +20,8 @@ export default interface Invoice {
      * Opcional: ausente quando o `com298/list` não traz o campo.
      */
     referencia?: string;
+    /** Referência EXTERNA do processo (cliente) — `priEspRefcliente` (ex.: "0052INX/26"). */
+    referenciaExterna?: string;
     /**
      * Valor da invoice em moeda estrangeira negociada (`titMnyValorMneg` /
      * `TituloAPagar.valorNegociado`). Distinto de `valor` (face). Opcional.

@@ -1844,6 +1844,13 @@ export default class ConexosClient {
                 : row.priEspRefcliente != null && row.priEspRefcliente !== ''
                   ? String(row.priEspRefcliente)
                   : undefined,
+        // Referência EXTERNA do PROCESSO (cliente) — `priEspRefcliente` (ex.: "0052INX/26"), igual p/
+        // todos os docs do processo. Distinta do nº do documento (`referencia`/docEspNumero). É a coluna
+        // que a tela mostra. Separada porque o `referencia` acima prefere o nº do doc quando existe.
+        referenciaExterna:
+            row.priEspRefcliente != null && row.priEspRefcliente !== ''
+                ? String(row.priEspRefcliente)
+                : undefined,
         /**
          * `mnyTitPermutar` no `com298/list` (saldo a permutar disponível
          * conforme exibido na UI Conexos). **IMPORTANTE:** validado
