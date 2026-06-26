@@ -1,5 +1,5 @@
 import { inject, injectable } from 'tsyringe';
-import type { DeclaracaoEntry } from '../../client/ConexosClient.js';
+import type { DeclaracaoEntry } from '../../client/ConexosCadastroClient.js';
 import type Adiantamento from '../../interface/permutas/Adiantamento.js';
 import type DeclaracaoImportacao from '../../interface/permutas/DeclaracaoImportacao.js';
 import {

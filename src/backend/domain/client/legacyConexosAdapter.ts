@@ -1,4 +1,4 @@
-import type { Filial, LegacyConexosShape, PagedResponse } from './ConexosClient.js';
+import type { Filial, LegacyConexosShape, PagedResponse } from './ConexosBaseClient.js';
 
 /**
  * Adapter delegando 100% para o `services/conexos.ts` singleton (ADR-0007).

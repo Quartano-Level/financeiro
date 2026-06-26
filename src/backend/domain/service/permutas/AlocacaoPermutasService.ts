@@ -1,5 +1,7 @@
 import { inject, injectable } from 'tsyringe';
-import ConexosClient, { siglaMoedaNegociada } from '../../client/ConexosClient.js';
+import ConexosCadastroClient from '../../client/ConexosCadastroClient.js';
+import ConexosFinanceiroClient from '../../client/ConexosFinanceiroClient.js';
+import ConexosTitulosClient, { siglaMoedaNegociada } from '../../client/ConexosTitulosClient.js';
 import AlocacaoEmBorderoError from '../../errors/AlocacaoEmBorderoError.js';
 import AlocacaoSaldoError from '../../errors/AlocacaoSaldoError.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
@@ -67,7 +69,9 @@ const somaValorNegociado = (
 @injectable()
 export default class AlocacaoPermutasService {
     constructor(
-        @inject(ConexosClient) private conexosClient: ConexosClient,
+        @inject(ConexosFinanceiroClient) private conexosFinanceiroClient: ConexosFinanceiroClient,
+        @inject(ConexosCadastroClient) private conexosCadastroClient: ConexosCadastroClient,
+        @inject(ConexosTitulosClient) private conexosTitulosClient: ConexosTitulosClient,
         @inject(VariacaoCambialPermutaService)
         private variacaoCambialService: VariacaoCambialPermutaService,
         @inject(PermutaAlocacaoRepository)
@@ -98,14 +102,14 @@ export default class AlocacaoPermutasService {
         filCod: number,
         excludeAdtoDocCod?: string,
     ): Promise<InvoiceBuscada[]> => {
-        const { invoices: todas } = await this.conexosClient.listFinanceiroAPagar({
+        const { invoices: todas } = await this.conexosFinanceiroClient.listFinanceiroAPagar({
             priCods: [priCod],
             docTip: 'INVOICE',
             filCod,
         });
         if (todas.length === 0) return [];
         // D.I do processo nesta filial (a alocação exige; é a âncora da variação).
-        const declaracoes = await this.conexosClient.listDeclaracaoByProcesso({
+        const declaracoes = await this.conexosCadastroClient.listDeclaracaoByProcesso({
             priCods: [priCod],
             filCod,
         });
@@ -122,7 +126,7 @@ export default class AlocacaoPermutasService {
                 // (pago) não tem crédito a abater → fora da permuta.
                 let aberta = true;
                 try {
-                    const det = await this.conexosClient.getDetalheTitulos({
+                    const det = await this.conexosTitulosClient.getDetalheTitulos({
                         docCod: i.docCod,
                         filCod,
                     });
@@ -135,7 +139,7 @@ export default class AlocacaoPermutasService {
                 let moeda: string | undefined = i.moeda;
                 let taxa: number | undefined;
                 try {
-                    const tit = await this.conexosClient.listTitulosAPagar({
+                    const tit = await this.conexosTitulosClient.listTitulosAPagar({
                         docCod: i.docCod,
                         filCod,
                     });

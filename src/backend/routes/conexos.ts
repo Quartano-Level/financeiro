@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { Router } from 'express';
 import { container } from 'tsyringe';
-import ConexosClient from '../domain/client/ConexosClient.js';
+import ConexosCadastroClient from '../domain/client/ConexosCadastroClient.js';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 
@@ -17,7 +17,7 @@ router.get(
     '/filiais',
     asyncHandler(async (_req, res) => {
         await bootstrapAppContainer();
-        const client = container.resolve(ConexosClient);
+        const client = container.resolve(ConexosCadastroClient);
         const [filiais, filCodDefault] = await Promise.all([
             client.listFiliais(),
             client.getFilCodDefault(),

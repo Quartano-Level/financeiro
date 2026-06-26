@@ -1,5 +1,6 @@
 import { inject, injectable } from 'tsyringe';
-import ConexosClient from '../../client/ConexosClient.js';
+import ConexosBaixaClient from '../../client/ConexosBaixaClient.js';
+import ConexosTitulosClient from '../../client/ConexosTitulosClient.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import PermutaAlocacaoRepository, {
@@ -72,7 +73,8 @@ export interface ReconciliarResult {
 @injectable()
 export default class ReconciliacaoPermutaService {
     constructor(
-        @inject(ConexosClient) private conexosClient: ConexosClient,
+        @inject(ConexosBaixaClient) private conexosBaixaClient: ConexosBaixaClient,
+        @inject(ConexosTitulosClient) private conexosTitulosClient: ConexosTitulosClient,
         @inject(EnvironmentProvider) private environmentProvider: EnvironmentProvider,
         @inject(PermutaAlocacaoRepository)
         private alocacaoRepository: PermutaAlocacaoRepository,
@@ -228,7 +230,7 @@ export default class ReconciliacaoPermutaService {
                     // Data do borderô = a data ESCOLHIDA pelo analista no modal (`dataMovto`). O front
                     // sugere a data da D.I/DUIMP como default, mas o analista ajusta quando o período
                     // contábil da D.I está fechado (ERP: FIN_010.DATA_BLOQUEADA_PELA_CONTABILIDADE).
-                    const bordero = await this.conexosClient.criarBordero({
+                    const bordero = await this.conexosBaixaClient.criarBordero({
                         filCod,
                         dataMovto,
                     });
@@ -298,7 +300,7 @@ export default class ReconciliacaoPermutaService {
         // Fallback: ERP indisponível/sem dados → título 1 com o valor cheio (compat de título único).
         let titulos: Array<{ titCod: number; usd: number; taxa: number }> = [];
         try {
-            const raw = await this.conexosClient.listTitulosAPagar({
+            const raw = await this.conexosTitulosClient.listTitulosAPagar({
                 docCod: String(invoiceDocCod),
                 filCod,
             });
@@ -399,7 +401,7 @@ export default class ReconciliacaoPermutaService {
             p;
 
         // Passo 2 — valida ESTE título; o ERP devolve o em-aberto vivo da parcela.
-        const val2 = await this.conexosClient.validarTituloBaixa({
+        const val2 = await this.conexosBaixaClient.validarTituloBaixa({
             filCod,
             borCod,
             invoiceDocCod,
@@ -434,7 +436,7 @@ export default class ReconciliacaoPermutaService {
         const desconto = isDesconto ? valorVariacao : 0;
 
         // Passo 3 — valida a permuta (adiantamento); o ERP devolve os dados da permuta (estado atual).
-        const val3 = await this.conexosClient.validarTituloPermuta({
+        const val3 = await this.conexosBaixaClient.validarTituloPermuta({
             filCod,
             borCod,
             adiantamentoDocCod,
@@ -446,7 +448,7 @@ export default class ReconciliacaoPermutaService {
             throw new Error(`adiantamento ${adiantamentoDocCod} sem dados de permuta no ERP`);
 
         // Passo 4 — recalcula o líquido com o juros/desconto informado.
-        const val4 = await this.conexosClient.atualizarValorLiquido({
+        const val4 = await this.conexosBaixaClient.atualizarValorLiquido({
             filCod,
             borCod,
             invoiceDocCod,
@@ -476,7 +478,7 @@ export default class ReconciliacaoPermutaService {
             comentario,
         });
         await this.execucaoRepository.setRequestPayload(key, payload);
-        const baixa = await this.conexosClient.gravarBaixaPermuta({ filCod, payload });
+        const baixa = await this.conexosBaixaClient.gravarBaixaPermuta({ filCod, payload });
         return { bxaCodSeq: baixa.bxaCodSeq, bxaMnyValor, juros, desconto };
     };
 
@@ -624,7 +626,7 @@ export default class ReconciliacaoPermutaService {
     private borderoAindaValido = async (filCod: number, borCod?: number): Promise<boolean> => {
         if (borCod === undefined) return false; // settled sem borderô registrado → libera
         try {
-            const det = await this.conexosClient.getBordero({ filCod, borCod });
+            const det = await this.conexosBaixaClient.getBordero({ filCod, borCod });
             if (!det) return false; // removido
             if (det.borCodEstornado != null) return false; // estornado
             if (det.borVldFinalizado === 2) return false; // cancelado

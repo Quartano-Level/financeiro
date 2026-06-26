@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { inject, injectable } from 'tsyringe';
-import ConexosClient, {
+import ConexosCadastroClient, {
     type DeclaracaoEntry,
     type ProcessoListItem,
-    siglaMoedaNegociada,
-} from '../../client/ConexosClient.js';
+} from '../../client/ConexosCadastroClient.js';
+import ConexosFinanceiroClient from '../../client/ConexosFinanceiroClient.js';
+import ConexosTitulosClient, { siglaMoedaNegociada } from '../../client/ConexosTitulosClient.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import ConexosError from '../../errors/ConexosError.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
@@ -101,7 +102,9 @@ const ADIANTAMENTOS_CONCURRENCY = 10;
 @injectable()
 export default class EleicaoPermutasService {
     constructor(
-        @inject(ConexosClient) private conexosClient: ConexosClient,
+        @inject(ConexosCadastroClient) private conexosCadastroClient: ConexosCadastroClient,
+        @inject(ConexosFinanceiroClient) private conexosFinanceiroClient: ConexosFinanceiroClient,
+        @inject(ConexosTitulosClient) private conexosTitulosClient: ConexosTitulosClient,
         @inject(ElegibilidadeService) private elegibilidadeService: ElegibilidadeService,
         @inject(VariacaoCambialPermutaService)
         private variacaoCambialService: VariacaoCambialPermutaService,
@@ -243,7 +246,7 @@ export default class EleicaoPermutasService {
             // Clientes-filtro (importadores p/ permuta manual cross-process) —
             // carregados UMA vez por run e usados no roteamento de cada candidata.
             const filtroPesCods = await this.clienteFiltroRepository.listPesCodsAtivos();
-            const filiais = await this.conexosClient.listFiliais();
+            const filiais = await this.conexosCadastroClient.listFiliais();
             // Filiais em paralelo com limite (P0-4) — speedup de I/O ≥5× vs. o
             // laço sequencial anterior. `map` propaga a 1ª falha → run aborta.
             const perFilial = await this.boundedConcurrency.map(
@@ -265,9 +268,10 @@ export default class EleicaoPermutasService {
             const todasInvoicesPorFilial = await this.boundedConcurrency.map(
                 filiais,
                 async (filial) => {
-                    const { invoices, capHit } = await this.conexosClient.listInvoicesFinalizadas({
-                        filCod: filial.filCod,
-                    });
+                    const { invoices, capHit } =
+                        await this.conexosFinanceiroClient.listInvoicesFinalizadas({
+                            filCod: filial.filCod,
+                        });
                     if (capHit) {
                         await this.logService.warn({
                             type: LOG_TYPE.BUSINESS_WARN,
@@ -277,7 +281,7 @@ export default class EleicaoPermutasService {
                         });
                     }
                     const priCods = [...new Set(invoices.map((i) => i.priCod))];
-                    const processos = await this.conexosClient.listProcessos({
+                    const processos = await this.conexosCadastroClient.listProcessos({
                         filCod: filial.filCod,
                         priCods,
                     });
@@ -411,9 +415,10 @@ export default class EleicaoPermutasService {
         signal: AbortSignal,
         filtroPesCods: Set<string>,
     ): Promise<PermutaCandidata[]> => {
-        const { adiantamentos, capHit } = await this.conexosClient.listAdiantamentosProforma({
-            filCod,
-        });
+        const { adiantamentos, capHit } =
+            await this.conexosFinanceiroClient.listAdiantamentosProforma({
+                filCod,
+            });
 
         if (capHit) {
             await this.logService.warn({
@@ -461,7 +466,7 @@ export default class EleicaoPermutasService {
         priCods: string[],
         filCod: number,
     ): Promise<Map<string, ProcessoListItem>> => {
-        const processos = await this.conexosClient.listProcessos({ priCods, filCod });
+        const processos = await this.conexosCadastroClient.listProcessos({ priCods, filCod });
         const byPriCod = new Map<string, ProcessoListItem>();
         for (const p of processos) byPriCod.set(p.priCod, p);
         return byPriCod;
@@ -472,7 +477,7 @@ export default class EleicaoPermutasService {
         priCods: string[],
         filCod: number,
     ): Promise<Map<string, DeclaracaoEntry[]>> => {
-        const declaracoes = await this.conexosClient.listDeclaracaoByProcesso({
+        const declaracoes = await this.conexosCadastroClient.listDeclaracaoByProcesso({
             priCods,
             filCod,
         });
@@ -490,7 +495,7 @@ export default class EleicaoPermutasService {
         priCods: string[],
         filCod: number,
     ): Promise<Map<string, Invoice[]>> => {
-        const { invoices } = await this.conexosClient.listFinanceiroAPagar({
+        const { invoices } = await this.conexosFinanceiroClient.listFinanceiroAPagar({
             priCods,
             docTip: 'INVOICE',
             filCod,
@@ -516,7 +521,7 @@ export default class EleicaoPermutasService {
                         : {}),
                 };
                 try {
-                    const tit = await this.conexosClient.listTitulosAPagar({
+                    const tit = await this.conexosTitulosClient.listTitulosAPagar({
                         docCod: i.docCod,
                         filCod,
                     });
@@ -567,7 +572,10 @@ export default class EleicaoPermutasService {
                 : {}),
         };
         try {
-            const tit = await this.conexosClient.listTitulosAPagar({ docCod: raw.docCod, filCod });
+            const tit = await this.conexosTitulosClient.listTitulosAPagar({
+                docCod: raw.docCod,
+                filCod,
+            });
             const valorMoedaNegociada = somaValorNegociado(tit);
             const moedaNegociada = tit[0] ? siglaMoedaNegociada(tit[0]) : undefined;
             const taxa = tit[0]?.taxa;
@@ -643,7 +651,7 @@ export default class EleicaoPermutasService {
             valorAberto?: number;
         };
         try {
-            detalhe = await this.conexosClient.getDetalheTitulos({
+            detalhe = await this.conexosTitulosClient.getDetalheTitulos({
                 docCod: adiantamento.docCod,
                 filCod,
             });
@@ -789,7 +797,7 @@ export default class EleicaoPermutasService {
             // Variação Cambial do título), então NÃO condicionamos a `pago`. Erro
             // aqui não trava a candidata (já classificada): apenas omite os campos.
             try {
-                const titAdto = await this.conexosClient.listTitulosAPagar({
+                const titAdto = await this.conexosTitulosClient.listTitulosAPagar({
                     docCod: adiantamento.docCod,
                     filCod,
                 });
@@ -833,9 +841,9 @@ export default class EleicaoPermutasService {
         // — teto da distribuição Simples. `.catch` → undefined (falha de detalhe
         // não trava o casamento; a distribuição cai no valorMoedaNegociada).
         const [titAdto, titInv, detInv] = await Promise.all([
-            this.conexosClient.listTitulosAPagar({ docCod: adiantamento.docCod, filCod }),
-            this.conexosClient.listTitulosAPagar({ docCod: invoice.docCod, filCod }),
-            this.conexosClient
+            this.conexosTitulosClient.listTitulosAPagar({ docCod: adiantamento.docCod, filCod }),
+            this.conexosTitulosClient.listTitulosAPagar({ docCod: invoice.docCod, filCod }),
+            this.conexosTitulosClient
                 .getDetalheTitulos({ docCod: invoice.docCod, filCod })
                 .catch(() => undefined),
         ]);
