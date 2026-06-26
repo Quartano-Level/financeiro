@@ -49,7 +49,11 @@ const RawAuthEnvSchema = z.object({
  * enforced. If `DEV_AUTH_BYPASS=true` reaches any of these, startup must fail
  * loudly instead of booting an unauthenticated API. Arch-review card security-1.
  */
-const DEPLOYED_ENVIRONMENTS = ['prd', 'stg', 'hml'] as const;
+// Ambientes LOCAIS/DEV onde o bypass de auth é tolerável. DENY-BY-DEFAULT (security-1/R-5): QUALQUER
+// outro nome — incl. 'production' (o que o Render seta!), 'prd'/'stg'/'hml', ou um typo — é tratado como
+// DEPLOYED, então o boot FALHA se o bypass estiver ligado. A allow-list anterior (['prd','stg','hml'])
+// deixava 'production' ESCAPAR → a API financeira poderia subir sem JWT em produção.
+const LOCAL_ENVIRONMENTS = ['local', 'dev', 'development', 'test'];
 
 export interface AuthEnv {
     /**
@@ -82,19 +86,17 @@ export const loadAuthEnv = (env: NodeJS.ProcessEnv = process.env): AuthEnv => {
     // verify those tokens; SUPABASE_JWT_SECRET is the legacy fallback.
     const jwtSecret = parsed.AUTH_JWT_SECRET ?? parsed.SUPABASE_JWT_SECRET;
 
-    // Fail-fast: DEV_AUTH_BYPASS disables JWT validation entirely, so it must
-    // never reach a deployed environment. Crossing the bypass flag with the
-    // running environment turns a silent unauthenticated boot into a startup
-    // crash. Arch-review card security-1.
-    const isDeployedEnvironment = DEPLOYED_ENVIRONMENTS.includes(
-        parsed.environment as (typeof DEPLOYED_ENVIRONMENTS)[number],
-    );
-    if (parsed.DEV_AUTH_BYPASS && isDeployedEnvironment) {
+    // Fail-fast: DEV_AUTH_BYPASS disables JWT validation entirely, so it must never reach a deployed
+    // environment. Crossing the bypass flag with the running environment turns a silent unauthenticated
+    // boot into a startup crash. DENY-BY-DEFAULT (security-1/R-5): só ambiente LOCAL/DEV (ou `environment`
+    // não setado = local) tolera o bypass; qualquer outro nome (incl. 'production') CRASHA.
+    const envName = (parsed.environment ?? '').trim().toLowerCase();
+    const isLocalEnvironment = envName === '' || LOCAL_ENVIRONMENTS.includes(envName);
+    if (parsed.DEV_AUTH_BYPASS && !isLocalEnvironment) {
         throw new Error(
-            `DEV_AUTH_BYPASS must not be enabled in a deployed environment ` +
-                `(environment "${parsed.environment}"). It disables all JWT ` +
-                `validation and would leave the API open. Unset DEV_AUTH_BYPASS ` +
-                `(or set it to false) for ${DEPLOYED_ENVIRONMENTS.join('/')} deployments.`,
+            `DEV_AUTH_BYPASS must not be enabled outside a local/dev environment ` +
+                `(environment "${parsed.environment}"). It disables all JWT validation and would leave ` +
+                `the API open. Unset DEV_AUTH_BYPASS (or set it to false) for any deployed environment.`,
         );
     }
 

@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import type ConexosClient from '../../client/ConexosClient.js';
 import AlocacaoSaldoError from '../../errors/AlocacaoSaldoError.js';
 import AlocacaoEmBorderoError from '../../errors/AlocacaoEmBorderoError.js';
+import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import type PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacaoRepository.js';
 import type PermutaExecucaoRepository from '../../repository/permutas/PermutaExecucaoRepository.js';
 import type PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
@@ -110,6 +111,7 @@ const build = (opts: {
         execucaoRepo,
         opts.relational ?? buildRelational(),
         log(),
+        new BoundedConcurrency(),
     );
     return { service, upsertAlocacao, repo, borderoDoPar };
 };
@@ -145,6 +147,7 @@ describe('AlocacaoPermutasService', () => {
             } as unknown as jest.Mocked<PermutaExecucaoRepository>,
             buildRelational(),
             log(),
+            new BoundedConcurrency(),
         );
         const invoices = await service.buscarInvoices('510', 2, 'A9');
         expect(invoices[0].jaAlocado).toBe(300);
@@ -327,6 +330,7 @@ describe('AlocacaoPermutasService', () => {
                 execucaoRepo,
                 relational,
                 log(),
+                new BoundedConcurrency(),
             );
             return { service, upsertAlocacao, deleteAlocacao };
         };

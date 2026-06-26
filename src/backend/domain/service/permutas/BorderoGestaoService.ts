@@ -121,7 +121,7 @@ export default class BorderoGestaoService {
             try {
                 await this.conexosClient.excluirBordero({ filCod: row.filCod, borCod });
                 borderoExcluido = true;
-                await this.execucaoRepository.deleteBorderoCache(borCod); // some do cache na hora
+                await this.execucaoRepository.deleteBorderoCache(row.filCod, borCod); // some do cache na hora
             } catch (err) {
                 await this.logService.warn({
                     type: LOG_TYPE.BUSINESS_WARN,
@@ -179,7 +179,7 @@ export default class BorderoGestaoService {
         }
         await this.conexosClient.excluirBordero({ filCod, borCod });
         await this.execucaoRepository.deleteByBorCod(borCod); // limpa a trilha (no-op se não houver)
-        await this.execucaoRepository.deleteBorderoCache(borCod); // some do cache na hora
+        await this.execucaoRepository.deleteBorderoCache(filCod, borCod); // some do cache na hora
 
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
@@ -200,7 +200,7 @@ export default class BorderoGestaoService {
         const filCod = await this.guardAcaoBordero(params.borCod);
         await this.conexosClient.finalizarBordero({ filCod, borCod: params.borCod });
         // Reflete no cache na hora (sem esperar o próximo refresh).
-        await this.execucaoRepository.updateBorderoCacheSituacao(params.borCod, {
+        await this.execucaoRepository.updateBorderoCacheSituacao(filCod, params.borCod, {
             borVldFinalizado: 1,
         });
         await this.logService.info({
@@ -220,7 +220,7 @@ export default class BorderoGestaoService {
     }): Promise<{ borCod: number; cancelado: boolean }> => {
         const filCod = await this.guardAcaoBordero(params.borCod);
         await this.conexosClient.cancelarBordero({ filCod, borCod: params.borCod });
-        await this.execucaoRepository.updateBorderoCacheSituacao(params.borCod, {
+        await this.execucaoRepository.updateBorderoCacheSituacao(filCod, params.borCod, {
             borVldFinalizado: 2,
         });
         await this.logService.info({
@@ -397,9 +397,10 @@ export default class BorderoGestaoService {
                     }),
             ),
         );
-        // Dedup por borCod (filiais podem se sobrepor).
-        const byBor = new Map<number, (typeof itensPorFilial)[number][number]>();
-        for (const it of itensPorFilial.flat()) byBor.set(it.borCod, it);
+        // Dedup por (filCod, borCod): o número do borderô é POR FILIAL — filiais diferentes podem ter
+        // o mesmo número (ex.: 1824 na filial 1 e na 4). Dedupar só por borCod perdia um deles.
+        const byBor = new Map<string, (typeof itensPorFilial)[number][number]>();
+        for (const it of itensPorFilial.flat()) byBor.set(`${it.filCod}:${it.borCod}`, it);
         await this.execucaoRepository.replaceBorderoCache(
             [...byBor.values()].map((it) => ({
                 borCod: it.borCod,

@@ -1,6 +1,6 @@
 {
     "name": "financeiro-backend",
-    "version": "0.8.3",
+    "version": "0.8.4",
     "description": "Columbia Trading — Financeiro (template bootstrap)",
     "main": "dist/index.js",
     "scripts": {

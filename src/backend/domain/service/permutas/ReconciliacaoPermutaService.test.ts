@@ -124,6 +124,33 @@ describe('ReconciliacaoPermutaService', () => {
         expect(out.resultados[0].payload?.bxaMnyJuros).toBe(220);
     });
 
+    it('in-doubt (R-4): execução anterior reconciling+bor_cod NÃO é re-POSTada (anti super-pagamento)', async () => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, conexosClient, execucaoRepository } = buildDeps();
+        // Órfão: o handshake anterior morreu entre o POST irreversível e o markSettled.
+        (execucaoRepository.findByIdempotencyKey as jest.Mock).mockResolvedValue({
+            status: 'reconciling',
+            borCod: 1999,
+            dryRun: false,
+        });
+
+        const out = await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        // FAIL-CLOSED: não re-POSTa nada e surface o par p/ conciliação manual.
+        expect(conexosClient.criarBordero).not.toHaveBeenCalled();
+        expect(conexosClient.gravarBaixaPermuta).not.toHaveBeenCalled();
+        expect(execucaoRepository.beginExecution).not.toHaveBeenCalled();
+        expect(out.resultados[0].status).toBe('error');
+        expect(out.resultados[0].borCod).toBe(1999);
+        expect(out.resultados[0].erro).toMatch(/estado indeterminado/i);
+        expect(out.resultados[0].erro).toContain('borderô 1999');
+    });
+
     it('forces dry-run when writeEnabled=false even if dryRun flag off', async () => {
         envFlags.conexosWriteEnabled = false;
         envFlags.conexosDryRun = false;

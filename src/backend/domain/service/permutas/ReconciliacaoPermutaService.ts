@@ -173,6 +173,42 @@ export default class ReconciliacaoPermutaService {
                 );
             }
 
+            // IDEMPOTÊNCIA VIVA do estado RECONCILING (R-4 / F-fault-tolerance-1): se a execução anterior
+            // ficou em `reconciling` COM bor_cod (e não dry-run), o processo MORREU no meio do handshake —
+            // entre o POST irreversível (gravarBaixaPermuta) e o markSettled (se qualquer passo tivesse
+            // lançado, o catch teria gravado `error`; se o markSettled caísse por DB-down, o markError
+            // também cairia → a linha fica `reconciling`). Logo: a baixa PODE já estar no ERP. Re-POSTar =
+            // SUPER-PAGAMENTO. FAIL-CLOSED: aborta o par para conciliação manual, NUNCA re-POSTa.
+            if (
+                existente &&
+                !existente.dryRun &&
+                existente.status === 'reconciling' &&
+                existente.borCod !== undefined
+            ) {
+                const msg =
+                    `execução interrompida no meio da baixa (estado indeterminado) — confira se a ` +
+                    `invoice ${aloc.invoiceDocCod} já foi baixada no borderô ${existente.borCod} no ` +
+                    `Conexos ANTES de re-tentar. Se a baixa existe, finalize/exclua-a lá; se não, limpe ` +
+                    `a execução e re-rode.`;
+                await this.logService.error({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'permuta reconciliacao IN-DOUBT (reconciling órfão) — NÃO re-POSTado',
+                    data: {
+                        adiantamentoDocCod,
+                        invoiceDocCod: aloc.invoiceDocCod,
+                        borCod: existente.borCod,
+                    },
+                });
+                resultados.push({
+                    invoiceDocCod: aloc.invoiceDocCod,
+                    status: 'error',
+                    borCod: existente.borCod,
+                    dryRun: false,
+                    erro: msg,
+                });
+                continue;
+            }
+
             const begin = await this.execucaoRepository.beginExecution({
                 idempotencyKey: key,
                 adiantamentoDocCod,

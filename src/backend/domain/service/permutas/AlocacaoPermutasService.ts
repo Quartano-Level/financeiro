@@ -2,7 +2,11 @@ import { inject, injectable } from 'tsyringe';
 import ConexosClient, { siglaMoedaNegociada } from '../../client/ConexosClient.js';
 import AlocacaoEmBorderoError from '../../errors/AlocacaoEmBorderoError.js';
 import AlocacaoSaldoError from '../../errors/AlocacaoSaldoError.js';
+import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+
+/** Teto de invoices buscadas em paralelo no Conexos (3 chamadas/invoice). Cap = bound de I/O (performance-1). */
+const INVOICES_CONCURRENCY = 8;
 import PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacaoRepository.js';
 import PermutaExecucaoRepository from '../../repository/permutas/PermutaExecucaoRepository.js';
 import PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
@@ -73,6 +77,7 @@ export default class AlocacaoPermutasService {
         @inject(PermutaRelationalRepository)
         private relationalRepository: PermutaRelationalRepository,
         @inject(LogService) private logService: LogService,
+        @inject(BoundedConcurrency) private boundedConcurrency: BoundedConcurrency,
     ) {}
 
     /**
@@ -106,8 +111,12 @@ export default class AlocacaoPermutasService {
         });
         const decl = declaracoes[0];
         const dataBase = decl?.dataBase;
-        const mapeadas = await Promise.all(
-            todas.map(async (i): Promise<InvoiceBuscada | null> => {
+        // Cap de concorrência (performance-1): cada invoice dispara ~3 chamadas ao Conexos
+        // (getDetalheTitulos + listTitulosAPagar + sumByInvoice). Sem teto, um processo com muitas
+        // invoices estouraria o Conexos. `map` é drop-in do `Promise.all(items.map(...))` com bound.
+        const mapeadas = await this.boundedConcurrency.map(
+            todas,
+            async (i): Promise<InvoiceBuscada | null> => {
                 // EM ABERTO vem do DETALHE — o `pago`/`aberto` da lista vem null
                 // (inconfiável, mesmo motivo do gate-3). Uma invoice já liquidada
                 // (pago) não tem crédito a abater → fora da permuta.
@@ -158,7 +167,8 @@ export default class AlocacaoPermutasService {
                     ...(dataBase !== undefined ? { dataBase: dataBase.toISOString() } : {}),
                     jaAlocado,
                 };
-            }),
+            },
+            INVOICES_CONCURRENCY,
         );
         return mapeadas.filter((x): x is InvoiceBuscada => x !== null);
     };
@@ -168,7 +178,12 @@ export default class AlocacaoPermutasService {
      * (saldo/taxa/D.I atuais), valida os invariantes de saldo dos dois lados,
      * recalcula a variação cambial pela taxa da invoice + valor alocado e persiste.
      */
-    public alocar = async (input: AlocarInput): Promise<void> => {
+    public alocar = async (
+        input: AlocarInput,
+        // performance-1/2: lista de invoices já buscada (mesmo processo/filial), p/ a auto-alocação em
+        // lote NÃO re-buscar o Conexos a cada item (era O(N²)). `undefined` → busca normalmente.
+        prefetchedInvoices?: InvoiceBuscada[],
+    ): Promise<void> => {
         const { adiantamentoDocCod, invoiceDocCod, invoicePriCod, valorAlocado } = input;
         if (!(valorAlocado > 0)) {
             throw new AlocacaoSaldoError({
@@ -195,7 +210,10 @@ export default class AlocacaoPermutasService {
         if (adto.filCod === undefined) {
             throw new Error(`adiantamento ${adiantamentoDocCod} without filial`);
         }
-        const invoices = await this.buscarInvoices(invoicePriCod, adto.filCod);
+        // Reusa a lista pré-buscada quando o caller já a tem (auto-alocação em lote, mesmo processo) —
+        // snapshot consistente E sem re-fetch O(N²). Senão busca ao vivo.
+        const invoices =
+            prefetchedInvoices ?? (await this.buscarInvoices(invoicePriCod, adto.filCod));
         const invoice = invoices.find((i) => i.docCod === invoiceDocCod);
         if (!invoice)
             throw new Error(`invoice ${invoiceDocCod} not found in process ${invoicePriCod}`);
@@ -340,10 +358,9 @@ export default class AlocacaoPermutasService {
         ).length;
         if (casamManualDoProcesso !== 1) return false;
 
-        // Invoices vivas do processo com D.I/DUIMP (sem D.I não permuta).
-        const invoices = (await this.buscarInvoices(adto.priCod, adto.filCod)).filter(
-            (i) => i.temDi,
-        );
+        // Invoices vivas do processo (buscadas UMA vez — reusadas no lote, performance-2).
+        const invoicesAll = await this.buscarInvoices(adto.priCod, adto.filCod);
+        const invoices = invoicesAll.filter((i) => i.temDi); // sem D.I não permuta
         if (invoices.length === 0) return false;
 
         // O adto COBRE todas as invoices? saldoNeg(USD) ≥ Σ invoices(USD). Senão → manual.
@@ -360,7 +377,8 @@ export default class AlocacaoPermutasService {
                 valorAlocado: (inv.valorMoedaNegociada ?? 0) - inv.jaAlocado,
             }))
             .filter((it) => it.valorAlocado > 0);
-        return this.criarRascunhosAtomico(adiantamentoDocCod, itens, criadoPor);
+        // Passa a lista já buscada → `alocar` não re-busca por item (O(N) em vez de O(N²)).
+        return this.criarRascunhosAtomico(adiantamentoDocCod, itens, criadoPor, invoicesAll);
     };
 
     /**
@@ -373,12 +391,15 @@ export default class AlocacaoPermutasService {
         adiantamentoDocCod: string,
         itens: Array<{ invoiceDocCod: string; invoicePriCod: string; valorAlocado: number }>,
         criadoPor: string,
+        // performance-2: quando todos os itens são do MESMO processo, passa a lista já buscada uma vez
+        // (evita o re-fetch do Conexos a cada `alocar` — antes O(N²)).
+        prefetchedInvoices?: InvoiceBuscada[],
     ): Promise<boolean> => {
         if (itens.length === 0) return false;
         const criadas: string[] = [];
         try {
             for (const it of itens) {
-                await this.alocar({ adiantamentoDocCod, ...it, criadoPor });
+                await this.alocar({ adiantamentoDocCod, ...it, criadoPor }, prefetchedInvoices);
                 criadas.push(it.invoiceDocCod);
             }
         } catch (err) {
