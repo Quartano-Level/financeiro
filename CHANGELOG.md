@@ -1,5 +1,18 @@
 # Columbia Financeiro — Changelog
 
+## v0.8.4 (2026-06-26) — Regis-Review quick wins (segurança + performance)
+
+- **fix(security) [R-5 / security-1]:** guard do `DEV_AUTH_BYPASS` vira **deny-by-default**. Antes era uma
+  allow-list `['prd','stg','hml']` e o nome `'production'` (que o Render seta) **escapava** — a API
+  financeira poderia subir **sem validação de JWT** em produção. Agora o boot **falha** se
+  `DEV_AUTH_BYPASS=true` em qualquer ambiente que não seja reconhecidamente local/dev
+  (`local`/`dev`/`development`/`test` ou `environment` não setado). `http/authEnv.ts`.
+- **perf(permutas) [performance-1]:** `AlocacaoPermutasService.buscarInvoices` passa a **capar a
+  concorrência** das chamadas ao Conexos (cada invoice dispara ~3 chamadas) via `BoundedConcurrency`
+  (teto 8), em vez de `Promise.all` sem limite — evita estourar o ERP em processos com muitas invoices.
+- **docs:** relatório completo do **Regis-Review** (8 QAs, Bass & Clements) em
+  `docs/regis-review/2026-06-26-0058/` (REPORT.md + KANBAN.md de 66 cards). Overall 5.35; Fault Tolerance 8.1.
+
 ## v0.8.3 (2026-06-26) — Permutas: trava ignora borderô CANCELADO
 
 - **fix(permutas):** a trava de remoção de alocação (v0.8.2) passa a **ignorar borderôs CANCELADOS**

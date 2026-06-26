@@ -2,7 +2,11 @@ import { inject, injectable } from 'tsyringe';
 import ConexosClient, { siglaMoedaNegociada } from '../../client/ConexosClient.js';
 import AlocacaoEmBorderoError from '../../errors/AlocacaoEmBorderoError.js';
 import AlocacaoSaldoError from '../../errors/AlocacaoSaldoError.js';
+import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+
+/** Teto de invoices buscadas em paralelo no Conexos (3 chamadas/invoice). Cap = bound de I/O (performance-1). */
+const INVOICES_CONCURRENCY = 8;
 import PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacaoRepository.js';
 import PermutaExecucaoRepository from '../../repository/permutas/PermutaExecucaoRepository.js';
 import PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
@@ -73,6 +77,7 @@ export default class AlocacaoPermutasService {
         @inject(PermutaRelationalRepository)
         private relationalRepository: PermutaRelationalRepository,
         @inject(LogService) private logService: LogService,
+        @inject(BoundedConcurrency) private boundedConcurrency: BoundedConcurrency,
     ) {}
 
     /**
@@ -106,8 +111,12 @@ export default class AlocacaoPermutasService {
         });
         const decl = declaracoes[0];
         const dataBase = decl?.dataBase;
-        const mapeadas = await Promise.all(
-            todas.map(async (i): Promise<InvoiceBuscada | null> => {
+        // Cap de concorrência (performance-1): cada invoice dispara ~3 chamadas ao Conexos
+        // (getDetalheTitulos + listTitulosAPagar + sumByInvoice). Sem teto, um processo com muitas
+        // invoices estouraria o Conexos. `map` é drop-in do `Promise.all(items.map(...))` com bound.
+        const mapeadas = await this.boundedConcurrency.map(
+            todas,
+            async (i): Promise<InvoiceBuscada | null> => {
                 // EM ABERTO vem do DETALHE — o `pago`/`aberto` da lista vem null
                 // (inconfiável, mesmo motivo do gate-3). Uma invoice já liquidada
                 // (pago) não tem crédito a abater → fora da permuta.
@@ -158,7 +167,8 @@ export default class AlocacaoPermutasService {
                     ...(dataBase !== undefined ? { dataBase: dataBase.toISOString() } : {}),
                     jaAlocado,
                 };
-            }),
+            },
+            INVOICES_CONCURRENCY,
         );
         return mapeadas.filter((x): x is InvoiceBuscada => x !== null);
     };

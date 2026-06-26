@@ -64,14 +64,20 @@ describe('loadAuthEnv', () => {
     });
 
     describe('DEV_AUTH_BYPASS × environment guard (security-1)', () => {
-        for (const environment of ['prd', 'stg', 'hml']) {
+        // 'production' é o nome que o Render seta (render.yaml) — a allow-list antiga o deixava ESCAPAR.
+        // Deny-by-default: qualquer nome não-local crasha. (security-1/R-5)
+        for (const environment of ['prd', 'stg', 'hml', 'production', 'prod', 'Production']) {
             it(`throws at startup when DEV_AUTH_BYPASS=true in ${environment}`, () => {
                 expect(() =>
                     loadAuthEnv({
                         DEV_AUTH_BYPASS: 'true',
                         environment,
                     } as NodeJS.ProcessEnv),
-                ).toThrow(/DEV_AUTH_BYPASS.*must not be enabled.*environment "prd"|stg|hml/);
+                ).toThrow(
+                    new RegExp(
+                        `DEV_AUTH_BYPASS.*must not be enabled.*environment "${environment}"`,
+                    ),
+                );
             });
         }
 
