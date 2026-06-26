@@ -23,6 +23,16 @@
   mensagem pedindo conferência manual do borderô no Conexos, em vez de re-postar. A idempotência viva
   passa a cobrir `reconciling`, não só `settled`. `ReconciliacaoPermutaService`. (Follow-ups do R-4 ainda
   abertos: `Idempotency-Key` HTTP em `/reconciliar`+`/reconciliar-lote` e reaper de execução órfã.)
+- **fix(permutas) [crítico — cache de borderô por filial]:** o número do borderô no Conexos é **por
+  filial** (cada filial numera o seu). O cache `permuta_bordero` tinha **PK só em `bor_cod`**, então
+  borderôs de filiais diferentes com o **mesmo número colidiam** e sumiam da aba Borderôs (ex.: borderô
+  1824 existe na filial 1 — do adto 3569 — e na filial 4; o da filial 1 sumia). As faixas se sobrepõem
+  muito entre filiais, então a perda era ampla. Correção: **chave composta `(fil_cod, bor_cod)`** —
+  migration `0020`, dedup do `refreshCache` por par, `replaceBorderoCache`/`updateBorderoCacheSituacao`/
+  `deleteBorderoCache` por `(filial, borderô)`, e a **trava `borderoDoPar` (v0.8.3)** passa a casar
+  `permuta_bordero` por **filial + borderô** (corrige bug latente de ler a filial errada). O status do
+  painel já estava correto (query ao vivo filtrada por filial). Requer rodar a migration; o cache se
+  repovoa no próximo "Atualizar"/ingestão.
 - **docs:** relatório completo do **Regis-Review** (8 QAs, Bass & Clements) em
   `docs/regis-review/2026-06-26-0058/` (REPORT.md + KANBAN.md de 66 cards). Overall 5.35; Fault Tolerance 8.1.
 

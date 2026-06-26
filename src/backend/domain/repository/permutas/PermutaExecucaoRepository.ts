@@ -112,7 +112,7 @@ export default class PermutaExecucaoRepository {
                AND e.bor_cod IS NOT NULL
                AND NOT EXISTS (
                    SELECT 1 FROM permuta_bordero b
-                   WHERE b.bor_cod = e.bor_cod
+                   WHERE b.fil_cod = e.fil_cod AND b.bor_cod = e.bor_cod
                      AND b.bor_vld_finalizado = 2
                )
              ORDER BY e.criado_em DESC
@@ -379,8 +379,7 @@ export default class PermutaExecucaoRepository {
                 bor_cod, fil_cod, bor_vld_finalizado, bor_cod_estornado, vlr_total_liquido,
                 bor_dta_mvto, usn_des_nome_cad, atualizado_em
              ) VALUES ${tuples.join(', ')}
-             ON CONFLICT (bor_cod) DO UPDATE SET
-                fil_cod = EXCLUDED.fil_cod,
+             ON CONFLICT (fil_cod, bor_cod) DO UPDATE SET
                 bor_vld_finalizado = EXCLUDED.bor_vld_finalizado,
                 bor_cod_estornado = EXCLUDED.bor_cod_estornado,
                 vlr_total_liquido = EXCLUDED.vlr_total_liquido,
@@ -389,23 +388,26 @@ export default class PermutaExecucaoRepository {
                 atualizado_em = now()`,
             params,
         );
-        const inList = items.map((_, i) => `$bor_${i}`).join(', ');
+        // Remove do cache os que sumiram do ERP — por PAR (fil_cod, bor_cod), pois o nº é por filial.
+        const pairList = items.map((_, i) => `($fil_${i}, $bor_${i})`).join(', ');
         await this.databaseClient.update(
-            `DELETE FROM permuta_bordero WHERE bor_cod NOT IN (${inList})`,
+            `DELETE FROM permuta_bordero WHERE (fil_cod, bor_cod) NOT IN (${pairList})`,
             params,
         );
     };
 
-    /** Atualiza a situação de UM borderô no cache (após Aprovar/Cancelar). */
+    /** Atualiza a situação de UM borderô no cache (após Aprovar/Cancelar). Chave = (filial, borderô). */
     public updateBorderoCacheSituacao = async (
+        filCod: number,
         borCod: number,
         fields: { borVldFinalizado?: number; borCodEstornado?: number | null },
     ): Promise<number> => {
         return this.databaseClient.update(
             `UPDATE permuta_bordero
              SET bor_vld_finalizado = $fin, bor_cod_estornado = $est, atualizado_em = now()
-             WHERE bor_cod = $bor`,
+             WHERE fil_cod = $fil AND bor_cod = $bor`,
             {
+                fil: filCod,
                 bor: borCod,
                 fin: fields.borVldFinalizado ?? null,
                 est: fields.borCodEstornado ?? null,
@@ -413,11 +415,12 @@ export default class PermutaExecucaoRepository {
         );
     };
 
-    /** Remove UM borderô do cache (após Excluir borderô no ERP). */
-    public deleteBorderoCache = async (borCod: number): Promise<number> => {
-        return this.databaseClient.update(`DELETE FROM permuta_bordero WHERE bor_cod = $bor`, {
-            bor: borCod,
-        });
+    /** Remove UM borderô do cache (após Excluir borderô no ERP). Chave = (filial, borderô). */
+    public deleteBorderoCache = async (filCod: number, borCod: number): Promise<number> => {
+        return this.databaseClient.update(
+            `DELETE FROM permuta_bordero WHERE fil_cod = $fil AND bor_cod = $bor`,
+            { fil: filCod, bor: borCod },
+        );
     };
 
     private mapRow = (r: Record<string, unknown>): ExecucaoRow => ({
