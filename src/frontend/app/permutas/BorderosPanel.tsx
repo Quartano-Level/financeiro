@@ -94,6 +94,9 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
   const [dataFiltro, setDataFiltro] = React.useState('')
   const [expandido, setExpandido] = React.useState<number | null>(null)
   const [pagina, setPagina] = React.useState(1)
+  // Revalidação ao vivo em background (stale-while-revalidate): true enquanto o refresh do ERP roda
+  // por baixo, com o cache já exibido. Alimenta o chip "atualizando…".
+  const [atualizando, setAtualizando] = React.useState(false)
 
   // Atualizar = refresh AO VIVO no ERP (regrava o cache). A carga inicial lê do CACHE (rápido).
   const load = React.useCallback(async () => {
@@ -108,20 +111,33 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
     }
   }, [])
 
-  // Carga inicial AO VIVO (live=true): ao entrar na tela já traz o estado fresco do ERP, sem o
-  // usuário precisar clicar em "Atualizar" (o memo de 30s é ignorado no modo live).
+  // Carga inicial STALE-WHILE-REVALIDATE: mostra o CACHE na hora (live=false, vem do banco em ms) e
+  // revalida AO VIVO no ERP em background (live=true), atualizando a lista quando volta. Mata a espera
+  // do refresh multi-filial sem perder o frescor — a tela abre instantânea.
   React.useEffect(() => {
     let active = true
-    fetchBorderos(true)
-      .then((b) => {
-        if (active) setBorderos(b)
-      })
-      .catch(() => {
+    void (async () => {
+      // 1) cache imediato → renderiza já
+      try {
+        const cached = await fetchBorderos(false)
+        if (active) setBorderos(cached)
+      } catch {
         if (active) setBorderos([])
-      })
-      .finally(() => {
+      } finally {
         if (active) setLoading(false)
-      })
+      }
+      // 2) revalida ao vivo no ERP, por baixo (mantém o cache exibido se falhar)
+      if (!active) return
+      setAtualizando(true)
+      try {
+        const fresh = await fetchBorderos(true)
+        if (active) setBorderos(fresh)
+      } catch {
+        // mantém o cache já exibido — sem toast (revalidação silenciosa)
+      } finally {
+        if (active) setAtualizando(false)
+      }
+    })()
     return () => {
       active = false
     }
@@ -243,16 +259,28 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
           <p className="text-sm text-muted-foreground">
             Revisão dos borderôs de permuta criados no fin010 — status ao vivo do Conexos.
           </p>
-          <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-            <RefreshCw aria-hidden /> Atualizar
-          </Button>
+          <div className="flex items-center gap-2">
+            {atualizando && (
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <RefreshCw className="size-3 animate-spin" aria-hidden /> atualizando…
+              </span>
+            )}
+            <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+              <RefreshCw aria-hidden /> Atualizar
+            </Button>
+          </div>
         </div>
       ) : (
         <PageHeader
           title="Borderôs"
           subtitle="Revisão dos borderôs de permuta criados no fin010 — status ao vivo do Conexos (em aberto / finalizado / estornado)."
           actions={
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2">
+              {atualizando && (
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <RefreshCw className="size-3 animate-spin" aria-hidden /> atualizando…
+                </span>
+              )}
               <Button variant="outline" size="sm" onClick={load} disabled={loading}>
                 <RefreshCw aria-hidden /> Atualizar
               </Button>
