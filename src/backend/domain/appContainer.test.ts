@@ -17,9 +17,9 @@ jest.mock('./client/legacyConexosAdapter.js', () => ({
     buildLegacyConexosAdapter: (...a: unknown[]) => buildLegacyConexosAdapter(...a),
 }));
 
-jest.mock('./client/ConexosClient.js', () => ({
+jest.mock('./client/ConexosBaseClient.js', () => ({
     __esModule: true,
-    default: class ConexosClient {},
+    default: class ConexosBaseClient {},
     LEGACY_CONEXOS_TOKEN: Symbol('LegacyConexosShape'),
 }));
 

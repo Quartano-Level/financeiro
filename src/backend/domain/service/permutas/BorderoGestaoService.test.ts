@@ -50,7 +50,8 @@ const build = (getBorderoImpl: jest.Mock) => {
     };
     const logService = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
     const service = new BorderoGestaoService(
-        conexosClient as never,
+        conexosClient as never, // ConexosBaixaClient (fin010)
+        conexosClient as never, // ConexosCadastroClient (listFiliais)
         environmentProvider as never,
         execucaoRepository as never,
         logService as never,

@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { container } from 'tsyringe';
 import MigrationRunner from '../migrations/runMigrations.js';
 import { buildLegacyConexosAdapter } from './client/legacyConexosAdapter.js';
-import ConexosClient, { LEGACY_CONEXOS_TOKEN } from './client/ConexosClient.js';
+import ConexosBaseClient, { LEGACY_CONEXOS_TOKEN } from './client/ConexosBaseClient.js';
 import PostgreeDatabaseClient from './client/database/PostgreeDatabaseClient.js';
 import EnvironmentProvider from './libs/environment/EnvironmentProvider.js';
 
@@ -61,7 +61,7 @@ export const bootstrapAppContainer = async (): Promise<void> => {
     });
 
     container.register(LEGACY_CONEXOS_TOKEN, { useValue: adapter });
-    container.resolve(ConexosClient); // eager warm
+    container.resolve(ConexosBaseClient); // eager warm (shared auth/HTTP/pagination)
 
     await initDatabaseAndMigrate(env.environment === 'production');
 

@@ -1,5 +1,7 @@
 import 'reflect-metadata';
-import type ConexosClient from '../../client/ConexosClient.js';
+import type ConexosCadastroClient from '../../client/ConexosCadastroClient.js';
+import type ConexosFinanceiroClient from '../../client/ConexosFinanceiroClient.js';
+import type ConexosTitulosClient from '../../client/ConexosTitulosClient.js';
 import AlocacaoSaldoError from '../../errors/AlocacaoSaldoError.js';
 import AlocacaoEmBorderoError from '../../errors/AlocacaoEmBorderoError.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
@@ -12,7 +14,17 @@ import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
 
 const log = () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }) as unknown as LogService;
 
-const buildConexos = (over: Partial<jest.Mocked<ConexosClient>> = {}) =>
+/**
+ * Combined Conexos mock — the CC-2 split moved the methods used here across
+ * three sub-clients (Financeiro/Cadastro/Titulos). The test fakes them all on
+ * a single object and injects it into each sub-client slot.
+ */
+type PublicShape<T> = { [K in keyof T]: T[K] };
+type ConexosMock = PublicShape<ConexosFinanceiroClient> &
+    PublicShape<ConexosCadastroClient> &
+    PublicShape<ConexosTitulosClient>;
+
+const buildConexos = (over: Partial<jest.Mocked<ConexosMock>> = {}) =>
     ({
         listFiliais: jest.fn().mockResolvedValue([{ filCod: 2 }, { filCod: 4 }]),
         listFinanceiroAPagar: jest
@@ -57,7 +69,7 @@ const buildConexos = (over: Partial<jest.Mocked<ConexosClient>> = {}) =>
             valorAberto: docCod === 'I8-PAGA' ? 0 : 4000,
         })),
         ...over,
-    }) as unknown as ConexosClient;
+    }) as unknown as ConexosMock;
 
 const buildAlocacaoRepo = (sums: { adto?: number; invoice?: number } = {}) => {
     const upsertAlocacao = jest.fn().mockResolvedValue(undefined);
@@ -96,7 +108,7 @@ const buildRelational = (
     }) as unknown as jest.Mocked<PermutaRelationalRepository>;
 
 const build = (opts: {
-    conexos?: ConexosClient;
+    conexos?: ConexosMock;
     sums?: { adto?: number; invoice?: number };
     relational?: jest.Mocked<PermutaRelationalRepository>;
     borCodDoPar?: number | null;
@@ -104,8 +116,11 @@ const build = (opts: {
     const { repo, upsertAlocacao } = buildAlocacaoRepo(opts.sums);
     const borderoDoPar = jest.fn().mockResolvedValue(opts.borCodDoPar ?? null);
     const execucaoRepo = { borderoDoPar } as unknown as jest.Mocked<PermutaExecucaoRepository>;
+    const conexos = opts.conexos ?? buildConexos();
     const service = new AlocacaoPermutasService(
-        opts.conexos ?? buildConexos(),
+        conexos as unknown as ConexosFinanceiroClient,
+        conexos as unknown as ConexosCadastroClient,
+        conexos as unknown as ConexosTitulosClient,
         new VariacaoCambialPermutaService(),
         repo,
         execucaoRepo,
@@ -138,8 +153,11 @@ describe('AlocacaoPermutasService', () => {
     it('buscarInvoices reporta jaAlocado (consumo de OUTROS adtos) e exclui o próprio', async () => {
         // 300 já alocados na invoice por outros adiantamentos.
         const { repo } = buildAlocacaoRepo({ invoice: 300 });
+        const conexos = buildConexos();
         const service = new AlocacaoPermutasService(
-            buildConexos(),
+            conexos as unknown as ConexosFinanceiroClient,
+            conexos as unknown as ConexosCadastroClient,
+            conexos as unknown as ConexosTitulosClient,
             new VariacaoCambialPermutaService(),
             repo,
             {
@@ -229,7 +247,7 @@ describe('AlocacaoPermutasService', () => {
             listTitulosAPagar: jest
                 .fn()
                 .mockResolvedValue([{ valorNegociado: 1000, taxa: 1, moedaNome: 'BRL' }]),
-        } as Partial<jest.Mocked<ConexosClient>>);
+        } as Partial<jest.Mocked<ConexosMock>>);
         const { service } = build({ conexos }); // adto moedaNegociada 'USD' (default)
         await expect(
             service.alocar({
@@ -245,7 +263,7 @@ describe('AlocacaoPermutasService', () => {
     it('alocar rejeita invoice SEM D.I/DUIMP', async () => {
         const conexos = buildConexos({
             listDeclaracaoByProcesso: jest.fn().mockResolvedValue([]), // sem D.I
-        } as Partial<jest.Mocked<ConexosClient>>);
+        } as Partial<jest.Mocked<ConexosMock>>);
         const { service } = build({ conexos });
         await expect(
             service.alocar({
@@ -288,7 +306,7 @@ describe('AlocacaoPermutasService', () => {
                 priCod: string;
                 valorASerUsado?: number;
             }>;
-            conexos?: ConexosClient;
+            conexos?: ConexosMock;
         }) => {
             const upsertAlocacao = jest.fn().mockResolvedValue(undefined);
             const deleteAlocacao = jest.fn().mockResolvedValue(1);
@@ -323,8 +341,11 @@ describe('AlocacaoPermutasService', () => {
             const execucaoRepo = {
                 borderoDoPar: jest.fn().mockResolvedValue(null),
             } as unknown as jest.Mocked<PermutaExecucaoRepository>;
+            const conexos = opts.conexos ?? buildConexos();
             const service = new AlocacaoPermutasService(
-                opts.conexos ?? buildConexos(),
+                conexos as unknown as ConexosFinanceiroClient,
+                conexos as unknown as ConexosCadastroClient,
+                conexos as unknown as ConexosTitulosClient,
                 new VariacaoCambialPermutaService(),
                 alocacaoRepo,
                 execucaoRepo,

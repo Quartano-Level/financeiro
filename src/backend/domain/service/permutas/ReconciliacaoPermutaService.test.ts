@@ -82,7 +82,8 @@ const buildDeps = () => {
         autoAlocarDeCasamento: jest.fn().mockResolvedValue(false),
     };
     const service = new ReconciliacaoPermutaService(
-        conexosClient as never,
+        conexosClient as never, // ConexosBaixaClient (fin010)
+        conexosClient as never, // ConexosTitulosClient (listTitulosAPagar)
         environmentProvider as never,
         alocacaoRepository as never,
         execucaoRepository as never,

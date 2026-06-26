@@ -5,7 +5,9 @@ import CasamentoInvoiceService from './CasamentoInvoiceService.js';
 import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
 import AgingService from './AgingService.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
-import type ConexosClient from '../../client/ConexosClient.js';
+import type ConexosCadastroClient from '../../client/ConexosCadastroClient.js';
+import type ConexosFinanceiroClient from '../../client/ConexosFinanceiroClient.js';
+import type ConexosTitulosClient from '../../client/ConexosTitulosClient.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import type PermutaSnapshotRepository from '../../repository/permutas/PermutaSnapshotRepository.js';
 import type LogService from '../LogService.js';
@@ -33,7 +35,40 @@ const buildLogService = () => {
     return { logService, calls };
 };
 
-const buildConexos = (over: Partial<jest.Mocked<ConexosClient>> = {}) =>
+/**
+ * Combined Conexos mock — the CC-2 split moved the methods used here across
+ * three sub-clients (Cadastro/Financeiro/Titulos). The test fakes them all on
+ * a single object and injects it into each sub-client slot via `buildEleicao`.
+ */
+type PublicShape<T> = { [K in keyof T]: T[K] };
+type ConexosMock = PublicShape<ConexosCadastroClient> &
+    PublicShape<ConexosFinanceiroClient> &
+    PublicShape<ConexosTitulosClient>;
+
+/**
+ * Constructs the service from the single combined Conexos mock, injecting it
+ * into the three sub-client constructor slots. `rest` mirrors the remaining
+ * constructor params (elegibilidade … clienteFiltro) one-to-one.
+ */
+const buildEleicao = (
+    conexos: ConexosMock,
+    ...rest: ConstructorParameters<typeof EleicaoPermutasService> extends [
+        ConexosCadastroClient,
+        ConexosFinanceiroClient,
+        ConexosTitulosClient,
+        ...infer R,
+    ]
+        ? R
+        : never
+) =>
+    new EleicaoPermutasService(
+        conexos as unknown as ConexosCadastroClient,
+        conexos as unknown as ConexosFinanceiroClient,
+        conexos as unknown as ConexosTitulosClient,
+        ...rest,
+    );
+
+const buildConexos = (over: Partial<jest.Mocked<ConexosMock>> = {}) =>
     ({
         listFiliais: jest.fn().mockResolvedValue([{ filCod: 2 }]),
         listAdiantamentosProforma: jest
@@ -46,7 +81,7 @@ const buildConexos = (over: Partial<jest.Mocked<ConexosClient>> = {}) =>
         listTitulosAPagar: jest.fn().mockResolvedValue([]),
         listProcessos: jest.fn().mockResolvedValue([]),
         ...over,
-    }) as unknown as ConexosClient;
+    }) as unknown as ConexosMock;
 
 /** Mock do ClienteFiltroRepository — sem clientes-filtro por padrão. */
 const buildClienteFiltro = (pesCods: string[] = []) =>
@@ -112,11 +147,11 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
             listFinanceiroAPagar: jest
                 .fn()
                 .mockResolvedValue({ proformas: [], invoices: [invoice] }),
-        } as Partial<jest.Mocked<ConexosClient>>);
+        } as Partial<jest.Mocked<ConexosMock>>);
         const repo = buildRepo();
         const { logService, calls } = buildLogService();
         const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } = realServices();
-        const service = new EleicaoPermutasService(
+        const service = buildEleicao(
             conexos,
             elegibilidade,
             variacao,
@@ -169,11 +204,11 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
                 valorTotal: 1000,
                 valorAberto: 400,
             }),
-        } as Partial<jest.Mocked<ConexosClient>>);
+        } as Partial<jest.Mocked<ConexosMock>>);
         const repo = buildRepo();
         const { logService } = buildLogService();
         const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } = realServices();
-        const service = new EleicaoPermutasService(
+        const service = buildEleicao(
             conexos,
             elegibilidade,
             variacao,
@@ -204,14 +239,14 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
                 .mockResolvedValue([{ priCod: '1153', pesCod: '191', importador: 'INOX-TECH' }]),
             listDeclaracaoByProcesso: jest.fn().mockResolvedValue([]), // sem D.I → bloqueada
             getDetalheTitulos: jest.fn().mockResolvedValue({ valorPermutar: 1000, pago }),
-        } as Partial<jest.Mocked<ConexosClient>>);
+        } as Partial<jest.Mocked<ConexosMock>>);
 
     const runWith = async (
-        conexos: ConexosClient,
+        conexos: ConexosMock,
         clienteFiltro: ReturnType<typeof buildClienteFiltro>,
     ) => {
         const { elegibilidade, variacao, aging, concurrency, db } = realServices();
-        const service = new EleicaoPermutasService(
+        const service = buildEleicao(
             conexos,
             elegibilidade,
             variacao,
@@ -269,11 +304,11 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
                     moedaNome: 'DOLAR DOS EUA',
                 },
             ]),
-        } as Partial<jest.Mocked<ConexosClient>>);
+        } as Partial<jest.Mocked<ConexosMock>>);
         const repo = buildRepo();
         const { logService } = buildLogService();
         const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } = realServices();
-        const service = new EleicaoPermutasService(
+        const service = buildEleicao(
             conexos,
             elegibilidade,
             variacao,
@@ -318,11 +353,11 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
             getDetalheTitulos: jest
                 .fn()
                 .mockResolvedValue({ valorPermutar: 1000, pago: true, valorAberto: 5000 }),
-        } as Partial<jest.Mocked<ConexosClient>>);
+        } as Partial<jest.Mocked<ConexosMock>>);
         const repo = buildRepo();
         const { logService } = buildLogService();
         const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } = realServices();
-        const service = new EleicaoPermutasService(
+        const service = buildEleicao(
             conexos,
             elegibilidade,
             variacao,
@@ -358,11 +393,11 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
                     moedaNome: 'DOLAR DOS EUA',
                 },
             ]),
-        } as Partial<jest.Mocked<ConexosClient>>);
+        } as Partial<jest.Mocked<ConexosMock>>);
         const repo = buildRepo();
         const { logService } = buildLogService();
         const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } = realServices();
-        const service = new EleicaoPermutasService(
+        const service = buildEleicao(
             conexos,
             elegibilidade,
             variacao,
@@ -388,11 +423,11 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
             listFinanceiroAPagar: jest
                 .fn()
                 .mockResolvedValue({ proformas: [], invoices: [invoice] }),
-        } as Partial<jest.Mocked<ConexosClient>>);
+        } as Partial<jest.Mocked<ConexosMock>>);
         const repo = buildRepo();
         const { logService } = buildLogService();
         const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } = realServices();
-        const service = new EleicaoPermutasService(
+        const service = buildEleicao(
             conexos,
             elegibilidade,
             variacao,
@@ -417,11 +452,11 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
             listAdiantamentosProforma: jest
                 .fn()
                 .mockResolvedValue({ adiantamentos: [], capHit: true }),
-        } as Partial<jest.Mocked<ConexosClient>>);
+        } as Partial<jest.Mocked<ConexosMock>>);
         const repo = buildRepo();
         const { logService, calls } = buildLogService();
         const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } = realServices();
-        const service = new EleicaoPermutasService(
+        const service = buildEleicao(
             conexos,
             elegibilidade,
             variacao,
@@ -448,11 +483,11 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
             getDetalheTitulos: jest
                 .fn()
                 .mockRejectedValue(new ConexosError({ endpoint: 'com298/A1', priCod: 'A1' })),
-        } as Partial<jest.Mocked<ConexosClient>>);
+        } as Partial<jest.Mocked<ConexosMock>>);
         const repo = buildRepo();
         const { logService, calls } = buildLogService();
         const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } = realServices();
-        const service = new EleicaoPermutasService(
+        const service = buildEleicao(
             conexos,
             elegibilidade,
             variacao,
@@ -501,12 +536,12 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
                 getDetalheTitulos: jest
                     .fn()
                     .mockResolvedValue({ valorPermutar: 1000, pago: false }),
-            } as Partial<jest.Mocked<ConexosClient>>);
+            } as Partial<jest.Mocked<ConexosMock>>);
             const repo = buildRepo();
             const { logService } = buildLogService();
             const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } =
                 realServices();
-            const service = new EleicaoPermutasService(
+            const service = buildEleicao(
                 conexos,
                 elegibilidade,
                 variacao,
@@ -539,12 +574,12 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
                 getDetalheTitulos: jest
                     .fn()
                     .mockResolvedValue({ valorPermutar: 266350.43, pago: true }),
-            } as Partial<jest.Mocked<ConexosClient>>);
+            } as Partial<jest.Mocked<ConexosMock>>);
             const repo = buildRepo();
             const { logService } = buildLogService();
             const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } =
                 realServices();
-            const service = new EleicaoPermutasService(
+            const service = buildEleicao(
                 conexos,
                 elegibilidade,
                 variacao,
@@ -576,12 +611,12 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
                 getDetalheTitulos: jest
                     .fn()
                     .mockResolvedValue({ valorPermutar: 1000, pago: undefined }),
-            } as Partial<jest.Mocked<ConexosClient>>);
+            } as Partial<jest.Mocked<ConexosMock>>);
             const repo = buildRepo();
             const { logService } = buildLogService();
             const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } =
                 realServices();
-            const service = new EleicaoPermutasService(
+            const service = buildEleicao(
                 conexos,
                 elegibilidade,
                 variacao,
@@ -604,11 +639,11 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
         const boom = new Error('ensureSid failed');
         const conexos = buildConexos({
             listFiliais: jest.fn().mockRejectedValue(boom),
-        } as Partial<jest.Mocked<ConexosClient>>);
+        } as Partial<jest.Mocked<ConexosMock>>);
         const repo = buildRepo();
         const { logService, calls } = buildLogService();
         const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } = realServices();
-        const service = new EleicaoPermutasService(
+        const service = buildEleicao(
             conexos,
             elegibilidade,
             variacao,
@@ -653,12 +688,12 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
                     .mockResolvedValue({ adiantamentos, capHit: false }),
                 listDeclaracaoByProcesso,
                 listFinanceiroAPagar,
-            } as Partial<jest.Mocked<ConexosClient>>);
+            } as Partial<jest.Mocked<ConexosMock>>);
             const repo = buildRepo();
             const { logService } = buildLogService();
             const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } =
                 realServices();
-            const service = new EleicaoPermutasService(
+            const service = buildEleicao(
                 conexos,
                 elegibilidade,
                 variacao,
@@ -716,12 +751,12 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
                     proformas: [],
                     invoices: [{ ...invoice, docCod: 'I0', priCod: '1000' }],
                 }),
-            } as Partial<jest.Mocked<ConexosClient>>);
+            } as Partial<jest.Mocked<ConexosMock>>);
             const repo = buildRepo();
             const { logService } = buildLogService();
             const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } =
                 realServices();
-            const service = new EleicaoPermutasService(
+            const service = buildEleicao(
                 conexos,
                 elegibilidade,
                 variacao,
@@ -755,12 +790,12 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
                     active -= 1;
                     return { adiantamentos: [], capHit: false };
                 }),
-            } as Partial<jest.Mocked<ConexosClient>>);
+            } as Partial<jest.Mocked<ConexosMock>>);
             const repo = buildRepo();
             const { logService } = buildLogService();
             const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } =
                 realServices();
-            const service = new EleicaoPermutasService(
+            const service = buildEleicao(
                 conexos,
                 elegibilidade,
                 variacao,
@@ -783,7 +818,7 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
     describe('idempotency + advisory lock (P0-6)', () => {
         it('replays the existing run for a known Idempotency-Key, ZERO fan-out', async () => {
             const listFiliais = jest.fn().mockResolvedValue([{ filCod: 2 }]);
-            const conexos = buildConexos({ listFiliais } as Partial<jest.Mocked<ConexosClient>>);
+            const conexos = buildConexos({ listFiliais } as Partial<jest.Mocked<ConexosMock>>);
             const repo = buildRepo();
             (repo.findRunIdByIdempotencyKey as jest.Mock).mockResolvedValue('run-existing');
             (repo.findRunSummaryById as jest.Mock).mockResolvedValue({
@@ -798,7 +833,7 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
             const { logService } = buildLogService();
             const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } =
                 realServices();
-            const service = new EleicaoPermutasService(
+            const service = buildEleicao(
                 conexos,
                 elegibilidade,
                 variacao,
@@ -822,7 +857,7 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
 
         it('does not fire a second fan-out when the advisory lock is busy (concurrent dup)', async () => {
             const listFiliais = jest.fn().mockResolvedValue([{ filCod: 2 }]);
-            const conexos = buildConexos({ listFiliais } as Partial<jest.Mocked<ConexosClient>>);
+            const conexos = buildConexos({ listFiliais } as Partial<jest.Mocked<ConexosMock>>);
             const repo = buildRepo();
             // Key unknown on first check, then the winner's run appears once the
             // busy branch re-checks.
@@ -850,7 +885,7 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
                     ) => onBusy(),
                 ),
             } as unknown as jest.Mocked<PostgreeDatabaseClient>;
-            const service = new EleicaoPermutasService(
+            const service = buildEleicao(
                 conexos,
                 elegibilidade,
                 variacao,
@@ -881,12 +916,12 @@ describe('EleicaoPermutasService (orchestrator / job)', () => {
                 listFinanceiroAPagar: jest
                     .fn()
                     .mockResolvedValue({ proformas: [], invoices: [invoice] }),
-            } as Partial<jest.Mocked<ConexosClient>>);
+            } as Partial<jest.Mocked<ConexosMock>>);
             const repo = buildRepo();
             const { logService } = buildLogService();
             const { elegibilidade, variacao, aging, concurrency, db, clienteFiltro } =
                 realServices();
-            const service = new EleicaoPermutasService(
+            const service = buildEleicao(
                 conexos,
                 elegibilidade,
                 variacao,

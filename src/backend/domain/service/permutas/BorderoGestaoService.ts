@@ -1,5 +1,6 @@
 import { inject, injectable } from 'tsyringe';
-import ConexosClient from '../../client/ConexosClient.js';
+import ConexosBaixaClient from '../../client/ConexosBaixaClient.js';
+import ConexosCadastroClient from '../../client/ConexosCadastroClient.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
 import PermutaExecucaoRepository, {
@@ -60,13 +61,14 @@ export interface BorderoResumo {
  *
  * Fonte: a nossa trilha de execução (`permuta_alocacao_execucao`) agrupada por `bor_cod` —
  * são os borderôs que ESTE sistema criou. Enriquece cada um com o **estado vivo do ERP**
- * (`ConexosClient.getBordero`): EM CADASTRO / FINALIZADO / ESTORNADO / REMOVIDO. As AÇÕES
+ * (`ConexosBaixaClient.getBordero`): EM CADASTRO / FINALIZADO / ESTORNADO / REMOVIDO. As AÇÕES
  * de aprovação/exclusão/estorno (escrita) são uma fatia futura — aqui só listamos para revisão.
  */
 @injectable()
 export default class BorderoGestaoService {
     constructor(
-        @inject(ConexosClient) private conexosClient: ConexosClient,
+        @inject(ConexosBaixaClient) private conexosBaixaClient: ConexosBaixaClient,
+        @inject(ConexosCadastroClient) private conexosCadastroClient: ConexosCadastroClient,
         @inject(EnvironmentProvider) private environmentProvider: EnvironmentProvider,
         @inject(PermutaExecucaoRepository)
         private execucaoRepository: PermutaExecucaoRepository,
@@ -104,7 +106,7 @@ export default class BorderoGestaoService {
             );
         }
 
-        await this.conexosClient.excluirBaixa({
+        await this.conexosBaixaClient.excluirBaixa({
             filCod: row.filCod,
             borCod,
             invoiceDocCod: Number(invoiceDocCod),
@@ -119,7 +121,7 @@ export default class BorderoGestaoService {
         let borderoExcluido = false;
         if ((await this.execucaoRepository.countByBorCod(borCod)) === 0) {
             try {
-                await this.conexosClient.excluirBordero({ filCod: row.filCod, borCod });
+                await this.conexosBaixaClient.excluirBordero({ filCod: row.filCod, borCod });
                 borderoExcluido = true;
                 await this.execucaoRepository.deleteBorderoCache(row.filCod, borCod); // some do cache na hora
             } catch (err) {
@@ -166,9 +168,9 @@ export default class BorderoGestaoService {
 
         // Enumera as baixas DO ERP (fonte da verdade — funciona p/ borderôs fora da trilha),
         // remove cada uma e depois o próprio borderô.
-        const baixas = await this.conexosClient.listBaixas({ filCod, borCod });
+        const baixas = await this.conexosBaixaClient.listBaixas({ filCod, borCod });
         for (const b of baixas) {
-            await this.conexosClient.excluirBaixa({
+            await this.conexosBaixaClient.excluirBaixa({
                 filCod,
                 borCod,
                 docTip: b.docTip,
@@ -177,7 +179,7 @@ export default class BorderoGestaoService {
                 bxaCodSeq: b.bxaCodSeq,
             });
         }
-        await this.conexosClient.excluirBordero({ filCod, borCod });
+        await this.conexosBaixaClient.excluirBordero({ filCod, borCod });
         await this.execucaoRepository.deleteByBorCod(borCod); // limpa a trilha (no-op se não houver)
         await this.execucaoRepository.deleteBorderoCache(filCod, borCod); // some do cache na hora
 
@@ -198,7 +200,7 @@ export default class BorderoGestaoService {
         executadoPor: string;
     }): Promise<{ borCod: number; finalizado: boolean }> => {
         const filCod = await this.guardAcaoBordero(params.borCod);
-        await this.conexosClient.finalizarBordero({ filCod, borCod: params.borCod });
+        await this.conexosBaixaClient.finalizarBordero({ filCod, borCod: params.borCod });
         // Reflete no cache na hora (sem esperar o próximo refresh).
         await this.execucaoRepository.updateBorderoCacheSituacao(filCod, params.borCod, {
             borVldFinalizado: 1,
@@ -219,7 +221,7 @@ export default class BorderoGestaoService {
         executadoPor: string;
     }): Promise<{ borCod: number; cancelado: boolean }> => {
         const filCod = await this.guardAcaoBordero(params.borCod);
-        await this.conexosClient.cancelarBordero({ filCod, borCod: params.borCod });
+        await this.conexosBaixaClient.cancelarBordero({ filCod, borCod: params.borCod });
         await this.execucaoRepository.updateBorderoCacheSituacao(filCod, params.borCod, {
             borVldFinalizado: 2,
         });
@@ -240,7 +242,7 @@ export default class BorderoGestaoService {
         executadoPor: string;
     }): Promise<{ borCod: number; estornado: boolean }> => {
         const filCod = await this.guardEstornoBordero(params.borCod);
-        await this.conexosClient.estornarBordero({ filCod, borCod: params.borCod });
+        await this.conexosBaixaClient.estornarBordero({ filCod, borCod: params.borCod });
         await this.logService.info({
             type: LOG_TYPE.BUSINESS_INFO,
             message: 'borderô estornado (fin010) — volta para em cadastro',
@@ -364,7 +366,7 @@ export default class BorderoGestaoService {
         borCod: number;
         filCod: number;
     }): Promise<Array<{ invoiceDocCod: string; bxaCodSeq: number; valorLiquido?: number }>> => {
-        const baixas = await this.conexosClient.listBaixas(params);
+        const baixas = await this.conexosBaixaClient.listBaixas(params);
         return baixas.map((b) => ({
             invoiceDocCod: String(b.docCod),
             bxaCodSeq: b.bxaCodSeq,
@@ -379,10 +381,10 @@ export default class BorderoGestaoService {
      * as filiais e regrava `permuta_bordero`. Chamado pela ingestão e pelo botão "Atualizar".
      */
     public refreshCache = async (): Promise<void> => {
-        const filiais = await this.conexosClient.listFiliais();
+        const filiais = await this.conexosCadastroClient.listFiliais();
         const itensPorFilial = await Promise.all(
             filiais.map((f) =>
-                this.conexosClient
+                this.conexosBaixaClient
                     .listBorderos({ filCod: f.filCod, pageSize: 1000 })
                     .catch(async (err) => {
                         await this.logService.warn({
@@ -449,7 +451,7 @@ export default class BorderoGestaoService {
         await Promise.all(
             [...borCodsPorFilial.entries()].map(async ([filCod, set]) => {
                 try {
-                    const itens = await this.conexosClient.listBorderos({
+                    const itens = await this.conexosBaixaClient.listBorderos({
                         filCod,
                         borCods: [...set],
                     });

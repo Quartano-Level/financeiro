@@ -1,6 +1,10 @@
 import 'reflect-metadata';
-import ConexosClient, { type LegacyConexosShape, siglaMoedaNegociada } from './ConexosClient.js';
 import ConexosError from '../errors/ConexosError.js';
+import ConexosBaixaClient from './ConexosBaixaClient.js';
+import ConexosBaseClient, { type LegacyConexosShape } from './ConexosBaseClient.js';
+import ConexosCadastroClient from './ConexosCadastroClient.js';
+import ConexosFinanceiroClient from './ConexosFinanceiroClient.js';
+import ConexosTitulosClient, { siglaMoedaNegociada } from './ConexosTitulosClient.js';
 
 const buildLegacy = (): jest.Mocked<LegacyConexosShape> => ({
     ensureSid: jest.fn().mockResolvedValue(undefined),
@@ -12,6 +16,31 @@ const buildLegacy = (): jest.Mocked<LegacyConexosShape> => ({
     getFiliais: jest.fn().mockResolvedValue([]),
     getFilCodDefault: jest.fn().mockResolvedValue(null),
 });
+
+/**
+ * CC-2 split: `ConexosClient` was broken into a shared `ConexosBaseClient`
+ * plus four per-family sub-clients. This suite still exercises the SAME
+ * behaviour, so it builds every sub-client over one shared base and merges
+ * their public (arrow-bound) methods into a single facade — each method keeps
+ * the `this` of its owning instance, so calls behave identically to before.
+ */
+/** Public method shape of a sub-client (drops the private `base`, so the
+ * four shapes can be intersected without collapsing to `never`). */
+type PublicShape<T> = { [K in keyof T]: T[K] };
+
+const buildClient = (legacy: LegacyConexosShape) => {
+    const base = new ConexosBaseClient(legacy);
+    return Object.assign(
+        Object.create(null),
+        new ConexosCadastroClient(base),
+        new ConexosFinanceiroClient(base),
+        new ConexosTitulosClient(base),
+        new ConexosBaixaClient(base),
+    ) as PublicShape<ConexosCadastroClient> &
+        PublicShape<ConexosFinanceiroClient> &
+        PublicShape<ConexosTitulosClient> &
+        PublicShape<ConexosBaixaClient>;
+};
 
 describe('siglaMoedaNegociada', () => {
     it('maps moedaCod 220 → USD (preferred over moedaNome)', () => {
@@ -53,7 +82,7 @@ describe('ConexosClient', () => {
                     },
                 ],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const result = await client.listFinanceiroAPagar({
                 priCods,
@@ -73,7 +102,7 @@ describe('ConexosClient', () => {
                 count: 1,
                 rows: [{ docCod: 'D9', priCod: 'P9', valor: 500, moeda: 'USD' }],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const result = await client.listInvoicesFinalizadas({ filCod: 2 });
 
@@ -89,7 +118,7 @@ describe('ConexosClient', () => {
         it('sends tpdCod#EQ=99 filter for PROFORMA', async () => {
             const legacy = buildLegacy();
             legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             await client.listFinanceiroAPagar({
                 priCods: ['P1', 'P2'],
@@ -106,7 +135,7 @@ describe('ConexosClient', () => {
         it('sends tpdCod#EQ=128 filter for INVOICE', async () => {
             const legacy = buildLegacy();
             legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             await client.listFinanceiroAPagar({
                 priCods: ['P1'],
@@ -142,7 +171,7 @@ describe('ConexosClient', () => {
                     },
                 ],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const { invoices } = await client.listFinanceiroAPagar({
                 priCods: ['1153', '1154'],
@@ -180,7 +209,7 @@ describe('ConexosClient', () => {
             legacy.listGenericPaginated
                 .mockResolvedValueOnce({ count: 700, rows: fullPage })
                 .mockResolvedValueOnce({ count: 700, rows: tailPage });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const { invoices } = await client.listFinanceiroAPagar({
                 priCods: ['P1'],
@@ -212,7 +241,7 @@ describe('ConexosClient', () => {
                 count: 1,
                 rows: [{ borDtaMvto: '2026-04-15', bxaMnyLiquido: 500 }],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listBaixasTitulo({ docCod: 'D1', titCod: 'T1', filCod: 2 });
             expect(out).toHaveLength(1);
@@ -241,7 +270,7 @@ describe('ConexosClient', () => {
                 // principal 1000; líquido 968 (= 1000 − R$32 de desconto).
                 rows: [{ borDtaMvto: '2026-04-15', bxaMnyValor: 1000, bxaMnyLiquido: 968 }],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listBaixasTitulo({ docCod: 'D1', titCod: '7', filCod: 2 });
             expect(out).toHaveLength(1);
@@ -264,7 +293,7 @@ describe('ConexosClient', () => {
                 count: 1,
                 rows: [{ borDtaMvto: '2026-04-15', bxaMnyLiquido: 500 }],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listBaixasTitulo({ docCod: 'D1', titCod: '1', filCod: 2 });
             expect(out[0].bxaMnyValor).toBe(0);
@@ -275,7 +304,7 @@ describe('ConexosClient', () => {
         it('with no priCods sends canonical body shape and forwards filCod opt', async () => {
             const legacy = buildLegacy();
             legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             await client.listProcessos({ filCod: 7 });
 
@@ -325,7 +354,7 @@ describe('ConexosClient', () => {
             legacy.listGenericPaginated
                 .mockResolvedValueOnce({ count: 526, rows: fullPage })
                 .mockResolvedValueOnce({ count: 526, rows: partialPage });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listProcessos({ filCod: 2 });
 
@@ -346,7 +375,7 @@ describe('ConexosClient', () => {
                 count: 500,
                 rows: Array.from({ length: 500 }, (_, i) => ({ priCod: i + 1 })),
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listProcessos({ filCod: 2 });
 
@@ -358,7 +387,7 @@ describe('ConexosClient', () => {
         it('with priCods chunks the batches and forwards filCod opt on every chunk', async () => {
             const legacy = buildLegacy();
             legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
             const priCods = Array.from({ length: 75 }, (_, i) => `P${i + 1}`);
 
             await client.listProcessos({ filCod: 3, priCods });
@@ -387,7 +416,7 @@ describe('ConexosClient', () => {
                     },
                 ],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listProcessos({ filCod: 2 });
 
@@ -410,7 +439,7 @@ describe('ConexosClient', () => {
                     },
                 ],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listProcessos({ filCod: 2 });
 
@@ -423,7 +452,7 @@ describe('ConexosClient', () => {
                 count: 1,
                 rows: [{ priCod: 9 }],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listProcessos({ filCod: 2 });
 
@@ -447,7 +476,7 @@ describe('ConexosClient', () => {
                     },
                 ],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listProcessos({ filCod: 2 });
 
@@ -466,7 +495,7 @@ describe('ConexosClient', () => {
                 count: 1,
                 rows: [{ priCod: 1 }], // no pesCod, no priEspRefcliente, no priVldTipo
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listProcessos({ filCod: 2 });
             expect(out[0].pesCod).toBe('');
@@ -514,7 +543,7 @@ describe('ConexosClient', () => {
         it("listFinanceiroAPagar sends vldStatus#IN: ['3'] in body", async () => {
             const legacy = buildLegacy();
             legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             await client.listFinanceiroAPagar({
                 priCods: ['P1'],
@@ -534,7 +563,7 @@ describe('ConexosClient', () => {
             legacy.listGenericPaginated
                 .mockRejectedValueOnce(new Error('500'))
                 .mockResolvedValueOnce({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             await expect(client.listProcessos({ priCods: ['P1'], filCod: 2 })).resolves.toEqual([]);
             expect(legacy.listGenericPaginated).toHaveBeenCalledTimes(2);
@@ -543,7 +572,7 @@ describe('ConexosClient', () => {
         it('wraps exhausted retry in ConexosError with endpoint info', async () => {
             const legacy = buildLegacy();
             legacy.listGenericPaginated.mockRejectedValue(new Error('502'));
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             try {
                 await client.listProcessos({ priCods: ['P1'], filCod: 2 });
@@ -572,7 +601,7 @@ describe('ConexosClient', () => {
                 count: 1,
                 rows: [{ borDtaMvto: 1768780800000, bxaMnyLiquido: 100 }],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listBaixasTitulo({
                 docCod: 'D1',
@@ -595,7 +624,7 @@ describe('ConexosClient', () => {
                 count: 1,
                 rows: [{ borDtaMvto: 1768521600000, bxaMnyLiquido: 100 }],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listBaixasTitulo({
                 docCod: 'D1',
@@ -616,7 +645,7 @@ describe('ConexosClient', () => {
                 count: 1,
                 rows: [{ borDtaMvto: '2026-04-15', bxaMnyLiquido: 100 }],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listBaixasTitulo({
                 docCod: 'D1',
@@ -637,7 +666,7 @@ describe('ConexosClient', () => {
                 count: 1,
                 rows: [{ borDtaMvto: fixed, bxaMnyLiquido: 100 }],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listBaixasTitulo({
                 docCod: 'D1',
@@ -665,7 +694,7 @@ describe('ConexosClient', () => {
         it('sends tpdCod#EQ 143 + gerNum#EQ 198 + vldStatus FINALIZADO', async () => {
             const legacy = buildLegacy();
             legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             await client.listAdiantamentoFinanceiroAPagar({
                 priCods: ['1153'],
@@ -718,7 +747,7 @@ describe('ConexosClient', () => {
                     },
                 ],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listAdiantamentoFinanceiroAPagar({
                 priCods: ['1153'],
@@ -744,7 +773,7 @@ describe('ConexosClient', () => {
         it('returns empty array when no rows', async () => {
             const legacy = buildLegacy();
             legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listAdiantamentoFinanceiroAPagar({
                 priCods: ['1153'],
@@ -755,7 +784,7 @@ describe('ConexosClient', () => {
 
         it('returns empty array (no Conexos call) when priCods is empty', async () => {
             const legacy = buildLegacy();
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listAdiantamentoFinanceiroAPagar({
                 priCods: [],
@@ -769,7 +798,7 @@ describe('ConexosClient', () => {
             const legacy = buildLegacy();
             const priCods = Array.from({ length: 75 }, (_, i) => `P${i + 1}`);
             legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             await client.listAdiantamentoFinanceiroAPagar({ priCods, filCod: 2 });
 
@@ -782,7 +811,7 @@ describe('ConexosClient', () => {
         it('sends tpdCod#EQ 143 + gerNum#IN [210, 233] (numeric array) + FINALIZADO', async () => {
             const legacy = buildLegacy();
             legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             await client.listAdiantamentoFinanceiroAReceber({
                 priCods: ['1153'],
@@ -829,7 +858,7 @@ describe('ConexosClient', () => {
                     },
                 ],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listAdiantamentoFinanceiroAReceber({
                 priCods: ['1153'],
@@ -860,7 +889,7 @@ describe('ConexosClient', () => {
                     { docCod: 9002, priCod: 1, gerNum: 999, docMnyValor: 100 }, // unknown
                 ],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listAdiantamentoFinanceiroAReceber({
                 priCods: ['1'],
@@ -873,7 +902,7 @@ describe('ConexosClient', () => {
         it('returns empty array when no rows', async () => {
             const legacy = buildLegacy();
             legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.listAdiantamentoFinanceiroAReceber({
                 priCods: ['1'],
@@ -896,7 +925,7 @@ describe('ConexosClient', () => {
                     moeEspNome: 'DOLAR DOS EUA',
                 },
             ]);
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const titles = await client.listTitulosAPagar({ docCod: '24107', filCod: 2 });
 
@@ -911,7 +940,7 @@ describe('ConexosClient', () => {
         it('sends the extended fieldList including the four mneg fields', async () => {
             const legacy = buildLegacy();
             legacy.listGeneric.mockResolvedValue([]);
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             await client.listTitulosAPagar({ docCod: '24107', filCod: 2 });
 
@@ -931,7 +960,7 @@ describe('ConexosClient', () => {
         it('leaves optional fields undefined when Conexos omits them', async () => {
             const legacy = buildLegacy();
             legacy.listGeneric.mockResolvedValue([{ titCod: 1 }]);
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const titles = await client.listTitulosAPagar({ docCod: '6074', filCod: 2 });
 
@@ -966,7 +995,7 @@ describe('ConexosClient', () => {
                     },
                 ],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const docs = await client.listFinanceiroAPagarByGerNum({
                 priCods: ['1320'],
@@ -998,7 +1027,7 @@ describe('ConexosClient', () => {
                     },
                 ],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const docs = await client.listFinanceiroAPagarByGerNum({
                 priCods: ['1'],
@@ -1028,7 +1057,7 @@ describe('ConexosClient', () => {
                     },
                 ],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const docs = await client.listFinanceiroAPagarByGerNum({
                 priCods: ['1'],
@@ -1045,7 +1074,7 @@ describe('ConexosClient', () => {
         it('lists all proformas without priCod, with PROFORMA + FINALIZADO + adiantamento filters', async () => {
             const legacy = buildLegacy();
             legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             await client.listAdiantamentosProforma({ filCod: 2 });
 
@@ -1082,7 +1111,7 @@ describe('ConexosClient', () => {
                         mnyTitAberto: 10,
                     })),
                 });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const { adiantamentos, capHit } = await client.listAdiantamentosProforma({ filCod: 2 });
 
@@ -1105,7 +1134,7 @@ describe('ConexosClient', () => {
                 count: 999_999,
                 rows: Array.from({ length: 500 }, (_, i) => ({ docCod: i + 1, priCod: 1 })),
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const { capHit } = await client.listAdiantamentosProforma({ filCod: 2 });
 
@@ -1118,7 +1147,7 @@ describe('ConexosClient', () => {
                 count: 1,
                 rows: [{ priCod: 1153, docMnyValor: 1 }],
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             await expect(client.listAdiantamentosProforma({ filCod: 2 })).rejects.toThrow();
         });
@@ -1137,7 +1166,7 @@ describe('ConexosClient', () => {
             legacy.listGenericPaginated.mockImplementation(async (endpoint: string) =>
                 onlyDi(endpoint),
             );
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const result = await client.listDeclaracaoByProcesso({ priCods: ['2048'], filCod: 2 });
 
@@ -1151,7 +1180,7 @@ describe('ConexosClient', () => {
                     ? { count: 1, rows: [{ priCod: '3000' }] }
                     : { count: 0, rows: [] },
             );
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const result = await client.listDeclaracaoByProcesso({ priCods: ['3000'], filCod: 2 });
 
@@ -1165,7 +1194,7 @@ describe('ConexosClient', () => {
                     ? { count: 1, rows: [{ priCod: '4000' }] }
                     : { count: 1, rows: [{ priCod: '4000' }] },
             );
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const result = await client.listDeclaracaoByProcesso({ priCods: ['4000'], filCod: 2 });
 
@@ -1176,7 +1205,7 @@ describe('ConexosClient', () => {
         it('returns [] when neither declaration exists', async () => {
             const legacy = buildLegacy();
             legacy.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const result = await client.listDeclaracaoByProcesso({ priCods: ['9999'], filCod: 2 });
 
@@ -1190,7 +1219,7 @@ describe('ConexosClient', () => {
                     ? { count: 1, rows: [{ priCod: '2048', cdiDtaCi: 1768521600000 }] }
                     : { count: 0, rows: [] },
             );
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const result = await client.listDeclaracaoByProcesso({ priCods: ['2048'], filCod: 2 });
 
@@ -1205,7 +1234,7 @@ describe('ConexosClient', () => {
                     ? { count: 1, rows: [{ priCod: '3000', dioDtaDesembaraco: 1769040000000 }] }
                     : { count: 0, rows: [] },
             );
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const result = await client.listDeclaracaoByProcesso({ priCods: ['3000'], filCod: 2 });
 
@@ -1218,7 +1247,7 @@ describe('ConexosClient', () => {
             legacy.listGenericPaginated.mockImplementation(async (endpoint: string) =>
                 onlyDi(endpoint),
             );
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const result = await client.listDeclaracaoByProcesso({ priCods: ['2048'], filCod: 2 });
 
@@ -1236,7 +1265,7 @@ describe('ConexosClient', () => {
                 mnyTitAberto: 384119.95,
                 mnyTitPermutar: 0,
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const detail = await client.getDetalheTitulos({ docCod: '26471', filCod: 2 });
 
@@ -1256,7 +1285,7 @@ describe('ConexosClient', () => {
                 mnyTitAberto: 0,
                 mnyTitPermutar: 266350.43,
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const detail = await client.getDetalheTitulos({ docCod: '24166', filCod: 2 });
 
@@ -1270,7 +1299,7 @@ describe('ConexosClient', () => {
         it('returns pago=undefined when mnyTitAberto is absent (conservative — Gate 3 reprova)', async () => {
             const legacy = buildLegacy();
             legacy.getGeneric.mockResolvedValue({ mnyTitPermutar: 44917.24 });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const detail = await client.getDetalheTitulos({ docCod: '21841', filCod: 2 });
 
@@ -1286,7 +1315,7 @@ describe('ConexosClient', () => {
             legacy.getGeneric
                 .mockRejectedValueOnce(new Error('socket hang up'))
                 .mockResolvedValueOnce({ mnyTitPermutar: 100, mnyTitAberto: 0 });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const detail = await client.getDetalheTitulos({ docCod: 'D1', filCod: 2 });
 
@@ -1298,7 +1327,7 @@ describe('ConexosClient', () => {
         it('throws ConexosError (NOT a default object) after retries are exhausted', async () => {
             const legacy = buildLegacy();
             legacy.getGeneric.mockRejectedValue(new Error('upstream 503'));
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             await expect(
                 client.getDetalheTitulos({ docCod: 'D9', filCod: 2 }),
@@ -1320,7 +1349,7 @@ describe('ConexosClient', () => {
                 mnyTitPermutar: 0,
                 mnyTitPermuta: 378636.28,
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const detail = await client.getDetalheTitulos({ docCod: '8266', filCod: 2 });
 
@@ -1335,7 +1364,7 @@ describe('ConexosClient', () => {
                 mnyTitAberto: 0,
                 mnyTitPermutar: 0,
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const detail = await client.getDetalheTitulos({ docCod: 'D2', filCod: 2 });
 
@@ -1350,7 +1379,7 @@ describe('ConexosClient', () => {
                     data: { responseData: { mnyTitPermutar: 7, mnyTitAberto: 0 } },
                 },
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const detail = await client.getDetalheTitulos({ docCod: '10649', filCod: 2 });
 
@@ -1370,7 +1399,7 @@ describe('ConexosClient', () => {
                 borVldTipo: 2,
                 borDtaMvto: 1782172800000,
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.criarBordero({ filCod: 4, dataMovto: 1782172800000 });
 
@@ -1394,7 +1423,7 @@ describe('ConexosClient', () => {
                 messages: [{ valid: 'AVISO' }],
                 responseData: { bxaMnyValor: 40879.9, bxaCodGerJuros: 58 },
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.validarTituloBaixa({
                 filCod: 4,
@@ -1415,7 +1444,7 @@ describe('ConexosClient', () => {
                 messages: [{ valid: 'SUCESSO' }],
                 responseData: { gerNumPermuta: 198, pesCod: 2658, bxaMnyValorPermuta: 41175.97 },
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             await client.validarTituloPermuta({
                 filCod: 4,
@@ -1435,7 +1464,7 @@ describe('ConexosClient', () => {
                 messages: [{ valid: 'SUCESSO' }],
                 responseData: { bxaMnyLiquido: 41099.9 },
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const out = await client.atualizarValorLiquido({
                 filCod: 4,
@@ -1466,7 +1495,7 @@ describe('ConexosClient', () => {
                 bxaMnyJuros: 220,
                 bxaMnyLiquido: 41099.9,
             });
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             const payload = { borCod: 1999, docCod: 5078, bxaDocCod: 2767, bxaMnyJuros: 220 };
             const out = await client.gravarBaixaPermuta({ filCod: 4, payload });
@@ -1480,7 +1509,7 @@ describe('ConexosClient', () => {
         it('wraps write failures in ConexosError', async () => {
             const legacy = buildLegacy();
             legacy.postGeneric.mockRejectedValue(new Error('upstream 500'));
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             await expect(client.criarBordero({ filCod: 4, dataMovto: 1 })).rejects.toBeInstanceOf(
                 ConexosError,
@@ -1492,7 +1521,7 @@ describe('ConexosClient', () => {
             // duplicados. As escritas devem ser tentativa única (≠ reads, que retentam 3×).
             const legacy = buildLegacy();
             legacy.postGeneric.mockRejectedValue(new Error('upstream timeout'));
-            const client = new ConexosClient(legacy);
+            const client = buildClient(legacy);
 
             await expect(client.criarBordero({ filCod: 4, dataMovto: 1 })).rejects.toBeInstanceOf(
                 ConexosError,
@@ -1511,7 +1540,7 @@ describe('ConexosClient', () => {
 describe('ConexosClient — fin010 write contract (Fase 3.1)', () => {
     it('excluirBaixa: 2º segmento do path é o docTip (NÃO o filCod) — regressão do bug docTip-vs-filCod', async () => {
         const legacy = buildLegacy();
-        const client = new ConexosClient(legacy);
+        const client = buildClient(legacy);
         // filCod 4 (≠ docTip): o path deve usar docTip=2, e filCod vai no header (opts).
         await client.excluirBaixa({
             filCod: 4,
@@ -1528,7 +1557,7 @@ describe('ConexosClient — fin010 write contract (Fase 3.1)', () => {
 
     it('excluirBaixa: docTip default = 2 (invoice) quando omitido', async () => {
         const legacy = buildLegacy();
-        const client = new ConexosClient(legacy);
+        const client = buildClient(legacy);
         await client.excluirBaixa({
             filCod: 2,
             borCod: 14707,
@@ -1543,14 +1572,14 @@ describe('ConexosClient — fin010 write contract (Fase 3.1)', () => {
 
     it('excluirBordero: DELETE fin010/{borCod} (só borCod no path; filCod no header)', async () => {
         const legacy = buildLegacy();
-        const client = new ConexosClient(legacy);
+        const client = buildClient(legacy);
         await client.excluirBordero({ filCod: 4, borCod: 14709 });
         expect(legacy.deleteGeneric).toHaveBeenCalledWith('fin010/14709', { filCod: 4 });
     });
 
     it('finalizar/cancelar/estornarBordero: POST fin010/{acao}/{borCod} body vazio + filCod header', async () => {
         const legacy = buildLegacy();
-        const client = new ConexosClient(legacy);
+        const client = buildClient(legacy);
         await client.finalizarBordero({ filCod: 2, borCod: 100 });
         await client.cancelarBordero({ filCod: 2, borCod: 101 });
         await client.estornarBordero({ filCod: 2, borCod: 102 });
@@ -1565,7 +1594,7 @@ describe('ConexosClient — fin010 write contract (Fase 3.1)', () => {
             count: 1,
             rows: [{ filCod: 2, docTip: 2, docCod: 18779, titCod: 1, bxaCodSeq: 1 }],
         });
-        const client = new ConexosClient(legacy);
+        const client = buildClient(legacy);
         const out = await client.listBaixas({ filCod: 2, borCod: 14709 });
         expect(legacy.listGenericPaginated).toHaveBeenCalledWith(
             'fin010/baixas/list/14709',
@@ -1587,7 +1616,7 @@ describe('ConexosClient — fin010 write contract (Fase 3.1)', () => {
             count: 1,
             rows: [{ borCod: 14709, filCod: 2, borVldFinalizado: 0, borCodEstornado: null }],
         });
-        const client = new ConexosClient(legacy);
+        const client = buildClient(legacy);
         const out = await client.listBorderos({ filCod: 2 });
         const [path, body, opts] = legacy.listGenericPaginated.mock.calls[0];
         expect(path).toBe('fin010/list');
@@ -1603,7 +1632,7 @@ describe('ConexosClient — fin010 Zod no boundary (Regis P0 integrability)', ()
     it('criarBordero: rejeita resposta sem borCod numérico (não cria borderô fantasma)', async () => {
         const legacy = buildLegacy();
         legacy.postGeneric.mockResolvedValue({ filCod: 2 }); // sem borCod
-        const client = new ConexosClient(legacy);
+        const client = buildClient(legacy);
         await expect(
             client.criarBordero({ filCod: 2, dataMovto: 1782172800000 }),
         ).rejects.toBeInstanceOf(ConexosError);
@@ -1612,7 +1641,7 @@ describe('ConexosClient — fin010 Zod no boundary (Regis P0 integrability)', ()
     it('criarBordero: aceita e coage borCod string→number', async () => {
         const legacy = buildLegacy();
         legacy.postGeneric.mockResolvedValue({ borCod: '14709', filCod: 2 });
-        const client = new ConexosClient(legacy);
+        const client = buildClient(legacy);
         const out = await client.criarBordero({ filCod: 2, dataMovto: 1782172800000 });
         expect(out.borCod).toBe(14709);
     });
@@ -1620,7 +1649,7 @@ describe('ConexosClient — fin010 Zod no boundary (Regis P0 integrability)', ()
     it('gravarBaixaPermuta: rejeita resposta sem bxaCodSeq (não marca settled errado)', async () => {
         const legacy = buildLegacy();
         legacy.postGeneric.mockResolvedValue({ borCod: 14709 }); // sem bxaCodSeq
-        const client = new ConexosClient(legacy);
+        const client = buildClient(legacy);
         await expect(
             client.gravarBaixaPermuta({ filCod: 2, payload: { borCod: 14709 } }),
         ).rejects.toBeInstanceOf(ConexosError);

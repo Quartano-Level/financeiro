@@ -8,7 +8,7 @@ import {
 import { GATE } from '../../interface/permutas/PermutaCandidata.js';
 import type Adiantamento from '../../interface/permutas/Adiantamento.js';
 import type Invoice from '../../interface/permutas/Invoice.js';
-import type { DeclaracaoEntry } from '../../client/ConexosClient.js';
+import type { DeclaracaoEntry } from '../../client/ConexosCadastroClient.js';
 
 const buildAdiantamento = (overrides: Partial<Adiantamento> = {}): Adiantamento => ({
     docCod: 'A1',
