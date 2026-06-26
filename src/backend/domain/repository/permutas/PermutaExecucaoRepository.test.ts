@@ -40,6 +40,31 @@ describe('PermutaExecucaoRepository', () => {
         expect(out).toEqual({ status: 'reconciling', alreadySettled: false });
     });
 
+    it('borderoDoPar: SÓ execução REAL com bor_cod (dry_run=false, bor_cod NOT NULL), parametrizado', async () => {
+        const db = buildDb();
+        (db.selectFirst as jest.Mock).mockResolvedValue({ bor_cod: 2039 });
+        const repo = new PermutaExecucaoRepository(db);
+
+        const out = await repo.borderoDoPar('4061', '4117');
+
+        const [sql, params] = (db.selectFirst as jest.Mock).mock.calls[0];
+        expect(sql).toContain('FROM permuta_alocacao_execucao');
+        expect(sql).toContain('dry_run = false');
+        expect(sql).toContain('bor_cod IS NOT NULL');
+        expect(sql).toContain('$adtoDocCod');
+        expect(sql).toContain('$invoiceDocCod');
+        expect(sql).not.toMatch(/'\s*\+|\$\{/); // sem interpolação
+        expect(params).toEqual({ adtoDocCod: '4061', invoiceDocCod: '4117' });
+        expect(out).toBe(2039);
+    });
+
+    it('borderoDoPar: sem linha → null (par nunca virou borderô → alocação removível)', async () => {
+        const db = buildDb();
+        (db.selectFirst as jest.Mock).mockResolvedValue(null);
+        const repo = new PermutaExecucaoRepository(db);
+        expect(await repo.borderoDoPar('4061', '4117')).toBeNull();
+    });
+
     it('beginExecution: dry-run abre como pending; settled retornado vira alreadySettled', async () => {
         const db = buildDb();
         (db.selectFirst as jest.Mock).mockResolvedValue({ status: 'settled' });

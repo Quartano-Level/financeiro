@@ -430,7 +430,11 @@ export async function removerAlocacao(
     `${API}/permutas/adiantamentos/${encodeURIComponent(adiantamentoDocCod)}/alocacoes/${encodeURIComponent(invoiceDocCod)}`,
     { method: 'DELETE', headers: await withAuthHeaders() },
   )
-  if (!res.ok) throw new Error(`API ${res.status}`)
+  if (!res.ok) {
+    // 409 = alocação já usada num borderô (trava de integridade): mostra a mensagem do backend.
+    const body = (await res.json().catch(() => null)) as { message?: string } | null
+    throw new Error(body?.message ?? `API ${res.status}`)
+  }
 }
 
 /** Importadores distintos do backlog — alimenta o seletor do cadastro de filtro. */

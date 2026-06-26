@@ -90,6 +90,29 @@ export default class PermutaExecucaoRepository {
         return rows.map((r) => this.mapRow(r));
     };
 
+    /**
+     * `bor_cod` de uma execução REAL (não dry-run) que abriu borderô para o par adto↔invoice — ou `null`.
+     * Insumo da trava que IMPEDE remover uma alocação já usada num borderô (integridade trilha × ERP).
+     * Inclui baixas `error` num borderô real (o borderô existe), não só as `settled`.
+     */
+    public borderoDoPar = async (
+        adiantamentoDocCod: string,
+        invoiceDocCod: string,
+    ): Promise<number | null> => {
+        const row = await this.databaseClient.selectFirst<{ bor_cod: number }>(
+            `SELECT bor_cod
+             FROM permuta_alocacao_execucao
+             WHERE adiantamento_doc_cod = $adtoDocCod
+               AND invoice_doc_cod = $invoiceDocCod
+               AND dry_run = false
+               AND bor_cod IS NOT NULL
+             ORDER BY criado_em DESC
+             LIMIT 1`,
+            { adtoDocCod: adiantamentoDocCod, invoiceDocCod },
+        );
+        return row ? Number(row.bor_cod) : null;
+    };
+
     /** Todas as execuções que geraram borderô (bor_cod não nulo), p/ a tela de gestão de borderôs. */
     public listComBordero = async (): Promise<ExecucaoRow[]> => {
         const rows = await this.databaseClient.selectMany(

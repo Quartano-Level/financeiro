@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { container } from 'tsyringe';
 import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
+import AlocacaoEmBorderoError from '../domain/errors/AlocacaoEmBorderoError.js';
 import AlocacaoSaldoError from '../domain/errors/AlocacaoSaldoError.js';
 import IngestLockBusyError from '../domain/errors/IngestLockBusyError.js';
 import { PROCESSAMENTO_STATUS } from '../domain/interface/permutas/Processamento.js';
@@ -422,11 +423,24 @@ router.delete(
     asyncHandler(async (req, res) => {
         await bootstrapAppContainer();
         const service = container.resolve(AlocacaoPermutasService);
-        await service.remover(String(req.params.docCod), String(req.params.invoiceDocCod));
-        res.json({
-            adiantamentoDocCod: String(req.params.docCod),
-            invoiceDocCod: String(req.params.invoiceDocCod),
-        });
+        try {
+            await service.remover(String(req.params.docCod), String(req.params.invoiceDocCod));
+            res.json({
+                adiantamentoDocCod: String(req.params.docCod),
+                invoiceDocCod: String(req.params.invoiceDocCod),
+            });
+        } catch (error) {
+            // Trava de integridade: alocação já usada num borderô → 409, NÃO remove.
+            if (error instanceof AlocacaoEmBorderoError) {
+                res.status(error.statusCode).json({
+                    error: error.code,
+                    message: error.userMessage,
+                    details: error.details,
+                });
+                return;
+            }
+            throw error;
+        }
     }),
 );
 
