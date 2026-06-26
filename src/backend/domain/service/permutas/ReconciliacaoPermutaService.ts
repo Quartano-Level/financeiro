@@ -267,7 +267,13 @@ export default class ReconciliacaoPermutaService {
         };
     };
 
-    /** Executa o handshake (passos 2→5) de UM par adto→invoice e marca settled. */
+    /**
+     * Executa a baixa de UM par adto→invoice e marca settled. A invoice pode ter N TÍTULOS (parcelas) —
+     * TODOS permutáveis (decisão Yuri 2026-06-26): baixamos CADA título como uma baixa própria NO MESMO
+     * borderô ("fazer uma e outra"), distribuindo o valor alocado entre eles (FIFO por titCod). Invoice
+     * de título único (a maioria) = loop de 1 → comportamento idêntico ao anterior. Fallback p/ título 1
+     * (valor cheio) se o ERP não devolver os títulos.
+     */
     private executarBaixa = async (params: {
         key: string;
         borCod: number;
@@ -282,44 +288,152 @@ export default class ReconciliacaoPermutaService {
         // processo morrer no meio, a trilha aponta o borderô a conciliar (não fica órfão sem rastro).
         await this.execucaoRepository.setBorCod(key, borCod);
 
-        // Passo 2 — valida a invoice; o ERP devolve o valor a baixar (em-aberto vivo).
-        const val2 = await this.conexosClient.validarTituloBaixa({
-            filCod,
-            borCod,
-            invoiceDocCod,
-            titCod: 1,
-        });
-        this.assertNoErpError(val2, 'tituloBaixa');
-        const emAbertoErp = val2.responseData?.bxaMnyValor;
-        if (emAbertoErp === undefined || !(emAbertoErp > 0)) {
-            // Em-aberto zero/ausente: nada a baixar (provável já baixado no ERP). Aborta.
-            throw new Error(
-                `título ${invoiceDocCod} sem valor em aberto no ERP (bxaMnyValor=${String(emAbertoErp)})`,
-            );
-        }
-
-        // BAIXA PARCIAL (decisão Yuri 2026-06-23): baixamos o VALOR ALOCADO convertido p/ BRL
-        // (valorAlocado × taxaInvoice), não o título cheio do ERP — um adto pode pagar só parte da
-        // invoice (múltiplas: adto distribuído entre N invoices). O juros (variacao_resultado) já é da
-        // parte alocada. I-Write-1 (anti-over-pay, Regis F-security-4/F-fault-tolerance-4): a baixa
-        // NUNCA pode exceder o em-aberto vivo do ERP → aborta em vez de super-pagar.
         if (aloc.taxaInvoice === undefined || !(aloc.taxaInvoice > 0)) {
             throw new Error(
                 `alocação ${adiantamentoDocCod}→${invoiceDocCod} sem taxa da invoice — não dá para calcular o valor da baixa`,
             );
         }
-        const valorBaixaDesejado = Math.round(aloc.valorAlocado * aloc.taxaInvoice * 100) / 100;
+
+        // Títulos (parcelas) da invoice — cada um com valor/taxa em moeda negociada. Ordena por titCod.
+        // Fallback: ERP indisponível/sem dados → título 1 com o valor cheio (compat de título único).
+        let titulos: Array<{ titCod: number; usd: number; taxa: number }> = [];
+        try {
+            const raw = await this.conexosClient.listTitulosAPagar({
+                docCod: String(invoiceDocCod),
+                filCod,
+            });
+            titulos = raw
+                .map((t) => ({ titCod: Number(t.titCod), usd: t.valorNegociado, taxa: t.taxa }))
+                .filter(
+                    (t): t is { titCod: number; usd: number; taxa: number } =>
+                        Number.isFinite(t.titCod) &&
+                        t.usd !== undefined &&
+                        t.usd > 0 &&
+                        t.taxa !== undefined &&
+                        t.taxa > 0,
+                )
+                .sort((a, b) => a.titCod - b.titCod);
+        } catch {
+            // segue no fallback
+        }
+        if (titulos.length === 0) {
+            titulos = [{ titCod: 1, usd: aloc.valorAlocado, taxa: aloc.taxaInvoice }];
+        }
+
+        // Distribui o valor alocado (moeda negociada) entre os títulos, na ordem (FIFO por titCod).
+        let restanteUsd = aloc.valorAlocado;
+        let totalBaixadoBrl = 0;
+        let jurosTotal = 0;
+        let descontoTotal = 0;
+        const bxaCodSeqs: number[] = [];
+
+        for (const t of titulos) {
+            if (restanteUsd <= 0.005) break;
+            const usdTitulo = Math.min(restanteUsd, t.usd);
+            const r = await this.baixarTitulo({
+                key,
+                borCod,
+                filCod,
+                invoiceDocCod,
+                adiantamentoDocCod,
+                aloc,
+                titCod: t.titCod,
+                usdTitulo,
+                taxaTitulo: t.taxa,
+            });
+            bxaCodSeqs.push(r.bxaCodSeq);
+            totalBaixadoBrl = round2(totalBaixadoBrl + r.bxaMnyValor);
+            jurosTotal = round2(jurosTotal + r.juros);
+            descontoTotal = round2(descontoTotal + r.desconto);
+            restanteUsd = round2(restanteUsd - usdTitulo);
+        }
+
+        await this.execucaoRepository.markSettled(key, {
+            borCod,
+            bxaCodSeq: bxaCodSeqs[0],
+            valorBaixado: totalBaixadoBrl,
+            juros: jurosTotal,
+            contaJuros: descontoTotal > 0 ? CONTA_GER_DESCONTO : CONTA_GER_JUROS,
+            erpResponse: { bxaCodSeqs, totalBaixadoBrl, titulos: bxaCodSeqs.length },
+        });
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'permuta reconciliacao SETTLED',
+            data: {
+                adiantamentoDocCod,
+                invoiceDocCod,
+                borCod,
+                titulos: bxaCodSeqs.length,
+                bxaCodSeqs,
+                totalBaixado: totalBaixadoBrl,
+            },
+        });
+
+        return {
+            invoiceDocCod: aloc.invoiceDocCod,
+            status: 'settled',
+            dryRun: false,
+            borCod,
+            bxaCodSeq: bxaCodSeqs[0],
+            valorBaixado: totalBaixadoBrl,
+        };
+    };
+
+    /**
+     * Baixa UM título (parcela) da invoice no borderô — handshake passos 2→5. NÃO marca settled (o
+     * caller agrega os títulos). A variação cambial é RATEADA pela fração do título no valor alocado
+     * (`variacaoResultado × usdTitulo/valorAlocado`) → preserva o total e o caso de título único.
+     */
+    private baixarTitulo = async (p: {
+        key: string;
+        borCod: number;
+        filCod: number;
+        invoiceDocCod: number;
+        adiantamentoDocCod: number;
+        aloc: AlocacaoRow;
+        titCod: number;
+        usdTitulo: number;
+        taxaTitulo: number;
+    }): Promise<{ bxaCodSeq: number; bxaMnyValor: number; juros: number; desconto: number }> => {
+        const { key, borCod, filCod, invoiceDocCod, adiantamentoDocCod, aloc, titCod, usdTitulo } =
+            p;
+
+        // Passo 2 — valida ESTE título; o ERP devolve o em-aberto vivo da parcela.
+        const val2 = await this.conexosClient.validarTituloBaixa({
+            filCod,
+            borCod,
+            invoiceDocCod,
+            titCod,
+        });
+        this.assertNoErpError(val2, 'tituloBaixa');
+        const emAbertoErp = val2.responseData?.bxaMnyValor;
+        if (emAbertoErp === undefined || !(emAbertoErp > 0)) {
+            throw new Error(
+                `título ${invoiceDocCod}/${titCod} sem valor em aberto no ERP (bxaMnyValor=${String(emAbertoErp)})`,
+            );
+        }
+
+        // I-Write-1 (anti-over-pay): a baixa do título NUNCA pode exceder o em-aberto vivo dele.
+        const valorBaixaDesejado = round2(usdTitulo * p.taxaTitulo);
         const tolerancia = Math.max(0.01, emAbertoErp * 0.005);
         if (valorBaixaDesejado > emAbertoErp + tolerancia) {
             throw new Error(
                 `anti-drift: baixa ${valorBaixaDesejado.toFixed(2)} (BRL) > em-aberto do ERP ${emAbertoErp} ` +
-                    `(alocado ${aloc.valorAlocado} × taxa ${aloc.taxaInvoice}) — alocação maior que o saldo vivo da invoice; conferir manualmente`,
+                    `(título ${titCod}: ${usdTitulo} × taxa ${p.taxaTitulo}) — alocação maior que o saldo vivo do título; conferir manualmente`,
             );
         }
-        // Teto no em-aberto (protege arredondamento dentro da tolerância).
         const bxaMnyValor = Math.min(valorBaixaDesejado, emAbertoErp);
 
-        // Passo 3 — valida a permuta (adiantamento); o ERP devolve os dados da permuta.
+        // Variação cambial RATEADA: a fração deste título no valor alocado. round2 (CnxValidatorMny).
+        const isDesconto = aloc.variacaoClassificacao === 'DESCONTO';
+        const valorVariacao =
+            aloc.valorAlocado > 0
+                ? round2((aloc.variacaoResultado ?? 0) * (usdTitulo / aloc.valorAlocado))
+                : round2(aloc.variacaoResultado ?? 0);
+        const juros = isDesconto ? 0 : valorVariacao;
+        const desconto = isDesconto ? valorVariacao : 0;
+
+        // Passo 3 — valida a permuta (adiantamento); o ERP devolve os dados da permuta (estado atual).
         const val3 = await this.conexosClient.validarTituloPermuta({
             filCod,
             borCod,
@@ -331,22 +445,12 @@ export default class ReconciliacaoPermutaService {
         if (!perm)
             throw new Error(`adiantamento ${adiantamentoDocCod} sem dados de permuta no ERP`);
 
-        // JUROS → bxaMnyJuros (conta 131); DESCONTO → bxaMnyDesconto (conta 130, constante — o ERP
-        // rejeitava a finalização sem ela). A conta vai SÓ no lado ativo (a outra fica null).
-        // ARREDONDAR a 2 casas (sonda real 2026-06-23): o ERP rejeita money com >2 decimais
-        // (CnxValidatorMny precision_not_supported). A variação cambial vem com ruído de ponto
-        // flutuante (ex.: 1000×(5.2887−4.9806)=308.1000000000005) → round2 em todo valor monetário.
-        const isDesconto = aloc.variacaoClassificacao === 'DESCONTO';
-        const valorVariacao = round2(aloc.variacaoResultado ?? 0);
-        const juros = isDesconto ? 0 : valorVariacao;
-        const desconto = isDesconto ? valorVariacao : 0;
-
-        // Passo 4 — recalcula o líquido com o juros informado.
+        // Passo 4 — recalcula o líquido com o juros/desconto informado.
         const val4 = await this.conexosClient.atualizarValorLiquido({
             filCod,
             borCod,
             invoiceDocCod,
-            titCod: 1,
+            titCod,
             valor: bxaMnyValor,
             juros,
             desconto,
@@ -356,16 +460,14 @@ export default class ReconciliacaoPermutaService {
             val4.responseData?.bxaMnyLiquido ?? bxaMnyValor + juros - desconto,
         );
 
-        // Comentário do borderô (spec do analista): a conta da variação cambial — taxas das
-        // duas pontas + conta de juros. Vai em `bxaEspComplemento` no payload.
-        const comentario = this.buildComentario(aloc, bxaMnyValor, isDesconto ? desconto : juros);
-
-        // Passo 5 — payload consolidado e gravação.
+        // Passo 5 — payload consolidado (com ESTE titCod) e gravação.
+        const comentario = this.buildComentario(aloc, bxaMnyValor, valorVariacao);
         const payload = this.buildFinalPayload({
             filCod,
             borCod,
             invoiceDocCod,
             adiantamentoDocCod,
+            titCod,
             bxaMnyValor,
             juros,
             desconto,
@@ -374,30 +476,8 @@ export default class ReconciliacaoPermutaService {
             comentario,
         });
         await this.execucaoRepository.setRequestPayload(key, payload);
-
         const baixa = await this.conexosClient.gravarBaixaPermuta({ filCod, payload });
-        await this.execucaoRepository.markSettled(key, {
-            borCod,
-            bxaCodSeq: baixa.bxaCodSeq,
-            valorBaixado: bxaMnyValor,
-            juros,
-            contaJuros: isDesconto ? CONTA_GER_DESCONTO : CONTA_GER_JUROS,
-            erpResponse: baixa,
-        });
-        await this.logService.info({
-            type: LOG_TYPE.BUSINESS_INFO,
-            message: 'permuta reconciliacao SETTLED',
-            data: { adiantamentoDocCod, invoiceDocCod, borCod, bxaCodSeq: baixa.bxaCodSeq },
-        });
-
-        return {
-            invoiceDocCod: aloc.invoiceDocCod,
-            status: 'settled',
-            dryRun: false,
-            borCod,
-            bxaCodSeq: baixa.bxaCodSeq,
-            valorBaixado: bxaMnyValor,
-        };
+        return { bxaCodSeq: baixa.bxaCodSeq, bxaMnyValor, juros, desconto };
     };
 
     /** Payload do passo 5 — une o lado invoice + o lado permuta (dados do ERP no passo 3). */
@@ -406,6 +486,8 @@ export default class ReconciliacaoPermutaService {
         borCod: number;
         invoiceDocCod: number;
         adiantamentoDocCod: number;
+        /** Parcela (título) da invoice sendo baixada — invoices multi-título baixam 1 por título. */
+        titCod: number;
         bxaMnyValor: number;
         juros: number;
         desconto: number;
@@ -434,7 +516,7 @@ export default class ReconciliacaoPermutaService {
         bxaVldAdto: 1,
         frontModelName: 'baixa',
         docCod: p.invoiceDocCod,
-        titCod: 1,
+        titCod: p.titCod,
         bxaMnyDesconto: p.desconto,
         // Conta da variação cambial: setar a conta SÓ do lado ativo (a outra fica null), espelhando o
         // padrão validado da baixa de juros. DESCONTO sem `bxaCodGerDesconto` faz o ERP recusar a

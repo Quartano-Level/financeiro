@@ -47,6 +47,8 @@ const buildDeps = () => {
             .mockResolvedValue({ responseData: { bxaMnyLiquido: 41099.9 } }),
         gravarBaixaPermuta: jest.fn().mockResolvedValue({ bxaCodSeq: 1, borCod: 1999 }),
         getBordero: jest.fn().mockResolvedValue({ borVldFinalizado: 0, borCodEstornado: null }),
+        // Default: sem títulos → fallback p/ título 1 (compat). O teste multi-título sobrescreve.
+        listTitulosAPagar: jest.fn().mockResolvedValue([]),
     };
     const alocacaoRepository = { listAtivas: jest.fn().mockResolvedValue([buildAloc()]) };
     const execucaoRepository = {
@@ -214,6 +216,53 @@ describe('ReconciliacaoPermutaService', () => {
         );
         expect(out.resultados[0].status).toBe('settled');
         expect(out.resultados[0].bxaCodSeq).toBe(1);
+    });
+
+    it('multi-título: baixa CADA título (titCod 1 e 2) no MESMO borderô, rateando o valor/juros', async () => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, conexosClient, alocacaoRepository, execucaoRepository } = buildDeps();
+        // Invoice com 2 títulos (parcelas) — alocação cobre a invoice inteira (800 + 200 = 1000 USD).
+        alocacaoRepository.listAtivas = jest
+            .fn()
+            .mockResolvedValue([
+                buildAloc({ valorAlocado: 1000, taxaInvoice: 5.0, variacaoResultado: 220 }),
+            ]);
+        conexosClient.listTitulosAPagar = jest.fn().mockResolvedValue([
+            { titCod: '1', valorNegociado: 800, taxa: 5.0 },
+            { titCod: '2', valorNegociado: 200, taxa: 5.0 },
+        ]);
+        // em-aberto vivo por título (titCod 1 → 4000, titCod 2 → 1000).
+        conexosClient.validarTituloBaixa = jest
+            .fn()
+            .mockImplementation((p: { titCod: number }) =>
+                Promise.resolve({ responseData: { bxaMnyValor: p.titCod === 1 ? 4000 : 1000 } }),
+            );
+
+        const out = await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        // UM borderô só; um handshake POR título.
+        expect(conexosClient.criarBordero).toHaveBeenCalledTimes(1);
+        expect(conexosClient.validarTituloBaixa).toHaveBeenCalledTimes(2);
+        expect(conexosClient.gravarBaixaPermuta).toHaveBeenCalledTimes(2);
+        const p1 = conexosClient.gravarBaixaPermuta.mock.calls[0][0].payload;
+        const p2 = conexosClient.gravarBaixaPermuta.mock.calls[1][0].payload;
+        expect(p1.titCod).toBe(1);
+        expect(p1.bxaMnyValor).toBe(4000); // 800 × 5
+        expect(p1.bxaMnyJuros).toBe(176); // 220 × 800/1000
+        expect(p2.titCod).toBe(2);
+        expect(p2.bxaMnyValor).toBe(1000); // 200 × 5
+        expect(p2.bxaMnyJuros).toBe(44); // 220 × 200/1000
+        // settled AGREGA os títulos: total baixado 5000 (4000+1000), juros total 220 (176+44).
+        expect(execucaoRepository.markSettled).toHaveBeenCalledWith(
+            KEY,
+            expect.objectContaining({ borCod: 1999, valorBaixado: 5000, juros: 220 }),
+        );
+        expect(out.resultados[0].status).toBe('settled');
     });
 
     it('aborts (no write) when ERP reports zero em-aberto — anti-super-pagamento', async () => {

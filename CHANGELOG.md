@@ -1,5 +1,18 @@
 # Columbia Financeiro — Changelog
 
+## v0.9.0 (2026-06-26) — Permutas: baixa de invoice com MÚLTIPLOS TÍTULOS (parcelas)
+
+- **feat(permutas) [escrita ERP — Opção A]:** a baixa no `fin010` passa a tratar invoices com **N títulos
+  (parcelas)**. Antes a baixa era hardcoded em `titCod: 1` → só o 1º título baixava e o anti-drift barrava
+  o resto (caso 4120: parcelas 116.159,22 + 1.078,14 = 117.237,36). Agora `executarBaixa` busca os títulos
+  (`listTitulosAPagar`) e baixa **cada parcela** (handshake completo por título via `baixarTitulo`) no
+  **mesmo borderô**, distribuindo o valor alocado (FIFO por `titCod`); a variação cambial é **rateada** pela
+  fração do título; `buildFinalPayload` ganhou o parâmetro `titCod`. Invoice de **título único** (a maioria)
+  = loop de 1 → comportamento idêntico. Anti-drift agora é **por título**. Decisão Yuri + HAR de baixa manual
+  multi-título. O `reconciliar-lote` herda automaticamente. Resolve a pendência
+  `ontology/_inbox/permuta-multi-titulo-pendente.md`. BE 496 verde (teste novo cobrindo 2 títulos).
+  - ⚠️ Caminho gated (`CONEXOS_WRITE_ENABLED`/`DRY_RUN`) — validar em homolog/dry-run antes de prod.
+
 ## v0.8.5 (2026-06-26) — Permutas: libera "Alocar" para remover alocação de adto totalmente alocado
 
 - **fix(permutas):** o botão **Alocar** (Múltipla/Cross-over/Cross-process) ficava **desabilitado** quando

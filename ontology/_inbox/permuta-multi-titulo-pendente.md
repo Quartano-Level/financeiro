@@ -1,9 +1,11 @@
-# PENDENTE — Permuta de invoice com MÚLTIPLOS TÍTULOS (parcelas)
+# RESOLVIDO — Permuta de invoice com MÚLTIPLOS TÍTULOS (parcelas)
 
-> **Status:** aberto · aguardando definição de domínio do time (Yuri).
+> **Status:** ✅ RESOLVIDO (2026-06-26) — **Opção A** (baixar TODOS os títulos). Decisão Yuri + HAR de
+> baixa manual multi-título (4120, parcelas 1 e 2). Implementado em `ReconciliacaoPermutaService`
+> (`executarBaixa` itera os títulos via `listTitulosAPagar` e chama `baixarTitulo` por parcela, no MESMO
+> borderô, distribuindo o valor; variação cambial rateada; `buildFinalPayload` ganhou `titCod`). Invoice
+> de título único = loop de 1 (comportamento idêntico). Teste novo cobre 2 títulos. v0.9.0.
 > **Aberto em:** 2026-06-26 · **Origem:** investigação do erro anti-drift na baixa da invoice 4120 (adto 4061).
-> **Prioridade:** P1 — não bloqueia o fluxo de invoice de título único (a maioria), mas bloqueia (corretamente)
-> qualquer invoice com mais de um título.
 
 ## Sintoma
 
