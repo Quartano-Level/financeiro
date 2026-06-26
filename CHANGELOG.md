@@ -16,6 +16,13 @@
 - **test(permutas) [testability-2]:** cobre os 14 métodos públicos restantes do `PermutaExecucaoRepository`
   (idempotência da baixa) — cobertura **49% → 96% stmts / 100% lines** (SQL parametrizado, cache de borderô,
   delete/rename de chave). BE 494 testes.
+- **fix(permutas) [R-4 / fault-tolerance — anti super-pagamento]:** a baixa no `fin010` deixa de poder
+  **re-POSTar** uma execução interrompida no meio do handshake. Se uma execução anterior ficou em
+  `reconciling` **com `bor_cod`** (processo morto entre o POST irreversível e o `markSettled`), a baixa
+  PODE já estar no ERP → re-tentar seria **dupla baixa**. Agora o par é **abortado** (fail-closed) com
+  mensagem pedindo conferência manual do borderô no Conexos, em vez de re-postar. A idempotência viva
+  passa a cobrir `reconciling`, não só `settled`. `ReconciliacaoPermutaService`. (Follow-ups do R-4 ainda
+  abertos: `Idempotency-Key` HTTP em `/reconciliar`+`/reconciliar-lote` e reaper de execução órfã.)
 - **docs:** relatório completo do **Regis-Review** (8 QAs, Bass & Clements) em
   `docs/regis-review/2026-06-26-0058/` (REPORT.md + KANBAN.md de 66 cards). Overall 5.35; Fault Tolerance 8.1.
 
