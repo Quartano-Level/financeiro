@@ -1,5 +1,16 @@
 # Columbia Financeiro — Changelog
 
+## v0.8.2 (2026-06-26) — Permutas: trava remoção de alocação já usada em borderô
+
+- **fix(permutas) [crítico — integridade financeira]:** **bloqueia a remoção** de uma alocação (par
+  adto↔invoice) que **já foi usada para abrir um borderô** no ERP. Antes, remover essa alocação fazia o
+  **saldo do adiantamento voltar integral** (descasando a trilha do que já foi baixado no `fin010`) e
+  abria porta para **dupla baixa**. Agora o backend recusa com **HTTP 409** (`AlocacaoEmBorderoError`) e a
+  UI mostra a mensagem citando o borderô. Vale para Múltipla / Cross-over / Cross-process. A trava se
+  **desfaz automaticamente ao EXCLUIR o borderô** (o excluir já apaga a trilha de execução via
+  `deleteByBorCod`); cancelar/estornar preservam a trilha (o borderô ainda existe), então a trava
+  permanece. Novo `PermutaExecucaoRepository.borderoDoPar`.
+
 ## v0.8.1 (2026-06-26) — Permutas: baixa parcial nas abas manuais
 
 - **fix(permutas):** nas abas **Múltipla / Cross-over / Cross-process**, uma permuta só sai da aba de

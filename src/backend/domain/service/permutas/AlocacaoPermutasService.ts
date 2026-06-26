@@ -1,8 +1,10 @@
 import { inject, injectable } from 'tsyringe';
 import ConexosClient, { siglaMoedaNegociada } from '../../client/ConexosClient.js';
+import AlocacaoEmBorderoError from '../../errors/AlocacaoEmBorderoError.js';
 import AlocacaoSaldoError from '../../errors/AlocacaoSaldoError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacaoRepository.js';
+import PermutaExecucaoRepository from '../../repository/permutas/PermutaExecucaoRepository.js';
 import PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
 import LogService from '../LogService.js';
 import VariacaoCambialPermutaService from './VariacaoCambialPermutaService.js';
@@ -66,6 +68,8 @@ export default class AlocacaoPermutasService {
         private variacaoCambialService: VariacaoCambialPermutaService,
         @inject(PermutaAlocacaoRepository)
         private alocacaoRepository: PermutaAlocacaoRepository,
+        @inject(PermutaExecucaoRepository)
+        private execucaoRepository: PermutaExecucaoRepository,
         @inject(PermutaRelationalRepository)
         private relationalRepository: PermutaRelationalRepository,
         @inject(LogService) private logService: LogService,
@@ -286,6 +290,17 @@ export default class AlocacaoPermutasService {
     };
 
     public remover = async (adiantamentoDocCod: string, invoiceDocCod: string): Promise<void> => {
+        // TRAVA DE INTEGRIDADE (inviolável): uma alocação JÁ usada para abrir um borderô no ERP NÃO pode
+        // ser removida — isso descasaria a trilha do que foi baixado no fin010 (o saldo do adiantamento
+        // voltaria integral) e abriria porta para DUPLA baixa. Reverter = cancelar/excluir o borderô na
+        // aba Borderôs (estorna no ERP), nunca apagar a alocação. Vale p/ múltipla/cross-over/cross-process.
+        const borCod = await this.execucaoRepository.borderoDoPar(
+            adiantamentoDocCod,
+            invoiceDocCod,
+        );
+        if (borCod !== null) {
+            throw new AlocacaoEmBorderoError({ adiantamentoDocCod, invoiceDocCod, borCod });
+        }
         await this.alocacaoRepository.deleteAlocacao(adiantamentoDocCod, invoiceDocCod);
     };
 

@@ -1,7 +1,9 @@
 import 'reflect-metadata';
 import type ConexosClient from '../../client/ConexosClient.js';
 import AlocacaoSaldoError from '../../errors/AlocacaoSaldoError.js';
+import AlocacaoEmBorderoError from '../../errors/AlocacaoEmBorderoError.js';
 import type PermutaAlocacaoRepository from '../../repository/permutas/PermutaAlocacaoRepository.js';
+import type PermutaExecucaoRepository from '../../repository/permutas/PermutaExecucaoRepository.js';
 import type PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
 import type LogService from '../LogService.js';
 import AlocacaoPermutasService from './AlocacaoPermutasService.js';
@@ -96,16 +98,20 @@ const build = (opts: {
     conexos?: ConexosClient;
     sums?: { adto?: number; invoice?: number };
     relational?: jest.Mocked<PermutaRelationalRepository>;
+    borCodDoPar?: number | null;
 }) => {
     const { repo, upsertAlocacao } = buildAlocacaoRepo(opts.sums);
+    const borderoDoPar = jest.fn().mockResolvedValue(opts.borCodDoPar ?? null);
+    const execucaoRepo = { borderoDoPar } as unknown as jest.Mocked<PermutaExecucaoRepository>;
     const service = new AlocacaoPermutasService(
         opts.conexos ?? buildConexos(),
         new VariacaoCambialPermutaService(),
         repo,
+        execucaoRepo,
         opts.relational ?? buildRelational(),
         log(),
     );
-    return { service, upsertAlocacao };
+    return { service, upsertAlocacao, repo, borderoDoPar };
 };
 
 describe('AlocacaoPermutasService', () => {
@@ -134,6 +140,9 @@ describe('AlocacaoPermutasService', () => {
             buildConexos(),
             new VariacaoCambialPermutaService(),
             repo,
+            {
+                borderoDoPar: jest.fn().mockResolvedValue(null),
+            } as unknown as jest.Mocked<PermutaExecucaoRepository>,
             buildRelational(),
             log(),
         );
@@ -247,6 +256,24 @@ describe('AlocacaoPermutasService', () => {
     });
 
     // ───────────────── Auto-alocação (regra 2026-06-24 — baixa real no fin010) ─────────────────
+    describe('remover (trava de integridade: alocação usada em borderô)', () => {
+        it('RECUSA remover quando a alocação já abriu borderô (lança AlocacaoEmBorderoError, NÃO deleta)', async () => {
+            const { service, repo, borderoDoPar } = build({ borCodDoPar: 2039 });
+            await expect(service.remover('4061', '4117')).rejects.toBeInstanceOf(
+                AlocacaoEmBorderoError,
+            );
+            expect(borderoDoPar).toHaveBeenCalledWith('4061', '4117');
+            expect(repo.deleteAlocacao).not.toHaveBeenCalled();
+        });
+
+        it('REMOVE quando não há borderô para o par (borderoDoPar null) — ex.: depois de excluir o borderô', async () => {
+            const { service, repo, borderoDoPar } = build({ borCodDoPar: null });
+            await service.remover('4061', '4117');
+            expect(borderoDoPar).toHaveBeenCalledWith('4061', '4117');
+            expect(repo.deleteAlocacao).toHaveBeenCalledWith('4061', '4117');
+        });
+    });
+
     describe('autoAlocarSeElegivel / autoAlocarDeCasamento', () => {
         const buildAuto = (opts: {
             valorPermutar?: number;
@@ -290,10 +317,14 @@ describe('AlocacaoPermutasService', () => {
                     ),
                 listCasamentos: jest.fn().mockResolvedValue(opts.casamentos ?? []),
             } as unknown as jest.Mocked<PermutaRelationalRepository>;
+            const execucaoRepo = {
+                borderoDoPar: jest.fn().mockResolvedValue(null),
+            } as unknown as jest.Mocked<PermutaExecucaoRepository>;
             const service = new AlocacaoPermutasService(
                 opts.conexos ?? buildConexos(),
                 new VariacaoCambialPermutaService(),
                 alocacaoRepo,
+                execucaoRepo,
                 relational,
                 log(),
             );
