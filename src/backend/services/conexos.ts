@@ -2,6 +2,7 @@ import axios, { type AxiosInstance } from 'axios';
 import { boxLog, DEBUG_VERBOSE } from '../utils/index.js';
 import { config } from '../config.js';
 import MissingFilCodError from '../domain/errors/MissingFilCodError.js';
+import { conexosSessionStore, type ConexosSessionRecord } from './conexosSessionStore.js';
 
 export interface Filial {
     filCod: number;
@@ -25,6 +26,13 @@ const SENSITIVE_KEYS = [
 ];
 
 const REDACTED = '<REDACTED>';
+
+/**
+ * TTL mínimo restante para um sid vindo do store compartilhado (CC-3) valer a
+ * adoção — adotar um sid prestes a expirar só trocaria um login por outro no
+ * meio de uma request.
+ */
+const STORE_SID_MIN_TTL_MS = 60_000;
 
 const isSensitiveKey = (key: string): boolean => SENSITIVE_KEYS.includes(key.toLowerCase());
 
@@ -74,6 +82,9 @@ class ConexosService {
      * (sem ele, 2+ chamadas simultâneas a `login()` disparam 2+ POST /login
      * → o segundo retorna LOGIN_ERROR_MAX_SESSIONS). */
     private loginPromise: Promise<void> | null = null;
+    /** Version da linha do store compartilhado lida no último acquire (CC-3) —
+     * base do update-if-unchanged em `persistSessionToStore`. */
+    private storeVersion: number | null = null;
 
     constructor() {
         this.client = axios.create({
@@ -141,6 +152,35 @@ class ConexosService {
 
     private async _doLogin(sessionToKill?: string): Promise<void> {
         boxLog('Conexos: login attempt', { sessionToKill });
+
+        // Shared session store (CC-3): tenta ADOTAR antes de logar. Outro processo
+        // (Render, dev server, script) pode já ter um sid compartilhado válido;
+        // reusá-lo mantém toda a frota em UM dos ~3 slots de MAX_SESSIONS. Pulado
+        // no retry por sessionToKill (já decidimos por um login fresco).
+        if (!sessionToKill) {
+            const deadSid = this.sid;
+            const stored = await conexosSessionStore.acquire();
+            this.storeVersion = stored?.version ?? null;
+            if (
+                stored &&
+                stored.sid !== deadSid &&
+                stored.usnCod !== null &&
+                stored.expiresAt > Date.now() + STORE_SID_MIN_TTL_MS
+            ) {
+                this.adoptSession(stored);
+                if (DEBUG_VERBOSE) {
+                    console.log('[Conexos] sid compartilhado adotado do store (sem POST /login)');
+                }
+                return;
+            }
+            if (deadSid && stored?.sid === deadSid) {
+                // Nosso sid (agora inválido/expirado) ainda é o compartilhado —
+                // remove para nenhum outro processo adotar uma sessão morta.
+                await conexosSessionStore.invalidate(deadSid);
+                this.storeVersion = null;
+            }
+        }
+
         const username = process.env.CONEXOS_USERNAME;
         const password = process.env.CONEXOS_PASSWORD;
         if (!username || !password)
@@ -169,6 +209,9 @@ class ConexosService {
             if (typeof resp.data?.usnCod === 'number') {
                 this.usnCod = String(resp.data.usnCod);
             }
+            // CC-3: publica o sid fresco no store compartilhado (concorrência
+            // otimista; numa corrida perdida adotamos o vencedor).
+            await this.persistSessionToStore();
             if (DEBUG_VERBOSE) console.log('[Conexos] Login bem sucedido');
         } catch (err: any) {
             const errorData = err.response?.data;
@@ -198,7 +241,61 @@ class ConexosService {
 
     async ensureSid() {
         if (!this.sid || (this.sidExpiresAt && Date.now() > this.sidExpiresAt)) {
+            // `login()` consulta o store compartilhado ANTES (CC-3): um sid válido
+            // persistido por outro processo é adotado sem novo POST /login.
             await this.login();
+        }
+    }
+
+    /** Adota uma sessão compartilhada vinda do store (CC-3). */
+    private adoptSession(record: ConexosSessionRecord): void {
+        this.sid = record.sid;
+        this.sidExpiresAt = record.expiresAt;
+        if (record.usnCod !== null) this.usnCod = record.usnCod;
+        const payload = record.loginPayload;
+        if (Array.isArray(payload?.filiais) && payload.filiais.length > 0) {
+            this.filiais = payload.filiais;
+        }
+        if (typeof payload?.filCodDefault === 'number') {
+            this.filCodDefault = payload.filCodDefault;
+        }
+        this.storeVersion = record.version;
+    }
+
+    /**
+     * Publica a sessão local (recém-logada) no store compartilhado. Concorrência
+     * otimista (CC-3): se outro processo persistiu um sid diferente no meio
+     * (`lost`), ADOTAMOS o sid do vencedor e abandonamos nosso login — ele expira
+     * sozinho no lado do Conexos. Falhas do store degradam em silêncio (sessão por
+     * processo, comportamento antigo).
+     */
+    private async persistSessionToStore(): Promise<void> {
+        if (!conexosSessionStore.enabled || !this.sid || !this.sidExpiresAt) return;
+        const result = await conexosSessionStore.persist({
+            sid: this.sid,
+            usnCod: this.usnCod,
+            expiresAt: this.sidExpiresAt,
+            loginPayload: { filiais: this.filiais, filCodDefault: this.filCodDefault },
+            expectedVersion: this.storeVersion,
+        });
+        if (result.outcome === 'won') {
+            this.storeVersion = result.version;
+            return;
+        }
+        if (result.outcome === 'lost') {
+            const winner = result.current;
+            if (
+                winner &&
+                winner.sid !== this.sid &&
+                winner.usnCod !== null &&
+                winner.expiresAt > Date.now() + STORE_SID_MIN_TTL_MS
+            ) {
+                if (DEBUG_VERBOSE) {
+                    console.log('[Conexos] corrida de login perdida — adotando sid do vencedor');
+                }
+                this.adoptSession(winner);
+            }
+            // senão: mantém nosso sid fresco localmente; o próximo acquire re-sincroniza.
         }
     }
 
