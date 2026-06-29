@@ -1,5 +1,22 @@
 # Columbia Financeiro — Changelog
 
+## v0.11.0 (2026-06-29) — Sessão Conexos compartilhada (1 SID no Postgres) — fim do MAX_SESSIONS
+
+- **feat(conexos):** o **SID da sessão Conexos** passa a ser **compartilhado entre todos os processos**
+  via uma linha única na tabela `conexos_sessions` (migration `0022`). Antes, cada processo (Render,
+  dev server, scripts) fazia seu próprio `POST /login`, brigando pelos ~3 slots de `MAX_SESSIONS` da
+  conta Conexos e disparando kill-oldest em cascata.
+  - **Como funciona:** antes de logar, o `ConexosService` **adota** um SID válido já existente no store
+    (sem novo `POST /login`); após um login fresco, **publica** o SID com **concorrência otimista**
+    (coluna `version` — INSERT-on-absent / UPDATE-if-unchanged). O perdedor de uma corrida adota o SID
+    do vencedor. Em 401, invalida condicionalmente (só se a linha ainda contém o SID morto) e reloga.
+  - **Segurança:** `conexos_sessions` com **RLS habilitada e sem policies** — só a conexão direta do
+    backend (dona da tabela) lê/escreve; anon/PostgREST nunca leem o SID (credencial viva do ERP).
+  - **Degradação graciosa:** sem `databaseConnectionString` (dev local sem banco) o store **desliga** e
+    cada processo loga sozinho (comportamento anterior). Qualquer erro de banco vira "miss" — **nunca**
+    derruba a integração com o Conexos. Implementação portada do `fechamento-processos` (Task 10/CC-3),
+    usando `pg` (mesma conexão do projeto), sem dependência/variável de ambiente nova.
+
 ## v0.10.0 (2026-06-29) — Sessão expirada: modal bloqueante de relogin + write irreversível single-attempt
 
 - **feat(auth):** quando o **JWT de login (12h) expira**, abre um **modal bloqueante** "Sua sessão
