@@ -1,4 +1,5 @@
 import { withAuthHeaders } from './auth/token'
+import { apiFetch } from './http'
 import type {
   BorderoResumo,
   ClienteFiltro,
@@ -36,7 +37,7 @@ export class IngestaoEmAndamentoError extends Error {
  * (`fetchFiliais`); financeiro features add their own here.
  */
 export async function fetchFiliais(): Promise<FiliaisResponse> {
-  const res = await fetch(`${API}/conexos/filiais`, {
+  const res = await apiFetch(`${API}/conexos/filiais`, {
     headers: await withAuthHeaders(),
   })
   if (!res.ok) {
@@ -63,7 +64,7 @@ export async function fetchFiliais(): Promise<FiliaisResponse> {
  */
 export async function fetchGestaoPermutas(): Promise<GestaoPermutasResponse> {
   try {
-    const res = await fetch(`${API}/permutas/gestao`, {
+    const res = await apiFetch(`${API}/permutas/gestao`, {
       headers: await withAuthHeaders(),
     })
     if (!res.ok) throw new Error(`API ${res.status}`)
@@ -100,7 +101,7 @@ export async function fetchGestaoPermutas(): Promise<GestaoPermutasResponse> {
  */
 export async function fetchPermutaRuns(limit?: number): Promise<PermutaRun[]> {
   const qs = limit ? `?limit=${encodeURIComponent(limit)}` : ''
-  const res = await fetch(`${API}/permutas/runs${qs}`, {
+  const res = await apiFetch(`${API}/permutas/runs${qs}`, {
     headers: await withAuthHeaders(),
   })
   if (!res.ok) {
@@ -117,7 +118,7 @@ export async function fetchPermutaRuns(limit?: number): Promise<PermutaRun[]> {
  * rede/HTTP viram `Error` genérico para o caller exibir um toast.
  */
 export async function runIngestaoManual(): Promise<IngestaoResult> {
-  const res = await fetch(`${API}/permutas/ingestao`, {
+  const res = await apiFetch(`${API}/permutas/ingestao`, {
     method: 'POST',
     headers: await withAuthHeaders(),
   })
@@ -145,7 +146,7 @@ export async function runIngestaoManual(): Promise<IngestaoResult> {
  * cross-process. CRUD em `/permutas/cliente-filtro`. Token de auth em toda chamada.
  */
 export async function fetchClientesFiltro(): Promise<ClienteFiltro[]> {
-  const res = await fetch(`${API}/permutas/cliente-filtro`, {
+  const res = await apiFetch(`${API}/permutas/cliente-filtro`, {
     headers: await withAuthHeaders(),
   })
   if (!res.ok) throw new Error(`API ${res.status}`)
@@ -154,7 +155,7 @@ export async function fetchClientesFiltro(): Promise<ClienteFiltro[]> {
 }
 
 export async function addClienteFiltro(pesCod: string, importador?: string): Promise<void> {
-  const res = await fetch(`${API}/permutas/cliente-filtro`, {
+  const res = await apiFetch(`${API}/permutas/cliente-filtro`, {
     method: 'POST',
     headers: await withAuthHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify({ pesCod, ...(importador ? { importador } : {}) }),
@@ -170,7 +171,7 @@ export async function addClienteFiltro(pesCod: string, importador?: string): Pro
 }
 
 export async function removeClienteFiltro(pesCod: string): Promise<void> {
-  const res = await fetch(`${API}/permutas/cliente-filtro/${encodeURIComponent(pesCod)}`, {
+  const res = await apiFetch(`${API}/permutas/cliente-filtro/${encodeURIComponent(pesCod)}`, {
     method: 'DELETE',
     headers: await withAuthHeaders(),
   })
@@ -198,7 +199,7 @@ export async function buscarInvoicesPorProcesso(
   adtoDocCod?: string,
 ): Promise<InvoiceBuscada[]> {
   const adtoParam = adtoDocCod ? `&adtoDocCod=${encodeURIComponent(adtoDocCod)}` : ''
-  const res = await fetch(
+  const res = await apiFetch(
     `${API}/permutas/invoices/buscar?priCod=${encodeURIComponent(priCod)}&filCod=${encodeURIComponent(filCod)}${adtoParam}`,
     { headers: await withAuthHeaders() },
   )
@@ -212,7 +213,7 @@ export async function criarAlocacao(
   adiantamentoDocCod: string,
   payload: { invoiceDocCod: string; invoicePriCod: string; valorAlocado: number; observacao?: string },
 ): Promise<void> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${API}/permutas/adiantamentos/${encodeURIComponent(adiantamentoDocCod)}/alocacoes`,
     {
       method: 'POST',
@@ -247,7 +248,7 @@ export async function reconciliarAdiantamento(
   docCod: string,
   opts?: { dryRun?: boolean; dataMovto?: number },
 ): Promise<ReconciliarResult> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${API}/permutas/adiantamentos/${encodeURIComponent(docCod)}/reconciliar`,
     {
       method: 'POST',
@@ -277,7 +278,7 @@ export async function reconciliarAdiantamento(
 export async function reconciliarLoteAutomaticas(
   opts?: { dryRun?: boolean; dataMovto?: number; adiantamentoDocCods?: string[] },
 ): Promise<ReconciliarLoteResult> {
-  const res = await fetch(`${API}/permutas/reconciliar-lote`, {
+  const res = await apiFetch(`${API}/permutas/reconciliar-lote`, {
     method: 'POST',
     headers: await withAuthHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify({
@@ -310,7 +311,7 @@ export async function fetchBorderos(live = false): Promise<BorderoResumo[]> {
     return borderosMemo.data
   }
   const qs = live ? '?live=true' : ''
-  const res = await fetch(`${API}/permutas/borderos${qs}`, { headers: await withAuthHeaders() })
+  const res = await apiFetch(`${API}/permutas/borderos${qs}`, { headers: await withAuthHeaders() })
   if (!res.ok) throw new Error(`API ${res.status}`)
   const json = (await res.json()) as { borderos?: BorderoResumo[] }
   const data = json.borderos ?? []
@@ -328,7 +329,7 @@ export async function fetchBaixasErp(
   borCod: number,
   filCod: number,
 ): Promise<Array<{ invoiceDocCod: string; bxaCodSeq: number; valorLiquido?: number }>> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${API}/permutas/borderos/${encodeURIComponent(borCod)}/baixas?filCod=${encodeURIComponent(filCod)}`,
     { headers: await withAuthHeaders() },
   )
@@ -341,14 +342,14 @@ export async function fetchBaixasErp(
 
 /** Status PERMUTA→BORDERÔ por adiantamento (consulta lazy, status vivo do fin010). Fase 3.1. */
 export async function fetchPermutaStatus(): Promise<PermutaStatusResponse> {
-  const res = await fetch(`${API}/permutas/status`, { headers: await withAuthHeaders() })
+  const res = await apiFetch(`${API}/permutas/status`, { headers: await withAuthHeaders() })
   if (!res.ok) throw new Error(`API ${res.status}`)
   return (await res.json()) as PermutaStatusResponse
 }
 
 /** Exclui UMA baixa de um borderô em aberto (no ERP + trilha). Fase 3.1. */
 export async function excluirBaixaBordero(borCod: number, invoiceDocCod: string): Promise<void> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${API}/permutas/borderos/${encodeURIComponent(borCod)}/baixas/${encodeURIComponent(invoiceDocCod)}`,
     { method: 'DELETE', headers: await withAuthHeaders() },
   )
@@ -365,7 +366,7 @@ export async function excluirBaixaBordero(borCod: number, invoiceDocCod: string)
 /** Exclui o borderô INTEIRO (em cadastro) + todas as baixas (ERP + trilha). Fase 3.1. */
 export async function excluirBorderoInteiro(borCod: number, filCod?: number): Promise<void> {
   const qs = filCod !== undefined ? `?filCod=${encodeURIComponent(filCod)}` : ''
-  const res = await fetch(`${API}/permutas/borderos/${encodeURIComponent(borCod)}${qs}`, {
+  const res = await apiFetch(`${API}/permutas/borderos/${encodeURIComponent(borCod)}${qs}`, {
     method: 'DELETE',
     headers: await withAuthHeaders(),
   })
@@ -385,7 +386,7 @@ async function acaoBordero(
   acao: 'finalizar' | 'cancelar' | 'estornar',
   filCod?: number,
 ): Promise<void> {
-  const res = await fetch(`${API}/permutas/borderos/${encodeURIComponent(borCod)}/${acao}`, {
+  const res = await apiFetch(`${API}/permutas/borderos/${encodeURIComponent(borCod)}/${acao}`, {
     method: 'POST',
     headers: await withAuthHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify(filCod !== undefined ? { filCod } : {}),
@@ -412,7 +413,7 @@ export const estornarBordero = (borCod: number, filCod?: number) =>
 
 /** Trilha de execução da baixa de um adiantamento (status por par adto↔invoice). */
 export async function fetchExecucoes(docCod: string): Promise<ExecucaoPermuta[]> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${API}/permutas/adiantamentos/${encodeURIComponent(docCod)}/execucoes`,
     { headers: await withAuthHeaders() },
   )
@@ -426,7 +427,7 @@ export async function removerAlocacao(
   adiantamentoDocCod: string,
   invoiceDocCod: string,
 ): Promise<void> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${API}/permutas/adiantamentos/${encodeURIComponent(adiantamentoDocCod)}/alocacoes/${encodeURIComponent(invoiceDocCod)}`,
     { method: 'DELETE', headers: await withAuthHeaders() },
   )
@@ -439,7 +440,7 @@ export async function removerAlocacao(
 
 /** Importadores distintos do backlog — alimenta o seletor do cadastro de filtro. */
 export async function fetchImportadores(): Promise<Importador[]> {
-  const res = await fetch(`${API}/permutas/importadores`, {
+  const res = await apiFetch(`${API}/permutas/importadores`, {
     headers: await withAuthHeaders(),
   })
   if (!res.ok) throw new Error(`API ${res.status}`)
@@ -462,7 +463,7 @@ function parseContentDispositionFilename(header: string | null): string | undefi
  * (sem filtros da tela) — ver ADR de relatórios.
  */
 export async function exportarRelatorio(tipo: RelatorioTipo): Promise<void> {
-  const res = await fetch(`${API}/permutas/relatorios/${encodeURIComponent(tipo)}`, {
+  const res = await apiFetch(`${API}/permutas/relatorios/${encodeURIComponent(tipo)}`, {
     headers: await withAuthHeaders(),
   })
   if (!res.ok) {
@@ -501,7 +502,7 @@ export async function processarAdiantamento(
   invoiceDocCod?: string,
   observacao?: string,
 ): Promise<void> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${API}/permutas/adiantamentos/${encodeURIComponent(docCod)}/processar`,
     {
       method: 'POST',

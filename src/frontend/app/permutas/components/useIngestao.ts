@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { IngestaoEmAndamentoError, fetchPermutaRuns, runIngestaoManual } from '@/lib/api'
+import { isSessionExpiredError } from '@/lib/http'
 import type { PermutaRun } from '@/lib/types'
 
 /**
@@ -42,6 +43,7 @@ export function useIngestao(load: () => Promise<void>) {
       // Atualiza o painel com os dados recém-ingeridos + a trilha de auditoria.
       await Promise.all([load(), carregarRuns()])
     } catch (err) {
+      if (isSessionExpiredError(err)) return
       if (err instanceof IngestaoEmAndamentoError) {
         toast.warning(err.message)
         void carregarRuns()

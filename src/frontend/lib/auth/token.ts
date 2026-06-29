@@ -30,3 +30,21 @@ export const withAuthHeaders = async (
   const token = getAccessToken()
   return token ? { Authorization: `Bearer ${token}`, ...base } : { ...base }
 }
+
+/**
+ * Reads the `exp` claim (seconds since epoch) from a JWT WITHOUT verifying the
+ * signature — the backend already verifies it on every request. Used only to
+ * schedule the proactive session-expired modal. Returns `null` for any
+ * malformed token (missing/garbage payload, non-numeric `exp`).
+ */
+export const decodeJwtExp = (token: string): number | null => {
+  try {
+    const payload = token.split('.')[1]
+    if (!payload) return null
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const json = JSON.parse(atob(base64)) as { exp?: unknown }
+    return typeof json.exp === 'number' && Number.isFinite(json.exp) ? json.exp : null
+  } catch {
+    return null
+  }
+}

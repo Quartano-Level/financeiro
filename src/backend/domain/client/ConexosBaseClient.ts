@@ -63,6 +63,16 @@ export interface LegacyConexosShape {
         body: Record<string, unknown>,
         opts?: { filCod?: number },
     ) => Promise<T>;
+    /**
+     * Single-attempt POST (NO 401 re-login/retry) for the IRREVERSIBLE write
+     * (`gravarBaixaPermuta` → `fin010/baixas`). A silent re-POST on 401 could
+     * double the baixa; this surfaces the 401 so the reconciliation fails closed.
+     */
+    postGenericOnce: <T>(
+        path: string,
+        body: Record<string, unknown>,
+        opts?: { filCod?: number },
+    ) => Promise<T>;
     /** DELETE passthrough (exclusão de baixa do borderô — Fase 3.1). */
     deleteGeneric: <T>(path: string, opts?: { filCod?: number }) => Promise<T>;
     getFiliais: () => Promise<Filial[]>;
@@ -147,6 +157,13 @@ export default class ConexosBaseClient {
         body: Record<string, unknown>,
         opts?: { filCod?: number },
     ): Promise<T> => this.legacy.postGeneric<T>(path, body, opts);
+
+    /** Single-attempt POST (no 401 retry) — irreversible write only. See `LegacyConexosShape`. */
+    public postGenericOnce = <T>(
+        path: string,
+        body: Record<string, unknown>,
+        opts?: { filCod?: number },
+    ): Promise<T> => this.legacy.postGenericOnce<T>(path, body, opts);
 
     public deleteGeneric = <T>(path: string, opts?: { filCod?: number }): Promise<T> =>
         this.legacy.deleteGeneric<T>(path, opts);

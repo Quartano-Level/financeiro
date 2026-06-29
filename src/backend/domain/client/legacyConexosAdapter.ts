@@ -30,6 +30,11 @@ export const buildLegacyConexosAdapter = async (_config: {
                 body: unknown,
                 opts?: { filCod?: number },
             ) => Promise<T>;
+            authenticatedPostOnce: <T = unknown>(
+                path: string,
+                body: unknown,
+                opts?: { filCod?: number },
+            ) => Promise<T>;
             authenticatedGet: <T = unknown>(path: string, opts?: { filCod?: number }) => Promise<T>;
             authenticatedDelete: <T = unknown>(
                 path: string,
@@ -99,6 +104,18 @@ export const buildLegacyConexosAdapter = async (_config: {
         return conexosService.authenticatedPost<T>(`/${path}`, body, opts);
     };
 
+    /**
+     * Single-attempt POST passthrough (NO 401 re-login/retry) — for the
+     * irreversible write `gravarBaixaPermuta`. See `authenticatedPostOnce`.
+     */
+    const postGenericOnce = async <T>(
+        path: string,
+        body: Record<string, unknown>,
+        opts?: { filCod?: number },
+    ): Promise<T> => {
+        return conexosService.authenticatedPostOnce<T>(`/${path}`, body, opts);
+    };
+
     /** DELETE passthrough — exclusão de baixa do borderô (`fin010/baixas/...`). */
     const deleteGeneric = async <T>(path: string, opts?: { filCod?: number }): Promise<T> => {
         return conexosService.authenticatedDelete<T>(`/${path}`, opts);
@@ -110,6 +127,7 @@ export const buildLegacyConexosAdapter = async (_config: {
         listGenericPaginated,
         getGeneric,
         postGeneric,
+        postGenericOnce,
         deleteGeneric,
         getFiliais: () => conexosService.getFiliais(),
         getFilCodDefault: () => conexosService.getFilCodDefault(),

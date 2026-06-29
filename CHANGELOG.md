@@ -1,5 +1,22 @@
 # Columbia Financeiro — Changelog
 
+## v0.10.0 (2026-06-29) — Sessão expirada: modal bloqueante de relogin + write irreversível single-attempt
+
+- **feat(auth):** quando o **JWT de login (12h) expira**, abre um **modal bloqueante** "Sua sessão
+  expirou" (não-dismissável) mostrando o **horário exato** da expiração e deixando claro que **nada
+  feito após esse horário foi salvo** — botão "Entrar novamente" faz `signOut` e vai para
+  `/login?returnTo=…` (volta para a mesma página após logar). Antes, o token expirado virava "sessão
+  zumbi" (ficava no `localStorage`) e toda ação falhava com um `toast` genérico "API 401".
+  - **Detecção central:** `lib/http.ts` `apiFetch` intercepta **só 401** (demais status, incl. 409/422,
+    passam intactos), dispara um bus de módulo (`lib/auth/session-events.ts`) e lança `SessionExpiredError`;
+    as ~24 chamadas de `lib/api.ts` passam a usar `apiFetch`.
+  - **Proativo + reativo:** o `AuthProvider` agenda o modal no `exp` do token (timer; abre sozinho mesmo
+    ocioso) **e** reage a qualquer 401. Catch-sites de mutação ignoram `SessionExpiredError` (o modal cuida).
+- **fix(fault-tolerance) [fin010]:** a escrita irreversível `gravarBaixaPermuta` passa a usar um POST de
+  **tentativa única** (`authenticatedPostOnce`/`postGenericOnce`, sem re-login/retry em 401) — fecha a
+  janela de **baixa dupla** (super-pagamento) que o retry-em-401 do `authenticatedPost` abria; em 401 a
+  reconciliação falha **fail-closed** para conferência manual. Demais writes seguem com retry.
+
 ## v0.9.2 (2026-06-26) — Permutas: aba Borderôs abre instantânea (stale-while-revalidate)
 
 - **perf(permutas) [Borderôs]:** a aba Borderôs deixava de renderizar **esperando o refresh AO VIVO do

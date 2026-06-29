@@ -455,11 +455,13 @@ export default class ConexosBaixaClient {
      * consolidado dos passos 2/3/4 (montado pelo serviço a partir das respostas
      * do ERP + dados da alocação). Retorna a baixa gravada com `bxaCodSeq`.
      *
-     * SEM RetryExecutor (Regis 2026-06-23, F-fault-tolerance-1): é a ESCRITA
-     * IRREVERSÍVEL. Um retry após timeout-pós-sucesso gravaria uma baixa DUPLICADA
-     * (super-pagamento, `bxaCodSeq` duplicado) — a chave de idempotência local não
-     * protege dentro de um retry interno. Tentativa única; a falha sobe para o
-     * serviço marcar `error` e o operador conciliar manualmente.
+     * SEM RetryExecutor (Regis 2026-06-23, F-fault-tolerance-1) E SEM 401-retry
+     * (via `postGenericOnce`): é a ESCRITA IRREVERSÍVEL. Um retry após
+     * timeout-pós-sucesso — OU um re-POST silencioso do `authenticatedPost` após
+     * um 401 que chegou pós-aplicação — gravaria uma baixa DUPLICADA
+     * (super-pagamento, `bxaCodSeq` duplicado); a chave de idempotência local não
+     * protege dentro de um retry interno. Tentativa ÚNICA de verdade; a falha
+     * (incl. 401) sobe para o serviço marcar `error` e o operador conciliar manualmente.
      */
     public gravarBaixaPermuta = async (params: {
         filCod: number;
@@ -468,7 +470,7 @@ export default class ConexosBaixaClient {
         const { filCod, payload } = params;
         try {
             await this.base.ensureSid();
-            const raw = await this.base.postGeneric<unknown>('fin010/baixas', payload, {
+            const raw = await this.base.postGenericOnce<unknown>('fin010/baixas', payload, {
                 filCod,
             });
             // Zod no boundary (Regis P0 integrability): só marcamos `settled` com um `bxaCodSeq`

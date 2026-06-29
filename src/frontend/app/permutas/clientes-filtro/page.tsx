@@ -12,6 +12,7 @@ import {
   removeClienteFiltro,
   runIngestaoManual,
 } from '@/lib/api'
+import { isSessionExpiredError } from '@/lib/http'
 import type { ClienteFiltro, Importador } from '@/lib/types'
 import { PageHeader } from '@/components/ui/page-header'
 import { Button } from '@/components/ui/button'
@@ -101,6 +102,7 @@ export default function ClientesFiltroPage() {
           `Cliente filtro adicionado: ${nome}. Ingestão concluída — ${r.totalAdiantamentos} adiantamento(s) reavaliado(s).`,
         )
       } catch (ingErr) {
+        if (isSessionExpiredError(ingErr)) return
         if (ingErr instanceof IngestaoEmAndamentoError) {
           // Lock ocupado (cron/outra rodada): o filtro já está salvo e será
           // roteado pela ingestão em andamento / próxima — não é falha.
@@ -114,6 +116,7 @@ export default function ClientesFiltroPage() {
         }
       }
     } catch (err) {
+      if (isSessionExpiredError(err)) return
       toast.error(`Falha ao adicionar${err instanceof Error ? ` — ${err.message}` : ''}.`)
     } finally {
       setAdding(false)
@@ -137,6 +140,7 @@ export default function ClientesFiltroPage() {
             `Cliente filtro removido: ${label}. Ingestão concluída — ${r.totalAdiantamentos} adiantamento(s) reavaliado(s).`,
           )
         } catch (ingErr) {
+          if (isSessionExpiredError(ingErr)) return
           // Re-ingestão falhou (429/409/erro): os dados do painel NÃO foram
           // realinhados, então re-adiciona o filtro pra manter o cadastro coerente
           // com o painel (o importador continua roteado). O operador tenta de novo.
@@ -157,6 +161,7 @@ export default function ClientesFiltroPage() {
           )
         }
       } catch (err) {
+        if (isSessionExpiredError(err)) return
         toast.error(`Falha ao remover${err instanceof Error ? ` — ${err.message}` : ''}.`)
       } finally {
         setRemoving(null)
