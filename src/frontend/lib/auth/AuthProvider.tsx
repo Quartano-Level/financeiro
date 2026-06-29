@@ -2,7 +2,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { assertAuthEnv, isDevAuthBypass } from './env'
-import { TOKEN_STORAGE_KEY, USERNAME_STORAGE_KEY } from './token'
+import { registerSessionExpiredHandler } from './session-events'
+import { decodeJwtExp, TOKEN_STORAGE_KEY, USERNAME_STORAGE_KEY } from './token'
 
 // Fail-fast: crash on import if dev-bypass is on in a non-local build, instead
 // of silently rendering an unauthenticated app.
@@ -26,6 +27,14 @@ export interface AuthContextValue {
   loading: boolean
   /** True when bypass mode is active (no real token). */
   devBypass: boolean
+  /** True when the 12h JWT has expired — drives the blocking re-login modal. */
+  sessionExpired: boolean
+  /** Epoch ms of the token's `exp` (the moment it expired), for the modal copy. */
+  sessionExpiredAt: number | null
+  /** Flags the session as expired (called by the 401 bus and the proactive timer). */
+  notifySessionExpired: () => void
+  /** Clears the expired flag (called right before redirecting to /login). */
+  clearSessionExpired: () => void
   signIn: (username: string, password: string) => Promise<void>
   signOut: () => void
 }
@@ -37,6 +46,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null)
   const [username, setUsername] = useState<string | null>(null)
   const [loading, setLoading] = useState(!devBypass)
+  const [sessionExpired, setSessionExpired] = useState(false)
+  const [sessionExpiredAt, setSessionExpiredAt] = useState<number | null>(null)
 
   useEffect(() => {
     if (devBypass) return
@@ -46,6 +57,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     setLoading(false)
   }, [devBypass])
+
+  const notifySessionExpired = useCallback(() => {
+    if (devBypass) return
+    // Capture the real expiry instant from the token's `exp` so the modal can
+    // tell the user EXACTLY when the session died (and that earlier work is safe).
+    const current =
+      typeof window !== 'undefined' ? window.localStorage.getItem(TOKEN_STORAGE_KEY) : null
+    const exp = current ? decodeJwtExp(current) : null
+    setSessionExpiredAt(exp != null ? exp * 1000 : Date.now())
+    setSessionExpired(true)
+  }, [devBypass])
+
+  const clearSessionExpired = useCallback(() => {
+    setSessionExpired(false)
+    setSessionExpiredAt(null)
+  }, [])
+
+  // Bridge: let the non-React API layer (apiFetch → emitSessionExpired) reach
+  // this provider when a request comes back 401 (reactive path).
+  useEffect(() => {
+    if (devBypass) return
+    return registerSessionExpiredHandler(notifySessionExpired)
+  }, [devBypass, notifySessionExpired])
+
+  // Proactive path: fire the modal exactly at the token's `exp`, even if the
+  // user is idle (no failed request needed). Reset whenever the token changes.
+  useEffect(() => {
+    if (devBypass || !token) return
+    const exp = decodeJwtExp(token)
+    if (exp == null) return
+    const ms = exp * 1000 - Date.now()
+    const id = setTimeout(notifySessionExpired, Math.max(0, ms))
+    return () => clearTimeout(id)
+  }, [token, devBypass, notifySessionExpired])
 
   const signIn = useCallback(
     async (user: string, password: string) => {
@@ -81,11 +126,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     setToken(null)
     setUsername(null)
+    setSessionExpired(false)
+    setSessionExpiredAt(null)
   }, [])
 
   const value = useMemo<AuthContextValue>(
-    () => ({ token, username, loading, devBypass, signIn, signOut }),
-    [token, username, loading, devBypass, signIn, signOut],
+    () => ({
+      token,
+      username,
+      loading,
+      devBypass,
+      sessionExpired,
+      sessionExpiredAt,
+      notifySessionExpired,
+      clearSessionExpired,
+      signIn,
+      signOut,
+    }),
+    [
+      token,
+      username,
+      loading,
+      devBypass,
+      sessionExpired,
+      sessionExpiredAt,
+      notifySessionExpired,
+      clearSessionExpired,
+      signIn,
+      signOut,
+    ],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

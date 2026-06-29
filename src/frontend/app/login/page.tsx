@@ -1,7 +1,7 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Suspense, useEffect, useState } from 'react'
 import { Eye, EyeOff, Lock, LogIn, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,9 +16,11 @@ import pkg from '../../package.json'
  * straight to `/`. Public route (excluded from the `RouteGate` guard); the app
  * header is hidden here (see `AppShell`) for a clean full-screen experience.
  */
-export default function LoginPage() {
+function LoginForm() {
   const { signIn, token, devBypass, loading } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const returnTo = searchParams.get('returnTo') || '/'
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -27,9 +29,9 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (devBypass || token) {
-      router.replace('/')
+      router.replace(returnTo)
     }
-  }, [devBypass, token, router])
+  }, [devBypass, token, router, returnTo])
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
@@ -37,7 +39,7 @@ export default function LoginPage() {
     setSubmitting(true)
     try {
       await signIn(username, password)
-      router.replace('/')
+      router.replace(returnTo)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Falha ao entrar.')
       setSubmitting(false)
@@ -167,5 +169,19 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center">
+          <Spinner className="size-6" />
+        </div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   )
 }

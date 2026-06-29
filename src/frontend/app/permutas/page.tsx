@@ -22,6 +22,7 @@ import {
   reconciliarLoteAutomaticas,
   removerAlocacao,
 } from '@/lib/api'
+import { isSessionExpiredError } from '@/lib/http'
 import type {
   CasamentoSugerido,
   InvoiceBuscada,
@@ -178,6 +179,7 @@ export default function GestaoPermutasPage() {
       }
       await load()
     } catch (err) {
+      if (isSessionExpiredError(err)) return
       toast.error(
         `Falha ao processar o processo ${c.priCod}${err instanceof Error ? `: ${err.message}` : ''}`,
       )
@@ -212,6 +214,7 @@ export default function GestaoPermutasPage() {
         }
         await load()
       } catch (err) {
+        if (isSessionExpiredError(err)) return
         toast.error(`Falha ao executar o lote${err instanceof Error ? `: ${err.message}` : ''}`)
       } finally {
         setExecutandoLote(false)
@@ -280,6 +283,7 @@ export default function GestaoPermutasPage() {
       setValorAloc('')
       await load()
     } catch (err) {
+      if (isSessionExpiredError(err)) return
       if (err instanceof AlocacaoExcedeSaldoError) {
         toast.warning(err.message)
       } else {
@@ -298,6 +302,7 @@ export default function GestaoPermutasPage() {
         toast.success(`Alocação da invoice ${invoiceDocCod} removida.`)
         await load()
       } catch (err) {
+        if (isSessionExpiredError(err)) return
         toast.error(`Falha ao remover${err instanceof Error ? ` — ${err.message}` : ''}.`)
       }
     },
@@ -326,6 +331,10 @@ export default function GestaoPermutasPage() {
       const result = await reconciliarAdiantamento(p.docCod, { dryRun: true })
       setReconcilResult(result)
     } catch (err) {
+      if (isSessionExpiredError(err)) {
+        setReconcilAdto(null)
+        return
+      }
       toast.error(`Falha no preview da baixa${err instanceof Error ? ` — ${err.message}` : ''}.`)
       setReconcilAdto(null)
     } finally {
@@ -361,6 +370,7 @@ export default function GestaoPermutasPage() {
         await load()
       }
     } catch (err) {
+      if (isSessionExpiredError(err)) return
       toast.error(`Falha ao executar a baixa${err instanceof Error ? ` — ${err.message}` : ''}.`)
     } finally {
       setReconcilLoading(false)

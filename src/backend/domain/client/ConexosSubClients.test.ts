@@ -12,6 +12,7 @@ const buildLegacy = (): jest.Mocked<LegacyConexosShape> => ({
     listGenericPaginated: jest.fn().mockResolvedValue({ count: 0, rows: [] }),
     getGeneric: jest.fn().mockResolvedValue({ rows: [] }),
     postGeneric: jest.fn().mockResolvedValue({}),
+    postGenericOnce: jest.fn().mockResolvedValue({}),
     deleteGeneric: jest.fn().mockResolvedValue(undefined),
     getFiliais: jest.fn().mockResolvedValue([]),
     getFilCodDefault: jest.fn().mockResolvedValue(null),
@@ -1486,7 +1487,8 @@ describe('ConexosClient', () => {
 
         it('gravarBaixaPermuta posts the consolidated payload and returns bxaCodSeq', async () => {
             const legacy = buildLegacy();
-            legacy.postGeneric.mockResolvedValue({
+            // Irreversible write goes through postGenericOnce (no 401 re-POST).
+            legacy.postGenericOnce.mockResolvedValue({
                 bxaCodSeq: 1,
                 borCod: 1999,
                 docCod: 5078,
@@ -1501,9 +1503,11 @@ describe('ConexosClient', () => {
             const out = await client.gravarBaixaPermuta({ filCod: 4, payload });
 
             expect(out.bxaCodSeq).toBe(1);
-            expect(legacy.postGeneric).toHaveBeenCalledWith('fin010/baixas', payload, {
+            expect(legacy.postGenericOnce).toHaveBeenCalledWith('fin010/baixas', payload, {
                 filCod: 4,
             });
+            // It must NOT use the retrying postGeneric for the irreversible write.
+            expect(legacy.postGeneric).not.toHaveBeenCalled();
         });
 
         it('wraps write failures in ConexosError', async () => {
@@ -1528,11 +1532,12 @@ describe('ConexosClient', () => {
             );
             expect(legacy.postGeneric).toHaveBeenCalledTimes(1);
 
-            legacy.postGeneric.mockClear();
+            // gravarBaixaPermuta uses postGenericOnce (no 401 re-POST either): single attempt.
+            legacy.postGenericOnce.mockRejectedValue(new Error('upstream timeout'));
             await expect(
                 client.gravarBaixaPermuta({ filCod: 4, payload: { borCod: 1 } }),
             ).rejects.toBeInstanceOf(ConexosError);
-            expect(legacy.postGeneric).toHaveBeenCalledTimes(1);
+            expect(legacy.postGenericOnce).toHaveBeenCalledTimes(1);
         });
     });
 });

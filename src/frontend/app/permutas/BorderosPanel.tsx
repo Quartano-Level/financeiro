@@ -13,6 +13,7 @@ import {
   finalizarBordero,
   invalidarBorderosMemo,
 } from '@/lib/api'
+import { isSessionExpiredError } from '@/lib/http'
 import type { BorderoResumo, BorderoSituacao } from '@/lib/types'
 import { PageHeader } from '@/components/ui/page-header'
 import { Badge } from '@/components/ui/badge'
@@ -246,6 +247,7 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
       invalidarBorderosMemo()
       setBorderos(await fetchBorderos(false))
     } catch (err) {
+      if (isSessionExpiredError(err)) return
       toast.error(`Falha${err instanceof Error ? ` — ${err.message}` : ''}.`)
     } finally {
       setExecutando(false)

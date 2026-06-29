@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { DM_Sans } from 'next/font/google'
 import { Toaster } from 'sonner'
 import { AppShell } from '@/components/AppShell'
+import { SessionExpiredModal } from '@/components/auth/SessionExpiredModal'
 import { AuthProvider } from '@/lib/auth/AuthProvider'
 import pkg from '../package.json'
 import './globals.css'
@@ -21,6 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${dmSans.className} antialiased min-h-screen`}>
         <AuthProvider>
           <AppShell version={APP_VERSION}>{children}</AppShell>
+          <SessionExpiredModal />
           <Toaster position="bottom-right" richColors />
         </AuthProvider>
       </body>

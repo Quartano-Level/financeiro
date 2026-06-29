@@ -255,6 +255,27 @@ class ConexosService {
     }
 
     /**
+     * Single-attempt authenticated POST — NO 401 re-login/retry. Used ONLY by
+     * the irreversible write (`gravarBaixaPermuta` → `fin010/baixas`): the
+     * normal `authenticatedPost` silently re-POSTs on 401, which for an
+     * irreversible write opens a double-baixa (super-pagamento) window if the
+     * 401 ever surfaces post-apply. Here a 401 propagates to the caller, which
+     * fails the reconciliation (fail-closed) for manual review instead of
+     * blindly re-sending the write.
+     */
+    async authenticatedPostOnce<T = unknown>(
+        path: string,
+        body: unknown,
+        opts: { filCod?: number } = {},
+    ): Promise<T> {
+        await this.ensureSid();
+        const url = path.startsWith('/') ? path : `/${path}`;
+        const headers = this.defaultHeaders(opts.filCod);
+        const resp = await this.client.post<T>(url, body, { headers });
+        return resp.data;
+    }
+
+    /**
      * Generic authenticated GET helper. Mirrors `authenticatedPost` but for
      * Conexos endpoints that expose data via GET — currently the NF Saída
      * `com311/list/<docCod>` and `com311/baixas/list/<docCod>/<titCod>/<vldCheck>`
