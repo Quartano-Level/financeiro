@@ -262,14 +262,14 @@ export default function SispagPage() {
       <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
         <Lock className="mt-0.5 size-4 shrink-0 text-warning" />
         <div>
-          <span className="font-medium">Montagem local — sem escrita no ERP.</span> Os dados são reais
-          (Conexos ao vivo). Criar lote, incluir/remover e finalizar são <strong>estado local</strong>;
-          a remessa/pagamento ao banco é a próxima fase.
-          {painel ? (
+          <span className="font-medium">Montagem local — sem escrita no ERP.</span> A carteira de
+          títulos vem do <strong>nosso banco</strong> (última ingestão); lotes nativos e borderôs são
+          lidos <strong>ao vivo do Conexos</strong> (contexto). Criar lote, incluir/remover e finalizar
+          são <strong>estado local</strong>; a remessa/pagamento ao banco é a próxima fase.
+          {painel?.ingestao.ultimaRunEm ? (
             <span className="text-muted-foreground">
               {' '}
-              · write={String(painel.modo.conexosWriteEnabled)} · dryRun=
-              {String(painel.modo.conexosDryRun)}
+              · carteira de {new Date(painel.ingestao.ultimaRunEm).toLocaleString('pt-BR')}
             </span>
           ) : null}
         </div>
