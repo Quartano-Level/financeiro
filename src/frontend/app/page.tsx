@@ -38,13 +38,12 @@ export default function HomePage() {
               <Banknote className="size-4" aria-hidden /> SISPAG — Pagamentos
             </CardTitle>
             <CardDescription>
-              Títulos a pagar, montagem do lote e conciliação (Frente II). Esboço read-only — nada é
-              executado.
+              Títulos a pagar: ingestão diária, painel e montagem do lote com finalização (Frente II).
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Button asChild variant="outline">
-              <Link href="/sispag">Abrir Painel SISPAG (esboço)</Link>
+            <Button asChild>
+              <Link href="/sispag">Abrir Painel SISPAG</Link>
             </Button>
           </CardContent>
         </Card>

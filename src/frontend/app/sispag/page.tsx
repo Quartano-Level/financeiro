@@ -4,12 +4,8 @@ import * as React from 'react'
 import { toast } from 'sonner'
 import {
   AlertTriangle,
-  ArrowRight,
-  Banknote,
   CheckCircle2,
   DatabaseZap,
-  FileUp,
-  Landmark,
   Layers,
   Lock,
   RefreshCcw,
@@ -89,37 +85,6 @@ function StatusLoteBadge({ status }: { status: LotePagamento['status'] }) {
     <Badge variant="outline" className="border-info/40 text-info">
       rascunho
     </Badge>
-  )
-}
-
-function FlowStep({
-  icon,
-  label,
-  hint,
-  who,
-}: {
-  icon: React.ReactNode
-  label: string
-  hint: string
-  who: 'auto' | 'gate' | 'result'
-}) {
-  const tone =
-    who === 'gate'
-      ? 'border-warning/50 bg-warning/5'
-      : who === 'result'
-        ? 'border-info/40 bg-info/5'
-        : 'border-border bg-card'
-  return (
-    <div className={`flex min-w-[9rem] flex-1 flex-col gap-1 rounded-lg border p-3 ${tone}`}>
-      <div className="flex items-center gap-2 text-sm font-medium">
-        {icon}
-        {label}
-      </div>
-      <p className="text-xs text-muted-foreground">{hint}</p>
-      <span className="mt-1 text-xs uppercase tracking-wider text-muted-foreground">
-        {who === 'gate' ? 'Analista (gate)' : who === 'result' ? 'Banco / ERP' : 'Kavex (auto)'}
-      </span>
-    </div>
   )
 }
 
@@ -309,43 +274,6 @@ export default function SispagPage() {
           ) : null}
         </div>
       </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Fluxo do Escopo II</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap items-stretch gap-2">
-            <FlowStep
-              icon={<Banknote className="size-4" />}
-              label="Montar lote"
-              hint="a vencer + aprovados (com298/fin064)"
-              who="auto"
-            />
-            <ArrowRight className="my-auto hidden size-4 shrink-0 text-muted-foreground sm:block" />
-            <FlowStep
-              icon={<CheckCircle2 className="size-4" />}
-              label="Revisar e finalizar"
-              hint="analista ajusta e finaliza (gatilho)"
-              who="gate"
-            />
-            <ArrowRight className="my-auto hidden size-4 shrink-0 text-muted-foreground sm:block" />
-            <FlowStep
-              icon={<FileUp className="size-4" />}
-              label="Enviar + monitorar"
-              hint="gera arquivo → pasta/SharePoint → Nexxera envia; robô lê o retorno (próxima fase)"
-              who="auto"
-            />
-            <ArrowRight className="my-auto hidden size-4 shrink-0 text-muted-foreground sm:block" />
-            <FlowStep
-              icon={<Landmark className="size-4" />}
-              label="Pago e baixado"
-              hint="retorno concilia baixa no ERP"
-              who="result"
-            />
-          </div>
-        </CardContent>
-      </Card>
 
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground">
