@@ -49,8 +49,18 @@ const tituloRowSchema = z
         vldPago: boolFromFlag,
         bncDesNome: strOpt,
         titNumRemessa: strOpt,
+        pesCod: strOpt,
+        tpdCod: strOpt,
+        // sinais de "pronto para remessa" (informativo) — o que o fin064 já traz.
+        itsVldModalidade: numOpt,
+        pctNumBanco: strOpt,
+        pctEspNumContaBanc: strOpt,
+        titEspCodbar: strOpt,
+        itsDesChavePix: strOpt,
     })
     .passthrough();
+
+type TituloRow = z.infer<typeof tituloRowSchema>;
 
 const loteRowSchema = z
     .object({
@@ -99,6 +109,32 @@ export default class ConexosSispagClient {
         pageSize,
     });
 
+    /** Mapeia uma linha do `fin064` para `TituloAPagar` (compartilhado por list/get). */
+    private mapTitulo = (r: TituloRow, filCod: number): TituloAPagar => {
+        // heurística informativa de "pronto para remessa" — o que o fin064 já traz.
+        const temDestino =
+            Boolean(r.pctNumBanco && r.pctEspNumContaBanc) ||
+            Boolean(r.titEspCodbar) ||
+            Boolean(r.itsDesChavePix);
+        const temModalidade = r.itsVldModalidade !== undefined;
+        return {
+            docCod: r.docCod,
+            titCod: r.titCod ?? '1',
+            filCod,
+            credor: r.dpeNomPessoa ?? r.dpeNomPessoaFor,
+            valor: r.titMnyValor ?? 0,
+            moeda: r.moeEspSigla,
+            vencimento: r.titDtaVencimento,
+            liberado: r.vldLib ?? false,
+            pago: r.vldPago ?? false,
+            banco: r.bncDesNome,
+            numRemessa: r.titNumRemessa,
+            pesCod: r.pesCod,
+            tpdCod: r.tpdCod,
+            prontoParaRemessa: temDestino || temModalidade,
+        };
+    };
+
     /**
      * Títulos a pagar de uma filial (`fin064/list`). Filtra server-side por
      * NÃO-pago + vencimento numa janela (default: dos últimos 30 dias em diante),
@@ -136,22 +172,7 @@ export default class ConexosSispagClient {
         return rows.flatMap((row) => {
             const parsed = tituloRowSchema.safeParse(row);
             if (!parsed.success) return [];
-            const r = parsed.data;
-            return [
-                {
-                    docCod: r.docCod,
-                    titCod: r.titCod ?? '1',
-                    filCod,
-                    credor: r.dpeNomPessoa ?? r.dpeNomPessoaFor,
-                    valor: r.titMnyValor ?? 0,
-                    moeda: r.moeEspSigla,
-                    vencimento: r.titDtaVencimento,
-                    liberado: r.vldLib ?? false,
-                    pago: r.vldPago ?? false,
-                    banco: r.bncDesNome,
-                    numRemessa: r.titNumRemessa,
-                } satisfies TituloAPagar,
-            ];
+            return [this.mapTitulo(parsed.data, filCod)];
         });
     };
 
@@ -176,19 +197,7 @@ export default class ConexosSispagClient {
             if (!parsed.success) continue;
             const r = parsed.data;
             if (r.docCod !== docCod || (r.titCod ?? '1') !== titCod) continue;
-            return {
-                docCod: r.docCod,
-                titCod: r.titCod ?? '1',
-                filCod,
-                credor: r.dpeNomPessoa ?? r.dpeNomPessoaFor,
-                valor: r.titMnyValor ?? 0,
-                moeda: r.moeEspSigla,
-                vencimento: r.titDtaVencimento,
-                liberado: r.vldLib ?? false,
-                pago: r.vldPago ?? false,
-                banco: r.bncDesNome,
-                numRemessa: r.titNumRemessa,
-            };
+            return this.mapTitulo(r, filCod);
         }
         return null;
     };

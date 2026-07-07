@@ -5,10 +5,13 @@ import { container } from 'tsyringe';
 import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import { isHandlerError } from '../domain/libs/handler/HandlerError.js';
+import PagamentoIngestaoRunRepository from '../domain/repository/sispag/PagamentoIngestaoRunRepository.js';
+import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
 import { asyncHandler } from '../http/asyncHandler.js';
 import { requireRole } from '../http/auth.js';
+import { heavyRouteLimiter } from '../http/rateLimit.js';
 
 /**
  * Rotas SISPAG (Escopo II) — SPIKE READ-ONLY (semente da Fatia 1).
@@ -146,7 +149,7 @@ router.delete(
         await bootstrapAppContainer();
         const filCod = Number(req.params.filCod);
         if (!Number.isInteger(filCod) || filCod <= 0) {
-            res.status(400).json({ error: 'filCod inválido' });
+            res.status(400).json({ error: 'invalid filCod' });
             return;
         }
         const service = container.resolve(LotePagamentoService);
@@ -200,5 +203,38 @@ for (const acao of ['finalizar', 'reabrir', 'cancelar'] as const) {
         }),
     );
 }
+
+// ===================================================== Ingestão de Pagamentos
+// Cadência da carteira (cron + manual). Só LEITURA do ERP; escreve só no Postgres.
+
+// POST /sispag/ingestao — dispara a ingestão manual (grava run + idempotência).
+// Honra o header `Idempotency-Key`; `IngestLockBusyError` → 409 (já rodando).
+router.post(
+    '/ingestao',
+    requireRole('admin'),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(IngestaoPagamentosService);
+        const idempotencyKey = req.header('Idempotency-Key') ?? undefined;
+        try {
+            const result = await service.executar({ triggeredBy: ator(req), idempotencyKey });
+            res.json(result);
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// GET /sispag/ingestao/runs — trilha de auditoria das ingestões (?limit=).
+router.get(
+    '/ingestao/runs',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const limit = Math.min(Number(req.query.limit) || 10, 50);
+        const repo = container.resolve(PagamentoIngestaoRunRepository);
+        res.json({ runs: await repo.listRecentRuns(limit) });
+    }),
+);
 
 export default router;

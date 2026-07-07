@@ -22,6 +22,10 @@ export interface TituloAPagar {
   pago: boolean
   banco?: string
   numRemessa?: string
+  pesCod?: string
+  tpdCod?: string
+  prontoParaRemessa?: boolean
+  ativo?: boolean
 }
 
 export interface LoteSispag {
@@ -69,10 +73,39 @@ export interface SispagPainel {
     conexosWriteEnabled: boolean
     conexosDryRun: boolean
   }
+  ingestao: {
+    ultimaRunEm?: string
+  }
   kpis: SispagKpis
   titulos: TituloAPagar[]
   lotes: LoteSispag[]
   borderos: BorderoAPagar[]
+}
+
+export interface PagamentoIngestaoRun {
+  id: string
+  triggeredBy: string
+  status: 'running' | 'success' | 'error'
+  totalTitulos: number
+  totalInativados: number
+  startedAt: string
+  finishedAt?: string
+  errorMessage?: string
+}
+
+export interface IngestaoPagamentosResult {
+  runId: string
+  status: 'success' | 'error'
+  totalTitulos: number
+  totalInativados: number
+}
+
+/** Lançado quando a ingestão devolve 409 — já existe uma rodando. */
+export class IngestaoPagamentosEmAndamentoError extends Error {
+  constructor(message = 'Já existe uma ingestão de pagamentos em andamento. Aguarde e tente de novo.') {
+    super(message)
+    this.name = 'IngestaoPagamentosEmAndamentoError'
+  }
 }
 
 /** Busca o painel SISPAG (read-only). Lança em erro de rede/HTTP. */
@@ -187,3 +220,25 @@ export const cancelarLote = (loteId: string, versao: number) =>
     method: 'POST',
     body: JSON.stringify({ versao }),
   })
+
+// ============================================================ Ingestão de pagamentos
+
+/** Dispara a ingestão manual da carteira. 409 → IngestaoPagamentosEmAndamentoError. */
+export async function runIngestaoPagamentos(): Promise<IngestaoPagamentosResult> {
+  const res = await apiFetch(`${API}/sispag/ingestao`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(await withAuthHeaders()) },
+  })
+  if (res.status === 409) throw new IngestaoPagamentosEmAndamentoError()
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  return (await res.json()) as IngestaoPagamentosResult
+}
+
+export async function fetchIngestaoRuns(limit = 10): Promise<PagamentoIngestaoRun[]> {
+  const res = await apiFetch(`${API}/sispag/ingestao/runs?limit=${limit}`, {
+    headers: await withAuthHeaders(),
+  })
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  const j = (await res.json()) as { runs: PagamentoIngestaoRun[] }
+  return j.runs ?? []
+}

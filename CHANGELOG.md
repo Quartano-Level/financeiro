@@ -1,5 +1,25 @@
 # Columbia Financeiro — Changelog
 
+## v0.13.0 (2026-07-08) — SISPAG: Ingestão de pagamentos (carteira persistida + cadência diária)
+
+- **feat(sispag):** a carteira de **títulos a pagar** deixa de ser lida ao vivo e passa a ser
+  **persistida** (`titulo_a_pagar`, migration `0024`), com **cadência diária** — espelha o modelo de
+  Permutas. Read-only ao ERP (I1); a única escrita é o Postgres próprio.
+  - **Ingestão** (`IngestaoPagamentosService`): lê os títulos do Conexos (janela −15d/+45d, fan-out
+    limitado via `BoundedConcurrency`) e faz **UPSERT** por chave natural. Grava um **run de auditoria**
+    (`pagamento_ingestao_run`: quem/quando/status/contagens). Exclusão cross-processo por **advisory
+    lock** (`IngestLockBusyError` → 409) + **idempotência** (`Idempotency-Key`).
+  - **Gatilhos:** cron `job:ingest-pagamentos` (diário) + manual `POST /sispag/ingestao`; auditoria em
+    `GET /sispag/ingestao/runs`.
+  - **Anti-fantasma (`ativo`):** títulos que somem da run são inativados — mas **só nas filiais lidas
+    com sucesso** (uma filial que falha na leitura NÃO perde seus títulos por engano — fault-tolerance).
+  - **`pronto_para_remessa`** (heurística informativa): marca no painel "pode faltar cadastro"
+    (banco/conta/modalidade); a validação **autoritativa** é no envio (Fatia 3, ao vivo — anti-drift).
+  - **Painel** passa a **ler do banco** (snapshot rápido + idade da carteira); lotes nativos/borderôs
+    seguem ao vivo. Frontend: botão **"Ingerir agora"**, idade dos dados, badge de cadastro faltante.
+  - Ontologia v0.6 (`titulo-a-pagar` persistida + ação `ingerir-pagamentos` + ADR-0016). Regis quick
+    (PatternGuardian + fault-tolerance): zero P0; P1 (partial-read) remediado. Follow-ups no inbox.
+
 ## v0.12.0 (2026-07-07) — SISPAG (Escopo II): Painel de pagamentos + Montagem de lote + Gate (Fatia 1+2)
 
 - **feat(sispag):** primeira frente do **Escopo II (Automação de Pagamentos)** — **read-only ao ERP**

@@ -27,6 +27,34 @@ export interface TituloAPagar {
     banco?: string;
     /** Nº da remessa se já entrou num lote — `titNumRemessa`. */
     numRemessa?: string;
+    // ---- campos da carteira PERSISTIDA (ingestão) ----
+    pesCod?: string;
+    tpdCod?: string;
+    /** Heurística informativa da ingestão: tem modalidade + destino (banco/conta, barras ou PIX)?
+     *  A validação autoritativa é no envio (Fatia 3), ao vivo. */
+    prontoParaRemessa?: boolean;
+    /** false quando o título sumiu da ingestão mais recente (anti-fantasma). */
+    ativo?: boolean;
+}
+
+/** Run de auditoria da ingestão de pagamentos (cron ou manual). */
+export interface PagamentoIngestaoRun {
+    id: string;
+    triggeredBy: string;
+    status: 'running' | 'success' | 'error';
+    totalTitulos: number;
+    totalInativados: number;
+    startedAt: string;
+    finishedAt?: string;
+    errorMessage?: string;
+}
+
+/** Resultado de uma execução de ingestão. */
+export interface IngestaoPagamentosResult {
+    runId: string;
+    status: 'success' | 'error';
+    totalTitulos: number;
+    totalInativados: number;
 }
 
 /** Um lote SISPAG nativo — fonte `fin015/list`. */
@@ -83,6 +111,10 @@ export interface SispagPainelResponse {
         somenteLeitura: true;
         conexosWriteEnabled: boolean;
         conexosDryRun: boolean;
+    };
+    /** Proveniência da carteira: quando foi a última ingestão bem-sucedida. */
+    ingestao: {
+        ultimaRunEm?: string;
     };
     kpis: SispagKpis;
     titulos: TituloAPagar[];

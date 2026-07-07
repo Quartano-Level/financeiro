@@ -7,6 +7,7 @@ import {
   ArrowRight,
   Banknote,
   CheckCircle2,
+  DownloadCloud,
   FileUp,
   Landmark,
   Layers,
@@ -39,8 +40,10 @@ import {
   fetchSispagPainel,
   finalizarLote,
   incluirTitulo,
+  IngestaoPagamentosEmAndamentoError,
   reabrirLote,
   removerItem,
+  runIngestaoPagamentos,
   type LotePagamento,
   type SispagPainel,
   type TituloAPagar,
@@ -127,6 +130,7 @@ export default function SispagPage() {
   const [filtro, setFiltro] = React.useState<'a-vencer' | 'vencidos' | 'todos'>('todos')
   const [selecionados, setSelecionados] = React.useState<Set<string>>(new Set())
   const [busy, setBusy] = React.useState(false)
+  const [ingerindo, setIngerindo] = React.useState(false)
 
   const carregar = React.useCallback(async () => {
     setLoading(true)
@@ -149,6 +153,27 @@ export default function SispagPage() {
       /* mantém a lista anterior */
     }
   }, [])
+
+  const ingerir = async () => {
+    setIngerindo(true)
+    try {
+      const r = await runIngestaoPagamentos()
+      await carregar()
+      toast.success('Ingestão concluída', {
+        description: `${r.totalTitulos} título(s) na carteira · ${r.totalInativados} inativado(s).`,
+      })
+    } catch (e) {
+      if (e instanceof IngestaoPagamentosEmAndamentoError) {
+        toast.warning('Ingestão em andamento', { description: e.message })
+      } else {
+        toast.error('Falha na ingestão', {
+          description: e instanceof Error ? e.message : undefined,
+        })
+      }
+    } finally {
+      setIngerindo(false)
+    }
+  }
 
   React.useEffect(() => {
     void carregar()
@@ -240,9 +265,14 @@ export default function SispagPage() {
         title="SISPAG — Pagamentos"
         subtitle="Escopo II · Frente II. Painel diário + montagem do lote (local). Não envia ao banco."
         actions={
-          <Button variant="outline" size="sm" onClick={() => void carregar()} disabled={loading}>
-            <RefreshCcw className="size-4" /> Recarregar
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={ingerir} disabled={ingerindo}>
+              <DownloadCloud className="size-4" /> {ingerindo ? 'Ingerindo…' : 'Ingerir agora'}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => void carregar()} disabled={loading}>
+              <RefreshCcw className="size-4" /> Recarregar
+            </Button>
+          </div>
         }
       />
 
@@ -376,7 +406,15 @@ export default function SispagPage() {
               </div>
 
               {titulosFiltrados.length === 0 ? (
-                <EmptyState title="Nenhum título nesta faixa" description="Ajuste o filtro acima." />
+                <EmptyState
+                  icon={titulos.length === 0 ? <DownloadCloud className="size-6" /> : undefined}
+                  title={titulos.length === 0 ? 'Carteira vazia' : 'Nenhum título nesta faixa'}
+                  description={
+                    titulos.length === 0
+                      ? 'Clique em "Ingerir agora" para carregar os títulos a pagar do Conexos.'
+                      : 'Ajuste o filtro acima.'
+                  }
+                />
               ) : (
                 <div className="overflow-x-auto rounded-lg border">
                   <Table>
@@ -417,13 +455,24 @@ export default function SispagPage() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            {t.liberado ? (
-                              <Badge variant="outline" className="border-success/40 text-success">
-                                aprovado
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline">bloqueado</Badge>
-                            )}
+                            <div className="flex flex-col items-start gap-1">
+                              {t.liberado ? (
+                                <Badge variant="outline" className="border-success/40 text-success">
+                                  aprovado
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline">bloqueado</Badge>
+                              )}
+                              {t.prontoParaRemessa === false ? (
+                                <Badge
+                                  variant="outline"
+                                  className="border-warning/40 text-warning"
+                                  title="Pode faltar cadastro de pagamento (banco/conta/modalidade). Validação real no envio."
+                                >
+                                  falta cadastro?
+                                </Badge>
+                              ) : null}
+                            </div>
                           </TableCell>
                           <TableCell className="text-muted-foreground">{t.filCod}</TableCell>
                         </TableRow>
@@ -433,8 +482,11 @@ export default function SispagPage() {
                 </div>
               )}
               <p className="text-xs text-muted-foreground">
-                Mostrando {Math.min(titulosFiltrados.length, 200)} de {titulos.length} títulos da janela
-                (−15d a +45d). Selecione títulos de uma filial e clique em <strong>Criar lote</strong>.
+                Mostrando {Math.min(titulosFiltrados.length, 200)} de {titulos.length} títulos.{' '}
+                {painel.ingestao.ultimaRunEm
+                  ? `Carteira ingerida em ${new Date(painel.ingestao.ultimaRunEm).toLocaleString('pt-BR')}.`
+                  : 'Sem ingestão ainda — clique em "Ingerir agora".'}{' '}
+                Selecione títulos de uma filial e clique em <strong>Criar lote</strong>.
               </p>
             </TabsContent>
 

@@ -1,0 +1,149 @@
+import { inject, injectable } from 'tsyringe';
+import ConexosBaseClient from '../../client/ConexosBaseClient.js';
+import ConexosSispagClient from '../../client/ConexosSispagClient.js';
+import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
+import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
+import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+import type {
+    IngestaoPagamentosResult,
+    TituloAPagar,
+} from '../../interface/sispag/SispagInterface.js';
+import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
+import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
+import LogService from '../LogService.js';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Chave de advisory lock EXCLUSIVA da ingestão de pagamentos (≠ da de permutas). */
+export const PAGAMENTO_INGEST_LOCK_KEY = 726354819;
+/** Teto de leituras Conexos simultâneas no fan-out da ingestão. */
+const FANOUT_LIMIT = 4;
+
+/**
+ * IngestaoPagamentosService — cadência da carteira de pagamentos (cron ou manual).
+ * Lê os títulos a pagar do Conexos (janela de vencimento), persiste os DADOS
+ * BÁSICOS em `titulo_a_pagar` e grava um run de auditoria. Exclusão cross-processo
+ * via advisory lock (`IngestLockBusyError` → 409). Espelha `IngestaoPermutasService`.
+ * READ-ONLY no ERP; a única escrita é o Postgres próprio.
+ */
+@injectable()
+export default class IngestaoPagamentosService {
+    public constructor(
+        @inject(TituloAPagarRepository) private readonly tituloRepo: TituloAPagarRepository,
+        @inject(PagamentoIngestaoRunRepository)
+        private readonly runRepo: PagamentoIngestaoRunRepository,
+        @inject(ConexosSispagClient) private readonly sispag: ConexosSispagClient,
+        @inject(ConexosBaseClient) private readonly base: ConexosBaseClient,
+        @inject(BoundedConcurrency) private readonly bounded: BoundedConcurrency,
+        @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
+        @inject(LogService) private readonly logService: LogService,
+    ) {}
+
+    public executar = async (input: {
+        triggeredBy: string;
+        idempotencyKey?: string;
+    }): Promise<IngestaoPagamentosResult> => {
+        if (input.idempotencyKey) {
+            const existing = await this.runRepo.findRunIdByIdempotencyKey(input.idempotencyKey);
+            if (existing) {
+                return { runId: existing, status: 'success', totalTitulos: 0, totalInativados: 0 };
+            }
+        }
+        return this.db.withAdvisoryLock(
+            PAGAMENTO_INGEST_LOCK_KEY,
+            () => this.runIngestion(input),
+            async () => {
+                throw new IngestLockBusyError(
+                    'pagamento ingest advisory lock busy — another ingestion is running',
+                );
+            },
+        );
+    };
+
+    private runIngestion = async (input: {
+        triggeredBy: string;
+        idempotencyKey?: string;
+    }): Promise<IngestaoPagamentosResult> => {
+        const runId = await this.runRepo.createRun({ triggeredBy: input.triggeredBy });
+        try {
+            const filiais = await this.base.getFiliais();
+            const filCods = filiais
+                .map((f) => f.filCod)
+                .filter((n): n is number => typeof n === 'number');
+
+            const now = Date.now();
+            const minVencimento = now - 15 * DAY_MS;
+            const maxVencimento = now + 45 * DAY_MS;
+
+            const settled = await this.bounded.run(
+                filCods,
+                (filCod) => this.sispag.listTitulosAPagar(filCod, { minVencimento, maxVencimento }),
+                FANOUT_LIMIT,
+            );
+
+            const titulos: TituloAPagar[] = [];
+            // Só as filiais LIDAS com sucesso participam da inativação anti-fantasma —
+            // uma filial que falhou não perde seus títulos por engano (fault-tolerance).
+            const filiaisLidas: number[] = [];
+            for (let i = 0; i < settled.length; i += 1) {
+                const s = settled[i];
+                if (s.status === 'fulfilled') {
+                    filiaisLidas.push(filCods[i]);
+                    titulos.push(...s.value.filter((t) => !t.pago));
+                } else {
+                    await this.logService.warn({
+                        type: LOG_TYPE.BUSINESS_WARN,
+                        message: 'ingestão pagamentos: leitura de filial falhou (ignorada)',
+                        data: {
+                            filCod: filCods[i],
+                            reason: s.reason instanceof Error ? s.reason.message : String(s.reason),
+                        },
+                    });
+                }
+            }
+
+            await this.tituloRepo.upsertMany(titulos, runId);
+            const inativados = await this.tituloRepo.marcarInativosForaDaRun(runId, filiaisLidas);
+            await this.runRepo.finishRun({
+                runId,
+                status: 'success',
+                totalTitulos: titulos.length,
+                totalInativados: inativados,
+            });
+            // Best-effort pós-sucesso: a run JÁ está 'success' e os títulos persistidos —
+            // uma falha aqui (blip de banco no idempotency, log) NÃO deve remarcar como error.
+            try {
+                if (input.idempotencyKey) {
+                    await this.runRepo.recordIdempotencyKey(input.idempotencyKey, runId);
+                }
+                await this.logService.info({
+                    type: LOG_TYPE.BUSINESS_INFO,
+                    message: 'ingestão de pagamentos concluída',
+                    data: {
+                        runId,
+                        triggeredBy: input.triggeredBy,
+                        totalTitulos: titulos.length,
+                        inativados,
+                    },
+                });
+            } catch {
+                // best-effort — não regride o status da run.
+            }
+            return {
+                runId,
+                status: 'success',
+                totalTitulos: titulos.length,
+                totalInativados: inativados,
+            };
+        } catch (error) {
+            await this.runRepo.finishRun({
+                runId,
+                status: 'error',
+                totalTitulos: 0,
+                totalInativados: 0,
+                errorMessage: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+        }
+    };
+}
