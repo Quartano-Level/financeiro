@@ -7,7 +7,7 @@ import {
   ArrowRight,
   Banknote,
   CheckCircle2,
-  DownloadCloud,
+  DatabaseZap,
   FileUp,
   Landmark,
   Layers,
@@ -48,6 +48,7 @@ import {
   type SispagPainel,
   type TituloAPagar,
 } from '@/lib/sispag'
+import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/components/tabela-filtro'
 
 const keyOf = (t: TituloAPagar) => `${t.filCod}:${t.docCod}:${t.titCod}`
 
@@ -186,6 +187,18 @@ export default function SispagPage() {
     return titulos
   }, [titulos, filtro])
 
+  // Filial + busca + paginação — mesmo kit do painel de Permutas (consistência de UX).
+  const abaTitulos = useTabelaFiltro(
+    titulosFiltrados,
+    (t) => t.filCod,
+    (t) => `${t.credor ?? ''} ${t.docCod}/${t.titCod} ${t.banco ?? ''}`,
+  )
+  const abaBorderos = useTabelaFiltro(
+    painel?.borderos ?? [],
+    (b) => b.filCod,
+    (b) => `${b.descricao ?? ''} ${b.borCod}`,
+  )
+
   const selTitulos = titulos.filter((t) => selecionados.has(keyOf(t)))
   const totalSelecionado = selTitulos.reduce((acc, t) => acc + t.valor, 0)
 
@@ -266,8 +279,13 @@ export default function SispagPage() {
         subtitle="Escopo II · Frente II. Painel diário + montagem do lote (local). Não envia ao banco."
         actions={
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={ingerir} disabled={ingerindo}>
-              <DownloadCloud className="size-4" /> {ingerindo ? 'Ingerindo…' : 'Ingerir agora'}
+            <Button
+              size="sm"
+              onClick={ingerir}
+              disabled={ingerindo}
+              title="Rodar a ingestão de dados do Conexos agora (entre os horários do cron)"
+            >
+              <DatabaseZap aria-hidden /> {ingerindo ? 'Ingerindo…' : 'Ingestão de dados'}
             </Button>
             <Button variant="outline" size="sm" onClick={() => void carregar()} disabled={loading}>
               <RefreshCcw className="size-4" /> Recarregar
@@ -380,6 +398,7 @@ export default function SispagPage() {
 
             {/* ---- Títulos a pagar ---- */}
             <TabsContent value="titulos" className="space-y-3">
+              <FiltroBarra aba={abaTitulos} buscaPlaceholder="Buscar por credor, documento ou banco…" />
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex gap-1">
                   {(['todos', 'a-vencer', 'vencidos'] as const).map((f) => (
@@ -405,14 +424,14 @@ export default function SispagPage() {
                 </div>
               </div>
 
-              {titulosFiltrados.length === 0 ? (
+              {abaTitulos.total === 0 ? (
                 <EmptyState
-                  icon={titulos.length === 0 ? <DownloadCloud className="size-6" /> : undefined}
-                  title={titulos.length === 0 ? 'Carteira vazia' : 'Nenhum título nesta faixa'}
+                  icon={titulos.length === 0 ? <DatabaseZap className="size-6" /> : undefined}
+                  title={titulos.length === 0 ? 'Carteira vazia' : 'Nenhum título encontrado'}
                   description={
                     titulos.length === 0
-                      ? 'Clique em "Ingerir agora" para carregar os títulos a pagar do Conexos.'
-                      : 'Ajuste o filtro acima.'
+                      ? 'Clique em "Ingestão de dados" para carregar os títulos a pagar do Conexos.'
+                      : 'Ajuste a faixa, a filial ou a busca acima.'
                   }
                 />
               ) : (
@@ -430,7 +449,7 @@ export default function SispagPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {titulosFiltrados.slice(0, 200).map((t) => (
+                      {abaTitulos.slice.map((t) => (
                         <TableRow key={keyOf(t)}>
                           <TableCell>
                             <Checkbox
@@ -481,11 +500,11 @@ export default function SispagPage() {
                   </Table>
                 </div>
               )}
+              <Paginacao aba={abaTitulos} />
               <p className="text-xs text-muted-foreground">
-                Mostrando {Math.min(titulosFiltrados.length, 200)} de {titulos.length} títulos.{' '}
                 {painel.ingestao.ultimaRunEm
                   ? `Carteira ingerida em ${new Date(painel.ingestao.ultimaRunEm).toLocaleString('pt-BR')}.`
-                  : 'Sem ingestão ainda — clique em "Ingerir agora".'}{' '}
+                  : 'Sem ingestão ainda — clique em "Ingestão de dados".'}{' '}
                 Selecione títulos de uma filial e clique em <strong>Criar lote</strong>.
               </p>
             </TabsContent>
@@ -689,6 +708,7 @@ export default function SispagPage() {
 
             {/* ---- Borderôs ---- */}
             <TabsContent value="borderos" className="space-y-3">
+              <FiltroBarra aba={abaBorderos} buscaPlaceholder="Buscar por banco ou nº do borderô…" />
               <div className="overflow-x-auto rounded-lg border">
                 <Table>
                   <TableHeader>
@@ -702,7 +722,7 @@ export default function SispagPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {painel.borderos.map((b) => (
+                    {abaBorderos.slice.map((b) => (
                       <TableRow key={`${b.filCod}:${b.borCod}`}>
                         <TableCell className="tabular-nums">{b.borCod}</TableCell>
                         <TableCell className="max-w-[22rem] truncate">{b.descricao ?? '—'}</TableCell>
@@ -723,6 +743,7 @@ export default function SispagPage() {
                   </TableBody>
                 </Table>
               </div>
+              <Paginacao aba={abaBorderos} />
               <p className="text-xs text-muted-foreground">
                 Amostra de {painel.borderos.length}. Via remessa SISPAG:{' '}
                 <strong>{painel.kpis.borderosViaRemessa}</strong> de {painel.kpis.borderosTotalAmostra} —
