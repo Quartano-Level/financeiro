@@ -1,5 +1,25 @@
 # Columbia Financeiro — Changelog
 
+## v0.12.0 (2026-07-07) — SISPAG (Escopo II): Painel de pagamentos + Montagem de lote + Gate (Fatia 1+2)
+
+- **feat(sispag):** primeira frente do **Escopo II (Automação de Pagamentos)** — **read-only ao ERP**
+  (nenhuma escrita no Conexos, invariante I1). Ver ADR-0015 e `ontology/entities/lote-pagamento.md`.
+  - **Painel diário** (`GET /sispag/painel`): títulos a pagar aprovados (janela −15d/+45d), lotes SISPAG
+    nativos (`fin015`), borderôs a-pagar (`fin010`) + KPIs. Fan-out Conexos **limitado** via
+    `BoundedConcurrency` (evita o burst que pressiona o pool de sessões).
+  - **Montagem assistida do lote candidato** (agregado LOCAL `lote_pagamento`/`lote_pagamento_item`,
+    migration `0023`): criar / incluir / remover título / **finalizar (gate)** / reabrir / cancelar.
+    Máquina de estados `RASCUNHO → FINALIZADO → CANCELADO`.
+  - **Invariantes na fronteira do agregado:** I2 (só título aprovado+não-pago, re-leitura autoritativa
+    do Conexos com snapshot anti-drift), I3 (não-duplicação via advisory-lock + transação), I4 (uma
+    filial por lote), I5 (gate + auditoria), I6 (optimistic lock por `versao`).
+  - **Frontend** (`/sispag`): painel + abas Títulos / Lotes candidatos / Lotes nativos / Borderôs;
+    seleção → criar lote → finalizar/reabrir/cancelar. Banner "montagem local — sem escrita no ERP".
+  - **Fora de escopo (próxima fatia):** gerar remessa (`fin015` write), pasta de rede + Nexxera/VAN,
+    retorno (`fin052`), baixa (`fin010` write), scheduler. Diagnóstico em `ontology/_inbox/sispag-*.md`.
+  - Regis-Review completo (8 QA): overall 6.47/10, **zero P0 residual** (3 P0 remediados: cobertura de
+    testes, `BoundedConcurrency` no fan-out, bump de versão). P1/P2/P3 → `sispag-painel-montagem-regis-followups.md`.
+
 ## v0.11.0 (2026-06-29) — Sessão Conexos compartilhada (1 SID no Postgres) — fim do MAX_SESSIONS
 
 - **feat(conexos):** o **SID da sessão Conexos** passa a ser **compartilhado entre todos os processos**
