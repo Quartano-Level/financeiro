@@ -285,7 +285,7 @@ export default function SispagPage() {
             <FlowStep
               icon={<FileUp className="size-4" />}
               label="Enviar + monitorar"
-              hint="remessa → banco → retorno (próxima fase)"
+              hint="gera arquivo → pasta/SharePoint → Nexxera envia; robô lê o retorno (próxima fase)"
               who="auto"
             />
             <ArrowRight className="my-auto hidden size-4 shrink-0 text-muted-foreground sm:block" />

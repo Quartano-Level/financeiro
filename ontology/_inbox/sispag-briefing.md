@@ -90,9 +90,19 @@ lotes reais na sondagem — é a operadora do processo.)*
 | Quais bancos? | Não sabe — **perguntar à Flávia**. |
 | Apetite/mecanismo desejado? | **Arquivo em pasta de rede + VAN Nexxera** (ver §4.2). |
 
-## 4.2 🎯 Arquitetura-alvo do transporte (hipótese validada com o Ricardo)
+## 4.2 🎯 Arquitetura do transporte — ✅ CONFIRMADA (Ricardo, 2026-07-07)
 
-O Ricardo desenhou o mecanismo desejado — **baseado em ARQUIVO numa pasta de rede**, não em API por banco:
+**Mecanismo cravado** — baseado em ARQUIVO numa pasta (não em API por banco):
+
+1. A **Kavex gera o arquivo de remessa** e o **salva automaticamente numa pasta específica** que a
+   Columbia vai sinalizar — **SharePoint** ou **pasta de rede** (ex.: pasta no PC do operador).
+2. A **Nexxera integrada pega o arquivo dessa pasta/SharePoint e envia ao banco.**
+3. O **retorno volta para a pasta**. Um **robô da Kavex fica lendo a pasta de tempos em tempos**
+   (poller) e, **assim que o retorno chega, processa** (concilia a baixa no ERP).
+
+Ou seja, do nosso lado a Fatia 3 tem **duas automações**: (A) gerar remessa + **dropar o arquivo na
+pasta/SharePoint**; (B) um **robô-poller** que vigia a pasta e processa o retorno. A Nexxera cuida do
+pasta⇄banco. O texto original (mecanismo desejado, abaixo) fica como referência.
 
 ```
 Conexos (fin015 gera remessa PG*.REM) ──▶ PASTA DE REDE ──▶ VAN Nexxera pega ──▶ banco processa
@@ -109,14 +119,21 @@ Conexos (fin015 gera remessa PG*.REM) ──▶ PASTA DE REDE ──▶ VAN Nexx
 - **Confirma a tese:** NÃO reconstruímos remessa/retorno/baixa (Conexos faz nativo); falta só a **ponte
   de arquivo** + **orquestração/cadência** + **painel/gate/visibilidade**.
 
-**Ainda aberto:** (1) contrato cobre pagamento? (Ricardo→Nexxera); (2) bancos + arquivo-vs-digitação
-(Flávia); (3) a VAN faz o pickup da pasta sozinha ou precisa de RPA; (4) como o `PG*.REM` sai do Conexos
-pra pasta (export nativo do ERP vs. nossa automação chamando o download do `fin015`).
+**Escopo da Fatia 3 (agora bem definido):**
+- **(A) Gerar remessa + drop na pasta:** a partir de um lote FINALIZADO, gerar o arquivo (via `fin015` do
+  Conexos ou geração própria — a decidir) e **escrevê-lo na pasta/SharePoint** designada.
+- **(B) Robô-poller do retorno:** um job que **vigia a pasta** periodicamente; ao detectar o retorno,
+  processa → **baixa no ERP** (`fin052`/`fin010`). Precisa de runtime de scheduler (migration-debt **O4**).
+- **Configuração:** caminho da pasta/SharePoint (parametrizável por filial/banco) + credenciais.
 
-**Leitura atualizada "precisa Nexxera?":** **provavelmente SIM**, como **VAN de transporte via arquivo** —
-gate = contrato cobrir pagamento. Integração do nosso lado é **simples (pasta)**. O "Nexxera é ruim de
-retorno" (suporte lento) reforça tratá-la como **última milha**: construir todo o valor antes e plugar o
-transporte quando o contrato/VAN estiver pronto.
+**Ainda aberto (comercial/detalhe, não arquitetura):** (1) o **caminho exato** da pasta/SharePoint
+(Flávia/Ricardo definem); (2) confirmação **comercial** do contrato Nexxera cobrir o envio de pagamento
+(Ricardo→Nexxera) — a arquitetura já está travada; (3) o arquivo sai do Conexos (`fin015` export) ou é
+gerado pela Kavex; (4) SharePoint (Graph API/pasta sincronizada) vs. pasta de rede pura.
+
+**"Precisa Nexxera?": SIM — confirmado** como transporte via arquivo (pasta/SharePoint ⇄ banco). Do nosso
+lado a integração é **drop/read de arquivo + robô-poller** (baixo risco, sem API banco-a-banco). Última
+milha: plugável quando a pasta/credenciais/contrato estiverem prontos, **sem tocar** a Fatia 1+2.
 
 ## 5. O que já existe (não começamos do zero)
 
