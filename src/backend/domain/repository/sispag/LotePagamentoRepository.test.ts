@@ -1,0 +1,183 @@
+import 'reflect-metadata';
+import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import LotePagamentoRepository from './LotePagamentoRepository.js';
+
+interface DbMock {
+    selectMany: jest.Mock;
+    selectFirst: jest.Mock;
+    insert: jest.Mock;
+    update: jest.Mock;
+}
+
+const buildDb = (): DbMock => ({
+    selectMany: jest.fn().mockResolvedValue([]),
+    selectFirst: jest.fn().mockResolvedValue(null),
+    insert: jest.fn().mockResolvedValue(1),
+    update: jest.fn().mockResolvedValue(1),
+});
+
+const header = (over: Record<string, unknown> = {}) => ({
+    id: 'L1',
+    fil_cod: 2,
+    banco: null,
+    conta: null,
+    status: 'RASCUNHO',
+    criado_por: 'u1',
+    finalizado_por: null,
+    finalizado_em: null,
+    versao: 1,
+    criado_em: new Date('2026-07-07T00:00:00Z'),
+    ...over,
+});
+
+const itemRow = (over: Record<string, unknown> = {}) => ({
+    lote_id: 'L1',
+    fil_cod: 2,
+    doc_cod: '100',
+    tit_cod: '1',
+    credor: 'ACME',
+    valor: '1000.5',
+    vencimento: new Date('2026-08-01T00:00:00Z'),
+    incluido_por: 'u1',
+    incluido_em: new Date('2026-07-07T12:00:00Z'),
+    ...over,
+});
+
+const make = (db: DbMock) => new LotePagamentoRepository(db as unknown as PostgreeDatabaseClient);
+
+describe('LotePagamentoRepository', () => {
+    it('criarLote insere e devolve o lote com itens', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValue(header());
+        db.selectMany.mockResolvedValue([]);
+        const lote = await make(db).criarLote({ filCod: 2, criadoPor: 'u1' });
+        expect(db.insert).toHaveBeenCalledWith(
+            expect.stringContaining('INSERT INTO lote_pagamento'),
+            expect.objectContaining({ filCod: 2, criadoPor: 'u1', banco: null, conta: null }),
+        );
+        expect(lote).toMatchObject({ id: 'L1', filCod: 2, status: 'RASCUNHO', itens: [] });
+    });
+
+    it('getLoteComItens mapeia header + itens (valor numérico, datas ISO/epoch)', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValue(
+            header({ finalizado_por: 'u2', finalizado_em: new Date('2026-07-07T15:00:00Z') }),
+        );
+        db.selectMany.mockResolvedValue([itemRow()]);
+        const lote = await make(db).getLoteComItens('L1');
+        expect(lote?.finalizadoPor).toBe('u2');
+        expect(lote?.itens[0]).toMatchObject({ docCod: '100', titCod: '1', valor: 1000.5 });
+        expect(typeof lote?.itens[0].vencimento).toBe('number');
+    });
+
+    it('getLoteComItens devolve null quando o lote não existe', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValue(null);
+        expect(await make(db).getLoteComItens('X')).toBeNull();
+    });
+
+    it('listLotes agrupa itens por lote', async () => {
+        const db = buildDb();
+        db.selectMany
+            .mockResolvedValueOnce([header({ id: 'L1' }), header({ id: 'L2' })])
+            .mockResolvedValueOnce([
+                itemRow({ lote_id: 'L1' }),
+                itemRow({ lote_id: 'L1' }),
+                itemRow({ lote_id: 'L2' }),
+            ]);
+        const lotes = await make(db).listLotes({ status: 'RASCUNHO' });
+        expect(lotes).toHaveLength(2);
+        expect(lotes[0].itens).toHaveLength(2);
+        expect(lotes[1].itens).toHaveLength(1);
+    });
+
+    it('listLotes com zero lotes não busca itens', async () => {
+        const db = buildDb();
+        db.selectMany.mockResolvedValueOnce([]);
+        const lotes = await make(db).listLotes({});
+        expect(lotes).toEqual([]);
+        expect(db.selectMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('loteRascunhoComTitulo devolve o loteId ou null (I3)', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValueOnce({ lote_id: 'L9' });
+        expect(
+            await make(db).loteRascunhoComTitulo({ filCod: 2, docCod: '100', titCod: '1' }),
+        ).toBe('L9');
+        db.selectFirst.mockResolvedValueOnce(null);
+        expect(
+            await make(db).loteRascunhoComTitulo({ filCod: 2, docCod: '100', titCod: '1' }),
+        ).toBeNull();
+    });
+
+    it('adicionarItem converte vencimento epoch→Date e usa ON CONFLICT', async () => {
+        const db = buildDb();
+        await make(db).adicionarItem({
+            loteId: 'L1',
+            filCod: 2,
+            docCod: '100',
+            titCod: '1',
+            valor: 50,
+            vencimento: 1_760_000_000_000,
+            incluidoPor: 'u1',
+        });
+        const [sql, params] = db.insert.mock.calls[0];
+        expect(sql).toContain('ON CONFLICT');
+        expect((params as { vencimento: Date }).vencimento).toBeInstanceOf(Date);
+    });
+
+    it('removerItem devolve rowCount', async () => {
+        const db = buildDb();
+        db.update.mockResolvedValue(1);
+        expect(
+            await make(db).removerItem({ loteId: 'L1', filCod: 2, docCod: '100', titCod: '1' }),
+        ).toBe(1);
+    });
+
+    it('contarItens converte o count', async () => {
+        const db = buildDb();
+        db.selectFirst.mockResolvedValue({ n: '3' });
+        expect(await make(db).contarItens('L1')).toBe(3);
+    });
+
+    it('tocarLote incrementa versão', async () => {
+        const db = buildDb();
+        await make(db).tocarLote('L1');
+        expect(db.update).toHaveBeenCalledWith(expect.stringContaining('versao = versao + 1'), {
+            loteId: 'L1',
+        });
+    });
+
+    it('transicionarStatus p/ FINALIZADO passa finalizadoPor', async () => {
+        const db = buildDb();
+        db.update.mockResolvedValue(1);
+        const n = await make(db).transicionarStatus({
+            id: 'L1',
+            de: ['RASCUNHO'],
+            para: 'FINALIZADO',
+            versaoEsperada: 1,
+            finalizadoPor: 'u1',
+        });
+        expect(n).toBe(1);
+        const [, params] = db.update.mock.calls[0];
+        expect(params).toMatchObject({
+            para: 'FINALIZADO',
+            finalizadoPor: 'u1',
+            versaoEsperada: 1,
+        });
+    });
+
+    it('transicionarStatus p/ RASCUNHO (reabrir) não exige finalizadoPor', async () => {
+        const db = buildDb();
+        await make(db).transicionarStatus({
+            id: 'L1',
+            de: ['FINALIZADO'],
+            para: 'RASCUNHO',
+            versaoEsperada: 2,
+        });
+        const [sql, params] = db.update.mock.calls[0];
+        expect(sql).toContain('finalizado_por');
+        expect(params).not.toHaveProperty('finalizadoPor');
+    });
+});

@@ -1,25 +1,31 @@
 ---
 name: conexos
 type: integration
-direction: read-write (read amplo + write-back fin010 gated)
-ontology_version: "0.4"
+direction: read-write (read amplo Permutas+SISPAG + write-back fin010 gated; SISPAG READ-only)
+ontology_version: "0.5"
 implementation_status: partial
 status: draft
 owners: [yuri]
 related_files:
   - src/backend/domain/client/ConexosClient.ts
+  - src/backend/domain/client/ConexosSispagClient.ts
   - src/backend/domain/service/permutas/BorderoGestaoService.ts
+  - src/backend/domain/service/sispag/SispagPainelService.ts
   - src/backend/migrations/0017_invoice_importador.sql
   - src/backend/migrations/0018_permuta_bordero_cache.sql
   - src/backend/migrations/0019_permuta_perf_indexes.sql
-last_review: 2026-06-24
+last_review: 2026-07-07
 endpoints_read:
   - com298 (PROFORMA tpdCod=99 + docVldTipoAdto=1 / INVOICE tpdCod=128 / detail mnyTitPermutar + pago=mnyTitAberto===0)
   - imp019 (D.I — data CI = cdiDtaCi)
   - imp223 (DUIMP — data desembaraço = dioDtaDesembaraco)
-  - com308 (título a-pagar — taxa/valor negociado)
+  - com308 (título a-pagar — taxa/valor negociado; SISPAG: alçada titVld1/2/3libera)
+  - "fin064 (SISPAG — carteira de pagamentos; ConexosSispagClient READ-only)"
+  - "fin015 (SISPAG — lotes nativos, contexto; ConexosSispagClient READ-only)"
+  - "fin010 (SISPAG — borderôs a-pagar, contexto; ConexosSispagClient READ-only)"
 endpoints_write:
-  - fin010 (FORA DE ESCOPO nesta fatia)
+  - fin010 (Permutas: write-back Fase 3, gated / SISPAG: FORA DE ESCOPO)
+  - "fin015 gerar remessa + fin052 retorno (SISPAG WRITE — FUTURO/gated, próxima fatia)"
 resolved-by:
   - "P0-3 — caminho = listFinanceiroAPagar(PROFORMA) + filtro docVldTipoAdto=1 (FinDocCab); chave wire confirmada por probe de rede (dev tenant Columbia, 2026-06-18, filCod=2, 410 adiantamentos reais)"
   - "P0-4 — campos wire da data-base RESOLVIDOS: cdiDtaCi (imp019, D.I) / dioDtaDesembaraco (imp223, DUIMP); probe de rede 2026-06-18; XOR confirmado em dados reais"
@@ -165,3 +171,35 @@ cadastro/finalizado/cancelado/estornado) é **derivada na leitura** (`situacaoDo
 > O cache é **leitura derivada do ERP**, não fonte da verdade: o `fin010` continua autoritativo; o
 > cache só acelera a listagem (`READ`). As escritas (finalizar/cancelar/excluir baixa) seguem o
 > handshake gated e refletem no cache de imediato.
+
+## SISPAG (Escopo II) — superfície de LEITURA (`ConexosSispagClient`, ADR-0015)
+
+> Contrato de **leitura** consumido pela Frente II, Fatia 1+2 (painel read-only + montagem de lote +
+> gate). Isolado num client próprio **`ConexosSispagClient`** (separa a superfície SISPAG do
+> `ConexosClient` de Permutas). **READ-only nesta fatia** (I1) — nenhum verbo mutante importado.
+> A superfície de **ESCRITA** (`fin015` gerar remessa / `fin052` retorno / `fin010` baixa) é
+> **futura/gated** (próxima fatia — transporte pasta de rede + VAN Nexxera; ver ADR-0015).
+
+| Endpoint | Uso | Método `ConexosSispagClient` | Wire | Notas |
+|----------|-----|------------------------------|------|-------|
+| `fin064/list` | **carteira de pagamentos** (TituloAPagar) — a vencer + vencidos | `listTitulosAPagar({filCod, janela})` | `docCod`, `titCod`, `filCod`, credor, `titMnyValor`, `titDtaVencimento`, `bncCod`/`ccoCod`, `conVldEnviaNexxera`, `enviadoBanco`, `titNumRemessa`, `borCod` | **READ.** Base do painel diário (2.100 fil1 / 18.234 fil2 reais). Janela −15d..+45d. |
+| `com308/.../list/{docCod}` | **alçada de liberação** (`liberado`) + detalhe do título | `getAlcadaTitulo({docCod})` (ou hidratado na carteira) | `titVld1libera`/`titVld2libera`/`titVld3libera` (+`Tim/Usn/usnDesNomel`), `titVldEnviaBanco`, `vldBordero`, `titVldStatus` | **READ.** `liberado = AND das flags de alçada`. "Aprovado para baixa" (Escopo II). Ver `elegibilidade-titulo-lote`. |
+| `fin015/list` | **lotes SISPAG nativos** (contexto do painel) | `listLotesSispag({filCod?})` | `FinLoteSispag`: `bncCod`, `ccoCod`, `layoutConta`, `flpVldConfEnvio`, `soma`, analista | **READ (contexto).** 17 lotes reais (Itaú/Santander). NÃO participam do nosso ciclo de vida de lote candidato. |
+| `fin010/list` (a-pagar) | **borderôs a-pagar** (contexto do painel) | `listBorderosAPagar({filCod?})` | `borCod`, `borVldTipo`, `borVldFinalizado`, `vldHasRemessaPgto` | **READ (contexto).** A baixa via borderô é o mecanismo massivo (`vldHasRemessaPgto≈0` em ~99% — baixa direta). |
+
+- **I1 (read-only):** o `ConexosSispagClient` **não importa** nenhum verbo de escrita nesta fatia.
+  Toda escrita da fatia é **local** (`lote_pagamento`/`lote_pagamento_item`).
+- **Reuso da infra:** mesmo padrão de auth (sid + `cnx-filcod` + `cnx-usncod`), `RetryExecutor` e
+  Zod/guard nos boundaries do `ConexosClient` de Permutas; SSM em prod.
+- **Constantes de tenant:** IDs de banco/conta/layout (Itaú 341, Santander 33, `layoutConta`) e
+  níveis de alçada são da instalação Columbia — constantes tipadas, nunca hardcode em service
+  (Inviolable Rule #2). Outra trading recalibra.
+
+### ESCRITA SISPAG — FUTURO/gated (fora de escopo, ADR-0015)
+
+`fin015` (montar/finalizar lote nativo + `gerArquivosBancos/gerarRemessa` → `PG*.REM`), `fin052`
+(carregar/processar retorno) e a baixa `fin010` são o **motor nativo** que a próxima fatia vai
+**dirigir** (não reconstruir). O gap real é o **transporte** (passos 6–7: entregar a remessa ao banco
+e trazer o retorno) — sem endpoint nativo; alvo = pasta de rede + VAN Nexxera. Gate: contrato Nexxera
+cobrir pagamento (Ricardo→Nexxera). A escrita reusará o gating de Permutas (`CONEXOS_WRITE_ENABLED` +
+`CONEXOS_DRY_RUN`, homologação-first). Riscos O4 (scheduler) e O7 (config Nexxera) abertos.

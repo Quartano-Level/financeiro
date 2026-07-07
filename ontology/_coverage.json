@@ -1,32 +1,34 @@
 {
   "_meta": {
-    "generated": "2026-06-24",
-    "version": "0.4.0",
-    "note": "Coverage of ontology entities/actions by implemented code. v0.4.0 (2026-06-24, ADR-0014, sync retroativo de v0.7.0 — PR #7 deployado): NEW 3 business-rules (multipla-automatica I-Permuta-6, reclassificacao-ultrapassa-invoice I-Permuta-7, auto-alocacao-atomica I-Permuta-8 — todas com testes diretos de serviço) → business_rules 5→8, with_tests 1→4. NEW state-machine status-permuta-bordero (pendente|aguardando-finalizacao|finalizado) → state_machines 1→2. NEW actions autoAlocarPermuta, resolverStatusBordero, gerenciarBordero (implemented) → actions 8→11. Integração conexos passou a read-write amplo (universo completo de invoices, importador imp021, borderôs+baixas fin010, cache permuta_bordero). Regis-Review 2026-06-24-2011: 3 P0 + 2 P1 críticos remediados pré-merge. Prior v0.3.0 (2026-06-23, ADR-0013): FASE 3 — write-back fin010.",
+    "generated": "2026-07-07",
+    "version": "0.5.0",
+    "note": "Coverage of ontology entities/actions by implemented code. v0.5.0 (2026-07-07, ADR-0015, branch feat/sispag-painel-montagem): INTRODUZ o Escopo II (SISPAG) Fatia 1+2 (painel read-only + montagem de lote + gate), ZERO escrita no ERP. NEW 2 entidades (TituloAPagar implemented — read model fin064; LotePagamento planned — agregado local + ItemLote) → entities 7→9. NEW 3 ações (montarPainelPagamentos implemented; gerenciarLoteCandidato, finalizarLote planned) → actions 11→14. NEW 3 business-rules (elegibilidade-titulo-lote I2, lote-uma-filial I4, nao-duplicacao-titulo-lote I3 — todas planned, sem teste canônico) → business_rules 8→11. NEW state-machine lote-pagamento (RASCUNHO|FINALIZADO|CANCELADO, planned) → state_machines 2→3. Integração conexos ganhou a superfície SISPAG READ (fin064/fin015/fin010 via ConexosSispagClient, read-only); write fin015/fin052 = futuro/gated. Prior v0.4.0 (2026-06-24, ADR-0014, sync retroativo de v0.7.0 — PR #7 deployado): NEW 3 business-rules (multipla-automatica I-Permuta-6, reclassificacao-ultrapassa-invoice I-Permuta-7, auto-alocacao-atomica I-Permuta-8 — todas com testes diretos de serviço) → business_rules 5→8, with_tests 1→4. NEW state-machine status-permuta-bordero (pendente|aguardando-finalizacao|finalizado) → state_machines 1→2. NEW actions autoAlocarPermuta, resolverStatusBordero, gerenciarBordero (implemented) → actions 8→11. Integração conexos passou a read-write amplo (universo completo de invoices, importador imp021, borderôs+baixas fin010, cache permuta_bordero). Regis-Review 2026-06-24-2011: 3 P0 + 2 P1 críticos remediados pré-merge. Prior v0.3.0 (2026-06-23, ADR-0013): FASE 3 — write-back fin010.",
     "upstream": "../../produtizacao/nf-projects",
-    "last_feature": "permutas-v070 (ADR-0014, PR #7 mergeado em main, deployado 2026-06-24): múltipla automática + reclassificação ultrapassa-invoice, auto-alocação atômica no Baixar, status PERMUTA→BORDERÔ, cliente em todas as invoices + universo completo, cache de borderôs. Prior: permutas-reconciliacao (ADR-0013)."
+    "last_feature": "sispag-painel-montagem (ADR-0015, branch feat/sispag-painel-montagem): Escopo II (SISPAG) Fatia 1+2 — painel read-only (fin064) + montagem assistida de lote candidato (lote_pagamento/_item) + gate de finalização; ZERO escrita no ERP (I1); escrita/remessa/Nexxera/retorno/baixa/scheduler DEFERIDOS (próxima fatia). Prior: permutas-v070 (ADR-0014, PR #7 mergeado em main, deployado 2026-06-24)."
   },
   "summary": {
-    "entities_total": 7,
+    "entities_total": 9,
     "entities_imported": 0,
-    "entities_custom": 7,
+    "entities_custom": 9,
     "entities_core": 0,
-    "entities_implemented": 6,
+    "entities_implemented": 7,
     "entities_partial": 1,
-    "entities_planned": 0,
+    "entities_planned": 1,
     "entities_planned_migration": 0,
-    "entities_coverage_pct": 93,
-    "actions_total": 11,
-    "actions_implemented": 10,
+    "entities_coverage_pct": 83,
+    "actions_total": 14,
+    "actions_implemented": 11,
     "actions_partial": 1,
-    "actions_planned": 0,
-    "actions_coverage_pct": 95,
-    "business_rules_total": 8,
+    "actions_planned": 2,
+    "actions_coverage_pct": 82,
+    "business_rules_total": 11,
     "business_rules_implemented": 8,
+    "business_rules_planned": 3,
     "business_rules_with_tests": 4,
-    "state_machines_total": 2,
+    "state_machines_total": 3,
     "state_machines_partial": 1,
     "state_machines_implemented": 1,
+    "state_machines_planned": 1,
     "integrations_total": 1,
     "integrations_implemented": 1,
     "ui_flows_total": 0,
@@ -39,7 +41,9 @@
     "VariacaoCambial": { "status": "implemented", "actions": ["calcularVariacaoCambial"], "impl_pct": 100, "resolved_by": ["P0-1", "P1-2"] },
     "PermutaCandidata": { "status": "implemented", "actions": ["avaliarElegibilidade", "exporNoPainel"], "impl_pct": 100, "resolved_by": ["P0-6", "P0-8", "P0-5", "P0-4 (aging column read)"], "note": "5 estados (incl. permuta-manual); tipoPermuta derivado (ADR-0009). ADR-0014: flag derivada autoElegivel (múltipla AUTOMÁTICA); tipoPermuta reclassificável (ultrapassa-invoice)." },
     "Permuta": { "status": "partial", "actions": ["alocarPermuta", "buscarInvoiceCrossProcess", "reconciliarPermuta", "autoAlocarPermuta", "resolverStatusBordero", "gerenciarBordero"], "impl_pct": 90, "open_gap": ["validação em produção do 1º caso real de baixa fin010 (write-back implementado e gated; risco arquitetural #1)"], "note": "Alocação rascunho + write-back fin010 (gated) + ADR-0014 (múltipla automática, auto-alocação atômica, status PERMUTA→BORDERÔ, cache de borderôs) implementados; falta validar 1º caso real de baixa em produção." },
-    "ClienteFiltro": { "status": "implemented", "actions": [], "impl_pct": 100, "note": "Config entity (roteamento por importador → permuta-manual, ADR-0007). Valores = config do cliente." }
+    "ClienteFiltro": { "status": "implemented", "actions": [], "impl_pct": 100, "note": "Config entity (roteamento por importador → permuta-manual, ADR-0007). Valores = config do cliente." },
+    "TituloAPagar": { "status": "implemented", "actions": ["montarPainelPagamentos"], "impl_pct": 100, "resolved_by": ["ADR-0015"], "note": "SISPAG (Escopo II): read model READ-THROUGH da carteira fin064 + alçada com308 (liberado). NÃO persistido. Painel diário servido pelo spike (GET /sispag/painel)." },
+    "LotePagamento": { "status": "planned", "actions": ["gerenciarLoteCandidato", "finalizarLote"], "impl_pct": 0, "resolved_by": ["ADR-0015"], "note": "SISPAG (Escopo II): agregado LOCAL (lote_pagamento + lote_pagamento_item/ItemLote). Estados RASCUNHO|FINALIZADO|CANCELADO; invariantes I2/I3/I4. planned. ZERO escrita no ERP (I1)." }
   },
   "by_business_rule": {
     "elegibilidade-permuta": { "invariant": "I3", "status": "implemented", "has_test": false, "resolved_by": ["P0-6", "P0-5", "gate-3-pago-via-detail"] },
@@ -49,7 +53,10 @@
     "distribuicao-simples-greedy": { "invariant": "I-Permuta-2", "status": "implemented", "has_test": true, "resolved_by": ["ADR-0010 (greedy N:1 com teto; caso 1408 ZNSHINE)"], "open_gap": ["residual grande num único adto → validar se vira revisão manual"] },
     "multipla-automatica": { "invariant": "I-Permuta-6", "status": "implemented", "has_test": true, "resolved_by": ["ADR-0014"] },
     "reclassificacao-ultrapassa-invoice": { "invariant": "I-Permuta-7", "status": "implemented", "has_test": true, "resolved_by": ["ADR-0014"] },
-    "auto-alocacao-atomica": { "invariant": "I-Permuta-8", "status": "implemented", "has_test": true, "resolved_by": ["ADR-0014", "Regis-Review 2026-06-24-2011 R-2"] }
+    "auto-alocacao-atomica": { "invariant": "I-Permuta-8", "status": "implemented", "has_test": true, "resolved_by": ["ADR-0014", "Regis-Review 2026-06-24-2011 R-2"] },
+    "elegibilidade-titulo-lote": { "invariant": "I2", "status": "planned", "has_test": false, "resolved_by": ["ADR-0015"], "open_gap": ["níveis-de-alçada (Flávia)", "residual-pago-centavos (herdado de Permutas)"] },
+    "lote-uma-filial": { "invariant": "I4", "status": "planned", "has_test": false, "resolved_by": ["ADR-0015"], "open_gap": ["agrupamento-banco-conta (Flávia) — filial só nesta fatia"] },
+    "nao-duplicacao-titulo-lote": { "invariant": "I3", "status": "planned", "has_test": false, "resolved_by": ["ADR-0015"] }
   },
   "health_flags": {
     "p0_inbox_open": 0,
@@ -81,7 +88,10 @@
       "Cobertura de testes — 4 das 8 business-rules seguem sem teste canônico dedicado (elegibilidade-permuta, di-xor-duimp, classificacao-juros-desconto, aging-anchor); as 3 novas de v0.7.0 (multipla-automatica, reclassificacao-ultrapassa-invoice, auto-alocacao-atomica) têm testes de SERVIÇO (has_test=true) mas não um teste de business-rule isolado; não-bloqueante.",
       "Arquivos de ação dedicados: gerenciarBordero e resolverStatusBordero ganharam actions/permuta/*.md (curadoria 2026-06-25, sync v0.7.0). Ainda documentados só na entity Permuta + business-rules/state-machines: alocarPermuta/buscarInvoiceCrossProcess/reconciliarPermuta/autoAlocarPermuta — criar actions/permuta/*.md numa curadoria futura se a granularidade ajudar.",
       "Regis-Review 2026-06-24-2011 (não-bloqueante, P1/P2): regressão N+1 na ingestão (~2390 chamadas com308/run, ~65s) — follow-up de performance, não modela domínio; toPendente complexidade 58 (modifiability) — refactor de apresentação.",
-      "Estorno de borderô — método estornarBordero + rota POST /borderos/:borCod/estornar seguem no backend (Fase 3.1), mas a AÇÃO foi removida da UI em v0.7.0 (decisão Yuri). Reavaliar se o método deve ser podado ou re-exposto."
+      "Estorno de borderô — método estornarBordero + rota POST /borderos/:borCod/estornar seguem no backend (Fase 3.1), mas a AÇÃO foi removida da UI em v0.7.0 (decisão Yuri). Reavaliar se o método deve ser podado ou re-exposto.",
+      "SISPAG próxima fatia (ADR-0015) — DEFERIDO: gerar remessa (dirigir fin015), escrever/ler arquivo na pasta de rede, VAN Nexxera, retorno+baixa (fin052/fin010 write), scheduler de cadência diária. Gates abertos: contrato Nexxera cobre pagamento? (Ricardo→Nexxera); caminho da pasta + VAN faz pickup sozinha ou precisa RPA?; quais bancos + arquivo-vs-digitação (Flávia, via Yuri); acesso HML. Riscos herdados O4 (scheduler inexistente) + O7 (client/config Nexxera).",
+      "SISPAG decisões de modelagem em aberto (ADR-0015, revisitar na fatia de transporte): (1) agrupamento do lote — filial só nesta fatia; promover a filial+banco+conta quando banco/conta virar chave do arquivo de remessa (Flávia). (2) reversibilidade da finalização — hoje livre (sem downstream); passa a ser gated pelo estado do envio quando o processamento existir. (3) níveis de alçada titVld1/2/3libera que a Columbia usa de fato (Flávia). (4) definição de 'pago' e resíduo de centavos — alinhar com o Gate 3 de Permutas (residual-pago-centavos).",
+      "SISPAG business-rules sem teste canônico — elegibilidade-titulo-lote (I2), lote-uma-filial (I4), nao-duplicacao-titulo-lote (I3) nascem planned; testes a fixar pelo TaskScoper/TDD na implementação da Fatia 2 (montagem de lote)."
     ]
   }
 }

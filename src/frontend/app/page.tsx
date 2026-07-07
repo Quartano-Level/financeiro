@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { ArrowLeftRight } from 'lucide-react'
+import { ArrowLeftRight, Banknote } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { PageHeader } from '@/components/ui/page-header'
@@ -29,6 +29,22 @@ export default function HomePage() {
           <CardContent>
             <Button asChild>
               <Link href="/permutas">Abrir Gestão de Permutas</Link>
+            </Button>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Banknote className="size-4" aria-hidden /> SISPAG — Pagamentos
+            </CardTitle>
+            <CardDescription>
+              Títulos a pagar, montagem do lote e conciliação (Frente II). Esboço read-only — nada é
+              executado.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild variant="outline">
+              <Link href="/sispag">Abrir Painel SISPAG (esboço)</Link>
             </Button>
           </CardContent>
         </Card>

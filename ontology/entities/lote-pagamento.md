@@ -1,0 +1,121 @@
+---
+name: LotePagamento
+type: entity
+ontology_version: "0.5"
+implementation_status: planned
+status: draft
+owners: [yuri]
+related_files:
+  - src/backend/migrations/0023_lote_pagamento.sql
+  - src/backend/domain/service/sispag/SispagPainelService.ts
+  - src/backend/domain/interface/sispag/SispagInterface.ts
+  - src/backend/routes/sispag.ts
+  - src/frontend/app/sispag/page.tsx
+properties:
+  - id
+  - filCod
+  - banco
+  - conta
+  - status
+  - criadoPor
+  - finalizadoPor
+  - finalizadoEm
+  - versao
+  - itens
+relationships:
+  - "LotePagamento 1—N ItemLote (agregado — os títulos incluídos, snapshot de valor/venc na inclusão)"
+  - "LotePagamento N—1 Filial (via filCod — todos os itens são da MESMA filial, I4)"
+  - "ItemLote N—1 TituloAPagar (via filCod:docCod:titCod — o título do ERP incluído no lote)"
+last_review: 2026-07-07
+universality_evidence:
+  - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): montar o lote diário de pagamentos, analista revisa e finaliza (human-in-the-loop)"
+  - "ontology/_inbox/sispag-native-vs-nexxera.md §1 — 17 lotes fin015 reais (FinLoteSispag por filial/banco/conta, analistas FLAVIA_SANTOS/RENE_DUARTE) — o lote de pagamento é conceito nativo do ERP"
+  - "ontology/_inbox/sispag-painel-montagem-interview.md — Eixo 1/2, lote candidato montado pela analista (RASCUNHO→FINALIZADO)"
+  - "Conceito universal de financeiro/comex: agrupar títulos a pagar em um lote para revisão e liberação em bloco (o borderô/lote de pagamento)"
+---
+
+# LotePagamento (lote candidato — agregado local)
+
+> **Agregado NOVO** do Escopo II (SISPAG). Um `LotePagamento` é o **lote candidato** que a
+> analista monta a partir dos títulos a pagar aprovados: ela **inclui/remove** títulos e depois
+> o **finaliza** (o gate). É **persistido localmente** (`lote_pagamento` + `lote_pagamento_item`),
+> **NÃO** no ERP — nesta fatia nada é escrito no Conexos (I1). O lote FINALIZADO é o "pronto para
+> processar"; o processamento real (remessa/pasta/Nexxera/baixa) é a **próxima feature** (ADR-0015).
+
+## Por que um agregado local (e não o lote nativo do `fin015`)
+
+O ERP já tem um lote SISPAG nativo (`FinLoteSispag`, por filial/banco/conta) — mas dirigir o
+`fin015` é **escrita**, fora de escopo aqui. O `LotePagamento` é o nosso **rascunho de montagem
+assistida**: onde a analista compõe o lote candidato com auditoria (quem incluiu/removeu/finalizou)
+**antes** de qualquer efeito no ERP. Ele **sobrevive à re-leitura** da carteira (≠ um cálculo por
+run) — espelha a doutrina de `permuta_alocacao` (rascunho persistido) da Frente I.
+
+Na próxima fatia, um `LotePagamento` FINALIZADO é o insumo que **dirige** o `fin015` (montar +
+gerar remessa) — não um gerador de arquivo paralelo. Ver ADR-0015.
+
+## Agregado: `LotePagamento` (raiz) + `ItemLote` (membro)
+
+O agregado é a **raiz de consistência**: as invariantes (uma filial por lote I4, não-duplicação
+I3, elegibilidade do item I2) são garantidas na fronteira do agregado. O `ItemLote` não existe
+fora de um lote.
+
+### Propriedades — `LotePagamento` (`lote_pagamento`)
+
+| Propriedade | Tipo | Coluna | Notas |
+|-------------|------|--------|-------|
+| `id` | string (uuid) | `lote_pagamento.id` | Identidade do lote candidato. |
+| `filCod` | number | `lote_pagamento.fil_cod` | **Uma filial por lote** (I4). Todos os itens compartilham este `filCod`. |
+| `banco` | string? | `lote_pagamento.banco` | **Metadado opcional** — agrupamento é por filial nesta fatia; banco/conta é informativo (ADR-0015). |
+| `conta` | string? | `lote_pagamento.conta` | Metadado opcional (idem `banco`). |
+| `status` | enum | `lote_pagamento.status` | `RASCUNHO \| FINALIZADO \| CANCELADO` — constantes tipadas. Ver `state-machines/lote-pagamento.md`. |
+| `criadoPor` | string | `lote_pagamento.criado_por` | Auditoria: quem abriu o lote. |
+| `finalizadoPor` | string? | `lote_pagamento.finalizado_por` | Auditoria: quem finalizou (gate). `null` enquanto RASCUNHO. |
+| `finalizadoEm` | Date? | `lote_pagamento.finalizado_em` | Timestamp da finalização. `null` enquanto RASCUNHO. |
+| `versao` | number | `lote_pagamento.versao` | Controle otimista de concorrência (I6 — 2 analistas). Incrementa a cada transição. |
+| `itens` | ItemLote[] | join `lote_pagamento_item` | Os títulos incluídos (agregado). |
+
+### Propriedades — `ItemLote` (`lote_pagamento_item`)
+
+| Propriedade | Tipo | Coluna | Notas |
+|-------------|------|--------|-------|
+| `loteId` | string | `lote_pagamento_item.lote_id` | FK para o lote (raiz do agregado). |
+| `filCod` | number | `lote_pagamento_item.fil_cod` | Igual ao `filCod` do lote (I4). Parte da chave de não-duplicação (I3). |
+| `docCod` | string | `lote_pagamento_item.doc_cod` | Documento do título. Parte de `filCod:docCod:titCod` (I3). |
+| `titCod` | string | `lote_pagamento_item.tit_cod` | Título/parcela. Parte de `filCod:docCod:titCod` (I3). |
+| `credor` | string | `lote_pagamento_item.credor` | **Snapshot** no momento da inclusão (exibição estável). |
+| `valor` | number | `lote_pagamento_item.valor` | **Snapshot** do valor do título na inclusão. |
+| `vencimento` | Date | `lote_pagamento_item.vencimento` | **Snapshot** do vencimento na inclusão. |
+| `incluidoPor` | string | `lote_pagamento_item.incluido_por` | Auditoria: quem incluiu o item. |
+
+> **Por que snapshot no item:** o `TituloAPagar` é read-through (muda no ERP entre leituras); o
+> `ItemLote` congela valor/venc/credor no instante da inclusão, preservando o que a analista viu
+> ao montar o lote (auditoria + estabilidade da tela). O valor autoritativo para o pagamento real
+> volta a vir do ERP na próxima fatia (como em Permutas, anti-super-pagamento).
+
+## Invariantes aplicáveis
+
+- **I2 (elegibilidade do item):** um `ItemLote` só existe para um `TituloAPagar` **`liberado` (aprovado)
+  e não `pago`**. Ver `business-rules/elegibilidade-titulo-lote.md`.
+- **I3 (não-duplicação):** um título (`filCod:docCod:titCod`) **não** pode estar em dois lotes
+  `RASCUNHO` ao mesmo tempo — UNIQUE parcial (`WHERE status = 'RASCUNHO'`). Ver
+  `business-rules/nao-duplicacao-titulo-lote.md`.
+- **I4 (uma filial por lote):** todos os `ItemLote` de um lote têm o mesmo `filCod` do lote —
+  compatível com o `fin015` nativo (por filial/banco). Multi-filial = múltiplos lotes. Ver
+  `business-rules/lote-uma-filial.md`.
+- **I5 (gate reversível + auditoria):** `finalizarLote` é reversível por `reabrirLote` **enquanto**
+  não houver etapa downstream (não há nesta fatia). Toda transição registra ator + timestamp.
+- **I6 (concorrência):** montagem/finalização são seguras a 2 analistas via `versao` (optimistic
+  lock), espelhando a doutrina de Permutas.
+- **I1 (sem escrita no ERP):** o lote é rascunho na tabela própria; nenhuma remessa/baixa no ERP.
+
+## Cardinalidade
+
+Um `LotePagamento` agrega **N** `ItemLote` (1 filial). Um `TituloAPagar` elegível pode estar em
+**no máximo 1** lote `RASCUNHO` (I3), mas pode reaparecer num novo lote se o anterior for
+`CANCELADO` ou (na próxima fatia) processado.
+
+## Fora de escopo (Fatia 1+2)
+
+- Nenhuma escrita no ERP: gerar remessa (`fin015`), pasta de rede, VAN Nexxera, retorno (`fin052`),
+  baixa (`fin010`) e o **scheduler** de cadência diária são a **próxima feature** (ADR-0015). O
+  `FINALIZADO` aqui é o **gatilho conceitual**, sem downstream.

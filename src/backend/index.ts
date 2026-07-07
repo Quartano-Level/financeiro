@@ -12,6 +12,7 @@ import { requestIdMiddleware } from './middleware/requestId.js';
 import authRouter from './routes/auth.js';
 import conexosRouter from './routes/conexos.js';
 import permutasRouter from './routes/permutas.js';
+import sispagRouter from './routes/sispag.js';
 
 const app = express();
 
@@ -90,6 +91,11 @@ app.use('/conexos', conexosRouter);
 // ficam no `globalLimiter` (100/min) — antes o limiter estrito cobria tudo e o
 // fluxo de cliente-filtro (load + ingestão) estourava 429 (card cc-auto-ingest-coalesce).
 app.use('/permutas', permutasRouter);
+
+// SISPAG Frente II — SPIKE READ-ONLY (semente da Fatia 1). Só leituras (painel
+// de pagamentos); nenhuma escrita/execução. Fica no `globalLimiter` como as
+// leituras de Permutas. Ver ontology/_inbox/sispag-*.md.
+app.use('/sispag', sispagRouter);
 
 // Central error-handling middleware — logs full detail server-side, returns
 // a generic payload to the client (arch-review cards security-3 /
