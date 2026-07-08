@@ -34,9 +34,11 @@ import {
   criarLote,
   fetchLotes,
   fetchSispagPainel,
+  fetchIngestaoRuns,
   finalizarLote,
   incluirTitulo,
   IngestaoPagamentosEmAndamentoError,
+  type PagamentoIngestaoRun,
   reabrirLote,
   removerItem,
   runIngestaoPagamentos,
@@ -45,6 +47,7 @@ import {
   type TituloAPagar,
 } from '@/lib/sispag'
 import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/components/tabela-filtro'
+import { IngestaoDialog } from './components/IngestaoDialog'
 
 const keyOf = (t: TituloAPagar) => `${t.filCod}:${t.docCod}:${t.titCod}`
 
@@ -98,6 +101,9 @@ export default function SispagPage() {
   const [selecionados, setSelecionados] = React.useState<Set<string>>(new Set())
   const [busy, setBusy] = React.useState(false)
   const [ingerindo, setIngerindo] = React.useState(false)
+  const [ingestaoOpen, setIngestaoOpen] = React.useState(false)
+  const [runs, setRuns] = React.useState<PagamentoIngestaoRun[] | null>(null)
+  const [runsLoading, setRunsLoading] = React.useState(false)
 
   const carregar = React.useCallback(async () => {
     setLoading(true)
@@ -121,17 +127,35 @@ export default function SispagPage() {
     }
   }, [])
 
+  const carregarRuns = React.useCallback(async () => {
+    setRunsLoading(true)
+    try {
+      setRuns(await fetchIngestaoRuns())
+    } catch {
+      setRuns([])
+    } finally {
+      setRunsLoading(false)
+    }
+  }, [])
+
+  const abrirIngestao = React.useCallback(() => {
+    setIngestaoOpen(true)
+    void carregarRuns()
+  }, [carregarRuns])
+
+  // Rodada manual disparada de DENTRO do modal — mantém o modal aberto e atualiza a trilha.
   const ingerir = async () => {
     setIngerindo(true)
     try {
       const r = await runIngestaoPagamentos()
-      await carregar()
       toast.success('Ingestão concluída', {
         description: `${r.totalTitulos} título(s) na carteira · ${r.totalInativados} inativado(s).`,
       })
+      await Promise.all([carregar(), carregarRuns()])
     } catch (e) {
       if (e instanceof IngestaoPagamentosEmAndamentoError) {
         toast.warning('Ingestão em andamento', { description: e.message })
+        void carregarRuns()
       } else {
         toast.error('Falha na ingestão', {
           description: e instanceof Error ? e.message : undefined,
@@ -258,17 +282,25 @@ export default function SispagPage() {
           <div className="flex items-center gap-2">
             <Button
               size="sm"
-              onClick={ingerir}
-              disabled={ingerindo}
-              title="Rodar a ingestão de dados do Conexos agora (entre os horários do cron)"
+              onClick={abrirIngestao}
+              title="Ver as últimas ingestões (cron/manual) e rodar sob demanda"
             >
-              <DatabaseZap aria-hidden /> {ingerindo ? 'Ingerindo…' : 'Ingestão de dados'}
+              <DatabaseZap aria-hidden /> Ingestão de dados
             </Button>
             <Button variant="outline" size="sm" onClick={() => void carregar()} disabled={loading}>
               <RefreshCcw className="size-4" /> Recarregar
             </Button>
           </div>
         }
+      />
+
+      <IngestaoDialog
+        open={ingestaoOpen}
+        setOpen={setIngestaoOpen}
+        ingestRunning={ingerindo}
+        runs={runs}
+        runsLoading={runsLoading}
+        rodarIngestao={ingerir}
       />
 
       <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
