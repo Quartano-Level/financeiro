@@ -1,6 +1,7 @@
 'use client'
 
-import { CheckCircle2, Trash2 } from 'lucide-react'
+import { CheckCircle2, ChevronDown, Trash2 } from 'lucide-react'
+import * as React from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -53,7 +54,7 @@ function StatusLoteBadge({ status }: { status: LotePagamento['status'] }) {
 
 type Acao = (fn: () => Promise<unknown>, okMsg: string) => void
 
-/** Um card de lote candidato/finalizado, com as ações da fase. */
+/** Card de lote (colapsável): resumo sempre visível; os títulos expandem sob demanda. */
 export function LoteCard({
   lote: l,
   busy,
@@ -63,13 +64,24 @@ export function LoteCard({
   busy: boolean
   acao: Acao
 }) {
+  const [aberto, setAberto] = React.useState(false)
   const total = l.itens.reduce((acc, i) => acc + (i.valor ?? 0), 0)
   const isRascunho = l.status === 'RASCUNHO'
   const isFinalizado = l.status === 'FINALIZADO'
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 py-3">
+        <button
+          type="button"
+          onClick={() => setAberto((v) => !v)}
+          className="flex flex-1 items-center gap-2 text-left"
+          aria-expanded={aberto}
+        >
+          <ChevronDown
+            className={`size-4 shrink-0 text-muted-foreground transition-transform ${
+              aberto ? 'rotate-180' : ''
+            }`}
+          />
           <StatusLoteBadge status={l.status} />
           {l.automatico ? (
             <Badge
@@ -85,11 +97,11 @@ export function LoteCard({
               internacional
             </Badge>
           ) : null}
-          <CardTitle className="text-sm">
+          <CardTitle className="text-sm font-medium">
             Filial {l.filCod} · {l.itens.length} título(s) · {formatBRL(total)}
           </CardTitle>
-        </div>
-        <div className="flex flex-wrap gap-1">
+        </button>
+        <div className="flex shrink-0 flex-wrap gap-1">
           {isRascunho ? (
             <>
               <Button
@@ -131,72 +143,74 @@ export function LoteCard({
           ) : null}
         </div>
       </CardHeader>
-      <CardContent>
-        {l.itens.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Lote vazio.</p>
-        ) : (
-          <div className="overflow-x-auto rounded-lg border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Credor</TableHead>
-                  <TableHead>Documento</TableHead>
-                  <TableHead className="text-right">Valor</TableHead>
-                  <TableHead>Vencimento</TableHead>
-                  {isRascunho ? <TableHead className="w-10" /> : null}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {l.itens.map((i) => (
-                  <TableRow key={`${i.docCod}:${i.titCod}`}>
-                    <TableCell className="max-w-[16rem] truncate">{i.credor ?? '—'}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {i.docCod}/{i.titCod}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {i.valor != null ? formatBRL(i.valor) : '—'}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {fmtData(i.vencimento)}
-                    </TableCell>
-                    {isRascunho ? (
-                      <TableCell>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          disabled={busy}
-                          aria-label="remover título"
-                          onClick={() =>
-                            acao(
-                              () =>
-                                removerItem(l.id, {
-                                  filCod: i.filCod,
-                                  docCod: i.docCod,
-                                  titCod: i.titCod,
-                                }),
-                              'Título removido',
-                            )
-                          }
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </TableCell>
-                    ) : null}
+      {aberto ? (
+        <CardContent>
+          {l.itens.length === 0 ? (
+            <p className="text-xs text-muted-foreground">Lote vazio.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Credor</TableHead>
+                    <TableHead>Documento</TableHead>
+                    <TableHead className="text-right">Valor</TableHead>
+                    <TableHead>Vencimento</TableHead>
+                    {isRascunho ? <TableHead className="w-10" /> : null}
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-        {l.finalizadoPor ? (
-          <p className="mt-2 text-xs text-muted-foreground">
-            Finalizado por {l.finalizadoPor}
-            {l.finalizadoEm ? ` em ${new Date(l.finalizadoEm).toLocaleString('pt-BR')}` : ''}.
-            {isFinalizado ? ' Aguardando retorno do Nexxera.' : ''}
-            {l.status === 'RETORNADO' ? ' Retorno do Nexxera recebido.' : ''}
-          </p>
-        ) : null}
-      </CardContent>
+                </TableHeader>
+                <TableBody>
+                  {l.itens.map((i) => (
+                    <TableRow key={`${i.docCod}:${i.titCod}`}>
+                      <TableCell className="max-w-[16rem] truncate">{i.credor ?? '—'}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {i.docCod}/{i.titCod}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {i.valor != null ? formatBRL(i.valor) : '—'}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {fmtData(i.vencimento)}
+                      </TableCell>
+                      {isRascunho ? (
+                        <TableCell>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            disabled={busy}
+                            aria-label="remover título"
+                            onClick={() =>
+                              acao(
+                                () =>
+                                  removerItem(l.id, {
+                                    filCod: i.filCod,
+                                    docCod: i.docCod,
+                                    titCod: i.titCod,
+                                  }),
+                                'Título removido',
+                              )
+                            }
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </TableCell>
+                      ) : null}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+          {l.finalizadoPor ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Finalizado por {l.finalizadoPor}
+              {l.finalizadoEm ? ` em ${new Date(l.finalizadoEm).toLocaleString('pt-BR')}` : ''}.
+              {isFinalizado ? ' Aguardando retorno do Nexxera.' : ''}
+              {l.status === 'RETORNADO' ? ' Retorno do Nexxera recebido.' : ''}
+            </p>
+          ) : null}
+        </CardContent>
+      ) : null}
     </Card>
   )
 }

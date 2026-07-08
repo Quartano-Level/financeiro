@@ -8,6 +8,7 @@ import type {
     LoteSispag,
     TituloAPagar,
 } from '../../interface/sispag/SispagInterface.js';
+import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import type LogService from '../LogService.js';
@@ -58,6 +59,7 @@ const make = (
         listLotes?: jest.Mock;
         listBorderosAPagar?: jest.Mock;
         ultimaRun?: Date | null;
+        emRascunho?: Array<{ filCod: number; docCod: string; titCod: string }>;
         log?: LogService;
     } = {},
 ) => {
@@ -76,6 +78,9 @@ const make = (
             .fn()
             .mockResolvedValue(over.ultimaRun ?? new Date('2026-07-08T06:00:00Z')),
     } as unknown as PagamentoIngestaoRunRepository;
+    const loteRepo = {
+        listTitulosEmRascunho: jest.fn().mockResolvedValue(over.emRascunho ?? []),
+    } as unknown as LotePagamentoRepository;
     const env = {
         getEnvironmentVars: jest
             .fn()
@@ -88,6 +93,7 @@ const make = (
         new BoundedConcurrency(),
         tituloRepo,
         runRepo,
+        loteRepo,
         env,
         log,
     );
@@ -109,6 +115,19 @@ describe('SispagPainelService.montarPainel', () => {
         expect(painel.kpis.lotesEnviados).toBe(2);
         // proveniência da ingestão
         expect(painel.ingestao.ultimaRunEm).toBe('2026-07-08T06:00:00.000Z');
+    });
+
+    it('marca emLote nos títulos já num lote RASCUNHO', async () => {
+        const { service } = make({
+            titulosAtivos: [
+                titulo({ docCod: '100', titCod: '1' }),
+                titulo({ docCod: '200', titCod: '1' }),
+            ],
+            emRascunho: [{ filCod: 2, docCod: '100', titCod: '1' }],
+        });
+        const painel = await service.montarPainel();
+        expect(painel.titulos.find((t) => t.docCod === '100')?.emLote).toBe(true);
+        expect(painel.titulos.find((t) => t.docCod === '200')?.emLote).toBe(false);
     });
 
     it('tolera falha de UMA leitura de contexto (loga warn e segue)', async () => {

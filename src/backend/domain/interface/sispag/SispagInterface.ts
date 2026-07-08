@@ -29,6 +29,8 @@ export interface TituloAPagar {
     numRemessa?: string;
     /** Pagamento ao exterior (`ufEspSigla='EX'` no com298) vs. nacional. Rails distintos. */
     internacional?: boolean;
+    /** Já está num lote RASCUNHO — não pode ser atachado a outro (I3). Bloqueia a seleção. */
+    emLote?: boolean;
     // ---- campos da carteira PERSISTIDA (ingestão) ----
     pesCod?: string;
     tpdCod?: string;

@@ -28,6 +28,8 @@ export interface TituloAPagar {
   ativo?: boolean
   /** Pagamento ao exterior (ufEspSigla='EX') vs. nacional. Rails distintos (I7). */
   internacional?: boolean
+  /** Já está num lote RASCUNHO — não pode ser atachado a outro (bloqueia a seleção). */
+  emLote?: boolean
 }
 
 export interface LoteSispag {

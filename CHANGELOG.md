@@ -1,5 +1,16 @@
 # Columbia Financeiro — Changelog
 
+## v0.16.1 (2026-07-08) — SISPAG: UX dos lotes + trava anti-reatache
+
+- **fix(sispag):** cards de lote agora são **colapsáveis** (só o resumo por padrão; os títulos
+  expandem sob demanda) e a paginação dos lotes caiu para **8/página** — a tela de lotes deixou
+  de ficar gigante e difícil de navegar.
+- **fix(sispag):** o botão **"Formar lotes automáticos"** saiu da aba "Lotes candidatos" e agora
+  aparece só na aba **"Títulos a pagar"** (onde faz sentido montar).
+- **feat(sispag):** títulos **já num lote RASCUNHO** aparecem com a flag **"em lote"** e o
+  **checkbox desabilitado** — não podem ser atachados a outro lote (I3, anti-reatache). O painel
+  passa a marcar `emLote` lendo os itens dos lotes RASCUNHO.
+
 ## v0.16.0 (2026-07-08) — SISPAG: Ciclo pós-finalização (aba Finalizados + status RETORNADO) + paginação/filtros nos lotes
 
 - **feat(sispag):** o ciclo do lote ganha a fase pós-finalização. Novo status **RETORNADO**

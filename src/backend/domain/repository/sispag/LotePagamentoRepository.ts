@@ -112,6 +112,18 @@ export default class LotePagamentoRepository {
         return lote;
     };
 
+    /** Chaves (fil,doc,tit) de todos os títulos já num lote RASCUNHO — para o painel bloquear a seleção (I3). */
+    public listTitulosEmRascunho = async (
+        tx?: TransactionClient,
+    ): Promise<Array<{ filCod: number; docCod: string; titCod: string }>> => {
+        const rows = (await this.db(tx).selectMany(
+            `SELECT i.fil_cod, i.doc_cod, i.tit_cod
+             FROM lote_pagamento_item i JOIN lote_pagamento l ON l.id = i.lote_id
+             WHERE l.status = 'RASCUNHO'`,
+        )) as Array<{ fil_cod: number; doc_cod: string; tit_cod: string }>;
+        return rows.map((r) => ({ filCod: r.fil_cod, docCod: r.doc_cod, titCod: r.tit_cod }));
+    };
+
     /**
      * Desfaz (DELETE) os lotes AUTOMÁTICOS em RASCUNHO que já contêm algum título VENCIDO —
      * só títulos a vencer são elegíveis. Os itens caem por CASCATA (títulos voltam a ficar

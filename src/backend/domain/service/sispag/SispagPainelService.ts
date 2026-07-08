@@ -11,6 +11,7 @@ import type {
     TituloAPagar,
 } from '../../interface/sispag/SispagInterface.js';
 import EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
+import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
@@ -47,6 +48,7 @@ export default class SispagPainelService {
         @inject(TituloAPagarRepository) private readonly tituloRepo: TituloAPagarRepository,
         @inject(PagamentoIngestaoRunRepository)
         private readonly runRepo: PagamentoIngestaoRunRepository,
+        @inject(LotePagamentoRepository) private readonly loteRepo: LotePagamentoRepository,
         @inject(EnvironmentProvider) private readonly env: EnvironmentProvider,
         @inject(LogService) private readonly logService: LogService,
     ) {}
@@ -60,10 +62,16 @@ export default class SispagPainelService {
         const now = Date.now();
 
         // TÍTULOS: vêm da carteira PERSISTIDA (ingestão), não mais ao vivo do Conexos.
-        const [titulosRaw, ultimaRun] = await Promise.all([
+        const [titulosRaw, ultimaRun, emRascunho] = await Promise.all([
             this.tituloRepo.listAtivos(),
             this.runRepo.findLatestSuccessFinishedAt(),
+            this.loteRepo.listTitulosEmRascunho(),
         ]);
+        // Marca os títulos já num lote RASCUNHO — o painel bloqueia a seleção (I3, anti-reatache).
+        const emLote = new Set(emRascunho.map((t) => `${t.filCod}:${t.docCod}:${t.titCod}`));
+        for (const t of titulosRaw) {
+            t.emLote = emLote.has(`${t.filCod}:${t.docCod}:${t.titCod}`);
+        }
 
         // Contexto AO VIVO (lotes nativos + borderôs): fan-out LIMITADO (2×N leituras),
         // tolerante a falha per-leitura.

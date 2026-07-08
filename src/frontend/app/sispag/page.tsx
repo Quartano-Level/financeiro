@@ -218,6 +218,7 @@ export default function SispagPage() {
     filtrarClasseLote(lotesRascunho, loteOrigemCand),
     (l) => l.filCod,
     buscaLote,
+    8,
   )
   const finFiltrados = filtrarClasseLote(lotesFinalizados, loteOrigemFin).filter((l) =>
     statusFin === 'aguardando'
@@ -226,12 +227,13 @@ export default function SispagPage() {
         ? l.status === 'RETORNADO'
         : true,
   )
-  const abaFinalizados = useTabelaFiltro(finFiltrados, (l) => l.filCod, buscaLote)
+  const abaFinalizados = useTabelaFiltro(finFiltrados, (l) => l.filCod, buscaLote, 8)
 
   const selTitulos = titulos.filter((t) => selecionados.has(keyOf(t)))
   const totalSelecionado = selTitulos.reduce((acc, t) => acc + t.valor, 0)
 
-  const toggle = (t: TituloAPagar) =>
+  const toggle = (t: TituloAPagar) => {
+    if (t.emLote) return
     setSelecionados((prev) => {
       const next = new Set(prev)
       const k = keyOf(t)
@@ -239,6 +241,7 @@ export default function SispagPage() {
       else next.add(k)
       return next
     })
+  }
 
   const criarLoteComSelecionados = async () => {
     if (selTitulos.length === 0) return
@@ -443,6 +446,10 @@ export default function SispagPage() {
                       {selecionados.size} sel. · {formatBRL(totalSelecionado)}
                     </span>
                   ) : null}
+                  <Button size="sm" variant="outline" onClick={formar} disabled={formando}>
+                    <Layers className="size-4" />{' '}
+                    {formando ? 'Formando…' : 'Formar lotes automáticos'}
+                  </Button>
                   <Button size="sm" disabled={selecionados.size === 0 || busy} onClick={criarLoteComSelecionados}>
                     <Layers className="size-4" /> Criar lote ({selecionados.size})
                   </Button>
@@ -480,11 +487,24 @@ export default function SispagPage() {
                             <Checkbox
                               checked={selecionados.has(keyOf(t))}
                               onCheckedChange={() => toggle(t)}
+                              disabled={t.emLote}
                               aria-label="selecionar título"
+                              title={t.emLote ? 'Já está num lote — não pode ser atachado a outro.' : undefined}
                             />
                           </TableCell>
                           <TableCell className="max-w-[18rem] truncate font-medium">
-                            {t.credor ?? <span className="text-muted-foreground">—</span>}
+                            <span className={t.emLote ? 'text-muted-foreground' : undefined}>
+                              {t.credor ?? '—'}
+                            </span>
+                            {t.emLote ? (
+                              <Badge
+                                variant="outline"
+                                className="ml-2 border-muted text-muted-foreground"
+                                title="Já está num lote RASCUNHO."
+                              >
+                                em lote
+                              </Badge>
+                            ) : null}
                           </TableCell>
                           <TableCell className="text-muted-foreground">
                             {t.docCod}/{t.titCod}
@@ -545,15 +565,9 @@ export default function SispagPage() {
 
             {/* ---- Lotes candidatos (RASCUNHO — falta finalizar) ---- */}
             <TabsContent value="lotes-candidatos" className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs text-muted-foreground">
-                  Lotes a finalizar (rascunho) — manual ou automático. Revise antes de aprovar.
-                </p>
-                <Button size="sm" variant="outline" onClick={formar} disabled={formando}>
-                  <Layers className="size-4" />{' '}
-                  {formando ? 'Formando…' : 'Formar lotes automáticos'}
-                </Button>
-              </div>
+              <p className="text-xs text-muted-foreground">
+                Lotes a finalizar (rascunho) — manual ou automático. Revise antes de aprovar.
+              </p>
               <FiltroBarra
                 aba={abaCandidatos}
                 buscaPlaceholder="Buscar por filial, quem criou ou credor…"
