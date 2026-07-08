@@ -170,7 +170,7 @@ router.delete(
 );
 
 // POST /sispag/lotes/:id/{finalizar|reabrir|cancelar} — transições (gate). admin.
-for (const acao of ['finalizar', 'reabrir', 'cancelar'] as const) {
+for (const acao of ['finalizar', 'reabrir', 'cancelar', 'retorno'] as const) {
     router.post(
         `/lotes/:id/${acao}`,
         requireRole('admin'),
@@ -196,7 +196,9 @@ for (const acao of ['finalizar', 'reabrir', 'cancelar'] as const) {
                         ? await service.finalizarLote(input)
                         : acao === 'reabrir'
                           ? await service.reabrirLote(input)
-                          : await service.cancelarLote(input);
+                          : acao === 'retorno'
+                            ? await service.marcarRetorno(input)
+                            : await service.cancelarLote(input);
                 res.json({ lote });
             } catch (err) {
                 if (!respondLoteError(req, res, err)) throw err;

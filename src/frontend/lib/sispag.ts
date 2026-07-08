@@ -129,7 +129,7 @@ export async function fetchSispagPainel(): Promise<SispagPainel> {
 // ============================================================ Fatia 2 — Lote candidato
 // Montagem local (sem escrita no ERP). Espelha backend/interface/sispag/SispagInterface.ts.
 
-export type LotePagamentoStatus = 'RASCUNHO' | 'FINALIZADO' | 'CANCELADO'
+export type LotePagamentoStatus = 'RASCUNHO' | 'FINALIZADO' | 'CANCELADO' | 'RETORNADO'
 
 export interface ItemLote {
   loteId: string
@@ -228,6 +228,13 @@ export const reabrirLote = (loteId: string, versao: number) =>
 
 export const cancelarLote = (loteId: string, versao: number) =>
   loteRequest(`/sispag/lotes/${loteId}/cancelar`, {
+    method: 'POST',
+    body: JSON.stringify({ versao }),
+  })
+
+/** FINALIZADO → RETORNADO ("de volta do Nexxera"). Hoje manual; futuro = robô-poller. */
+export const marcarRetorno = (loteId: string, versao: number) =>
+  loteRequest(`/sispag/lotes/${loteId}/retorno`, {
     method: 'POST',
     body: JSON.stringify({ versao }),
   })

@@ -1,5 +1,20 @@
 # Columbia Financeiro — Changelog
 
+## v0.16.0 (2026-07-08) — SISPAG: Ciclo pós-finalização (aba Finalizados + status RETORNADO) + paginação/filtros nos lotes
+
+- **feat(sispag):** o ciclo do lote ganha a fase pós-finalização. Novo status **RETORNADO**
+  ("de volta do Nexxera"): `RASCUNHO → FINALIZADO (aguardando retorno) → RETORNADO`.
+  - Ao **finalizar**, o lote **sai** de "Lotes candidatos" e vai para a nova aba **"Finalizados"**
+    (mostra "finalizado por X" + "aguardando retorno do Nexxera"). Quando o retorno chega, vira
+    **"de volta do Nexxera"** (RETORNADO). Migration `0027` (CHECK + status). Transição
+    `marcarRetorno` (FINALIZADO→RETORNADO) via `POST /sispag/lotes/:id/retorno` — hoje manual
+    (botão "Marcar retorno recebido"); o gatilho real é o robô-poller (Fatia 3).
+  - **Paginação + filtros** nas duas abas de lotes (candidatos e finalizados): filial, busca,
+    nacional × internacional, e status (aguardando / de volta) — mesmo kit de Permutas.
+  - Card de lote extraído em componente reutilizável (`LoteCard`).
+  - **Verificado:** 0 lotes duplicados (nenhum título em 2+ lotes RASCUNHO — anti-join OK).
+  - Ontologia (state-machine lote-pagamento + status RETORNADO).
+
 ## v0.15.0 (2026-07-08) — SISPAG: Formação automática de lotes (cron pós-ingestão)
 
 - **feat(sispag):** um cron novo (`job:formar-lotes`, roda logo após a ingestão) + endpoint

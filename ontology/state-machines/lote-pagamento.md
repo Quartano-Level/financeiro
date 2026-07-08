@@ -2,20 +2,23 @@
 name: lote-pagamento
 type: state-machine
 entity: LotePagamento
-ontology_version: "0.8"
+ontology_version: "0.9"
 implementation_status: planned
 status: draft
 owners: [yuri]
 related_files:
   - src/backend/migrations/0023_lote_pagamento.sql
   - src/backend/migrations/0026_lote_automatico.sql
+  - src/backend/migrations/0027_lote_retornado.sql
   - src/backend/domain/service/sispag/SispagPainelService.ts
   - src/backend/domain/service/sispag/FormacaoLotesService.ts
+  - src/backend/domain/service/sispag/LotePagamentoService.ts
   - src/backend/domain/repository/sispag/LotePagamentoRepository.ts
   - src/backend/jobs/formar-lotes.ts
   - src/backend/routes/sispag.ts
+  - src/frontend/app/sispag/page.tsx
 last_review: 2026-07-08
-states: [RASCUNHO, FINALIZADO, CANCELADO]
+states: [RASCUNHO, FINALIZADO, RETORNADO, CANCELADO]
 out_of_scope_states: [PROCESSANDO, ENVIADO, BAIXADO]
 ---
 
@@ -23,21 +26,25 @@ out_of_scope_states: [PROCESSANDO, ENVIADO, BAIXADO]
 
 > **Vigência:** 2026-07-07 (v0.5.0, ADR-0015); atualizada 2026-07-08 (v0.8.0, ADR-0018 — formação
 > automática: L1 também disparada pelo cron `formarLotesAutomaticos`; nova transição L6 desfazer-vencidos
-> dos auto-lotes RASCUNHO). Modela o estado do **lote candidato** que a analista
+> dos auto-lotes RASCUNHO); atualizada 2026-07-08 (v0.9.0, ADR-0019 — novo status **RETORNADO** ("de
+> volta do Nexxera") + transição **L7 `marcarRetorno`** `FINALIZADO → RETORNADO`, manual hoje / robô-poller
+> na Fatia 3). Modela o estado do **lote candidato** que a analista
 > monta e finaliza (Escopo II, Fatia 1+2). É estado **local/persistido** (`lote_pagamento.status`),
-> não do ERP. O `FINALIZADO` é o **gatilho conceitual** ("pronto para processar"); o processamento
-> real (remessa/pasta/Nexxera/baixa) e seus estados (`PROCESSANDO`/`ENVIADO`/`BAIXADO`) são a
-> **próxima feature** — fora de escopo aqui (ver ADR-0015).
+> não do ERP. O `FINALIZADO` deixou de ser só "pronto para processar": agora significa **"finalizado
+> pelo analista, aguardando o retorno do Nexxera"**; o `RETORNADO` marca o **retorno recebido** e é
+> **terminal por ora** (a baixa/conciliação — `fin052`→`fin010` — é a **próxima fatia**, Fatia 3). Os
+> demais estados de processamento (`PROCESSANDO`/`ENVIADO`/`BAIXADO`) seguem fora de escopo (ver ADR-0015).
 
 ## Estados (constantes tipadas)
 
 | Constante (TS) | Valor | Significado |
 |----------------|-------|-------------|
 | `RASCUNHO` | `RASCUNHO` | Lote em montagem — a analista inclui/remove títulos. Aberto para edição. Estado inicial. |
-| `FINALIZADO` | `FINALIZADO` | A analista finalizou o lote (gate). "Pronto para processar". Registra `finalizadoPor`/`finalizadoEm`. **Reversível** por `reabrirLote` enquanto não houver downstream (não há nesta fatia). |
+| `FINALIZADO` | `FINALIZADO` | A analista finalizou o lote (gate) — **"finalizado pelo analista, aguardando o retorno do Nexxera"**. Registra `finalizadoPor`/`finalizadoEm`. **Reversível** por `reabrirLote` (L4) enquanto o retorno não chegou (não há downstream que trave a reabertura nesta fatia). |
+| `RETORNADO` | `RETORNADO` | **Retorno recebido** ("de volta do Nexxera"). Alcançado por `marcarRetorno` (L7) a partir de `FINALIZADO`. **Terminal por ora** — a baixa/conciliação (`fin052`→`fin010`) é a Fatia 3. |
 | `CANCELADO` | `CANCELADO` | Lote descartado. **Terminal.** Libera os títulos (deixam de ocupar a chave UNIQUE de I3). |
 
-Tipo: `LotePagamentoStatus = 'RASCUNHO' | 'FINALIZADO' | 'CANCELADO'`
+Tipo: `LotePagamentoStatus = 'RASCUNHO' | 'FINALIZADO' | 'RETORNADO' | 'CANCELADO'`
 (constantes tipadas — nunca strings cruas; Inviolable Rule análoga à P3 da ontologia).
 
 > **Estados fora de escopo (próxima fatia):** `PROCESSANDO`/`ENVIADO`/`BAIXADO` modelariam o
@@ -57,16 +64,17 @@ grava ator + timestamp (auditoria, I5) e incrementa `versao` (concorrência, I6)
 | L4 | `FINALIZADO → RASCUNHO` | `reabrirLote` | Reversão do gate — permitida **enquanto não houver etapa downstream** (não há nesta fatia; I5). Volta a permitir edição. | 2026-07-07 |
 | L5 | `{RASCUNHO, FINALIZADO} → CANCELADO` | `cancelarLote` | Descarta o lote candidato (decisão da analista). Libera os títulos (saem da UNIQUE de I3). **Terminal.** | 2026-07-07 |
 | L6 | `RASCUNHO → (deletado)` | `formarLotesAutomaticos` (desfazer-vencidos) | **Só lote `automatico=true` em RASCUNHO.** A cada rodada do cron, um auto-lote RASCUNHO que passou a conter **≥1 título VENCIDO** é **DESFEITO (deletado)** e seus títulos **liberados** (`desfazerAutomaticosVencidos`) — só a-vencer é elegível ao lote automático. **Distinto de `CANCELADO`** (que é escolha da analista e é um *estado* terminal): aqui a linha do lote some (é re-formável na mesma rodada). **Nunca** atinge lote **manual** (`automatico=false`) nem **FINALIZADO/CANCELADO**. Ver ADR-0018. | 2026-07-08 |
+| L7 | `FINALIZADO → RETORNADO` | `marcarRetorno` | Marca o **retorno do Nexxera recebido** para um lote `FINALIZADO`. **Hoje é acionada MANUALMENTE** pela analista (botão "Marcar retorno recebido") — **simula** o retorno; o gatilho real será o **robô-poller** que lê o arquivo de retorno (`fin052`) na **Fatia 3**. Optimistic-lock (`versao`) + auditoria (ator + timestamp), como as demais transições (I6/I5). `RETORNADO` é **terminal por ora** (a baixa `fin010` é a Fatia 3). Ver `LotePagamentoService.marcarRetorno` (via `transicionar`, de:`[FINALIZADO]` para:`RETORNADO`), migration `0027_lote_retornado.sql` (recria o CHECK de status incluindo RETORNADO), `POST /sispag/lotes/:id/retorno`. | 2026-07-08 |
 
 ```
         criarLoteCandidato (L1)
               │
               ▼
-        ┌───────────┐  finalizarLote (L3)   ┌────────────┐
-        │  RASCUNHO │ ────────────────────▶ │ FINALIZADO │
-        │  (L2:     │ ◀──────────────────── │            │
-        │  incluir/ │    reabrirLote (L4)   └────────────┘
-        │  remover) │                              │
+        ┌───────────┐  finalizarLote (L3)   ┌────────────────────┐  marcarRetorno (L7)   ┌───────────┐
+        │  RASCUNHO │ ────────────────────▶ │     FINALIZADO     │ ────────────────────▶ │ RETORNADO │
+        │  (L2:     │ ◀──────────────────── │ (aguardando retorno│   (manual hoje /      │ (terminal │
+        │  incluir/ │    reabrirLote (L4)   │    do Nexxera)     │   robô-poller Fatia 3)│  por ora) │
+        │  remover) │                       └────────────────────┘                       └───────────┘
         └───────────┘                              │
               │  cancelarLote (L5)                 │  cancelarLote (L5)
               ▼                                     ▼
@@ -74,6 +82,12 @@ grava ator + timestamp (auditoria, I5) e incrementa `versao` (concorrência, I6)
                         │ CANCELADO │  (terminal)
                         └───────────┘
 ```
+
+> **L7 hoje é uma simulação manual.** `marcarRetorno` existe para fechar o ciclo do lote de ponta a
+> ponta (montar → finalizar → retorno) já nesta fatia, mas o **gatilho real** é o robô-poller do arquivo
+> de retorno (`fin052`) da **Fatia 3**. A **baixa/conciliação** (`fin010`) que consome o `RETORNADO`
+> também é Fatia 3 — por isso `RETORNADO` é **terminal por ora** (não é fim-de-linha do domínio, é o
+> ponto de sutura da próxima fatia).
 
 ## Auto-lotes: criados e desfeitos pelo cron (ADR-0018)
 

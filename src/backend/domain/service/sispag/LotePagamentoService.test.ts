@@ -259,6 +259,21 @@ describe('LotePagamentoService — invariantes', () => {
         });
     });
 
+    describe('marcarRetorno', () => {
+        it('chama transição FINALIZADO→RETORNADO (de volta do Nexxera)', async () => {
+            const repo = buildRepo();
+            const { service } = make(repo);
+            await service.marcarRetorno({ loteId: 'L1', versao: 2, ator: 'u1' });
+            expect(repo.transicionarStatus).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    para: 'RETORNADO',
+                    de: ['FINALIZADO'],
+                    versaoEsperada: 2,
+                }),
+            );
+        });
+    });
+
     describe('reabrir / cancelar', () => {
         it('reabrir chama transição FINALIZADO→RASCUNHO', async () => {
             const repo = buildRepo();

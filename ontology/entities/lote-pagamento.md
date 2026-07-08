@@ -1,7 +1,7 @@
 ---
 name: LotePagamento
 type: entity
-ontology_version: "0.8"
+ontology_version: "0.9"
 implementation_status: planned
 status: draft
 owners: [yuri]
@@ -9,6 +9,7 @@ related_files:
   - src/backend/migrations/0023_lote_pagamento.sql
   - src/backend/migrations/0025_titulo_internacional.sql
   - src/backend/migrations/0026_lote_automatico.sql
+  - src/backend/migrations/0027_lote_retornado.sql
   - src/backend/domain/service/sispag/SispagPainelService.ts
   - src/backend/domain/service/sispag/LotePagamentoService.ts
   - src/backend/domain/service/sispag/FormacaoLotesService.ts
@@ -96,7 +97,7 @@ fora de um lote.
 | `internacional` | boolean | derivado do 1º item (`lote_pagamento_item.internacional`) | **Classe do lote** (I7) — `false` = nacional (boleto/PIX), `true` = internacional (câmbio/exterior). Fixada pelo 1º item incluído; todos os itens compartilham a classe. Não é coluna própria do lote nesta fatia (é a classe uniforme dos itens); ver I7. |
 | `banco` | string? | `lote_pagamento.banco` | **Metadado opcional** — agrupamento é por filial nesta fatia; banco/conta é informativo (ADR-0015). |
 | `conta` | string? | `lote_pagamento.conta` | Metadado opcional (idem `banco`). |
-| `status` | enum | `lote_pagamento.status` | `RASCUNHO \| FINALIZADO \| CANCELADO` — constantes tipadas. Ver `state-machines/lote-pagamento.md`. |
+| `status` | enum | `lote_pagamento.status` | `RASCUNHO \| FINALIZADO \| RETORNADO \| CANCELADO` — constantes tipadas. `RETORNADO` (ADR-0019, migration 0027) = retorno do Nexxera recebido; `FINALIZADO` passou a significar **"aguardando o retorno do Nexxera"**. Ver `state-machines/lote-pagamento.md`. |
 | `automatico` | boolean | `lote_pagamento.automatico` (migration 0026) | **Procedência do lote** — `true` = formado pelo cron `formarLotesAutomaticos`; `false` = montado à mão pela analista (`gerenciarLoteCandidato`). Dirige o **badge "automático"** na UI e, sobretudo, o **escopo do cron**: a formação só cria/desfaz lotes **automáticos RASCUNHO** — lotes manuais e finalizados são **intocáveis** (ADR-0018). Ver `actions/sispag/formar-lotes-automaticos.md`. |
 | `criadoPor` | string | `lote_pagamento.criado_por` | Auditoria: quem abriu o lote (`'cron'` nos automáticos, username nos manuais). |
 | `finalizadoPor` | string? | `lote_pagamento.finalizado_por` | Auditoria: quem finalizou (gate). `null` enquanto RASCUNHO. |
@@ -151,8 +152,20 @@ Um `LotePagamento` agrega **N** `ItemLote` (1 filial, I4; 1 classe nacional/inte
 **no máximo 1** lote `RASCUNHO` (I3), mas pode reaparecer num novo lote se o anterior for
 `CANCELADO` ou (na próxima fatia) processado.
 
+## Retorno do Nexxera (`RETORNADO`, ADR-0019)
+
+O ciclo de vida ganhou o status **`RETORNADO`** ("de volta do Nexxera"), alcançado por `marcarRetorno`
+(transição L7, `FINALIZADO → RETORNADO`; ver `state-machines/lote-pagamento.md`). Com isso o `FINALIZADO`
+passa a significar **"finalizado pelo analista, aguardando o retorno do Nexxera"** — não mais só "pronto
+para processar". **Hoje `marcarRetorno` é acionada MANUALMENTE** (botão "Marcar retorno recebido"),
+**simulando** o retorno; o gatilho real será o **robô-poller** do arquivo de retorno (`fin052`) da Fatia 3.
+`RETORNADO` é **terminal por ora** — a baixa/conciliação (`fin010`) que o consome é a Fatia 3. Migration
+`0027_lote_retornado.sql` recria o CHECK de `status` incluindo `RETORNADO`; `POST /sispag/lotes/:id/retorno`
+→ `LotePagamentoService.marcarRetorno` (optimistic-lock por `versao`, I6). READ-only no ERP mantido (I1).
+
 ## Fora de escopo (Fatia 1+2)
 
-- Nenhuma escrita no ERP: gerar remessa (`fin015`), pasta de rede, VAN Nexxera, retorno (`fin052`),
-  baixa (`fin010`) e o **scheduler** de cadência diária são a **próxima feature** (ADR-0015). O
-  `FINALIZADO` aqui é o **gatilho conceitual**, sem downstream.
+- Nenhuma escrita no ERP: gerar remessa (`fin015`), pasta de rede, VAN Nexxera, leitura real do retorno
+  (`fin052`, hoje simulada por `marcarRetorno`), baixa (`fin010`) e o **scheduler** de cadência diária
+  são a **próxima feature** (ADR-0015). O `FINALIZADO`/`RETORNADO` aqui são **gatilhos conceituais**, sem
+  downstream real no ERP.

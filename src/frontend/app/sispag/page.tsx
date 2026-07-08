@@ -49,8 +49,18 @@ import {
 } from '@/lib/sispag'
 import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/components/tabela-filtro'
 import { IngestaoDialog } from './components/IngestaoDialog'
+import { LoteCard } from './components/LoteCard'
 
 const keyOf = (t: TituloAPagar) => `${t.filCod}:${t.docCod}:${t.titCod}`
+
+type Origem = 'todos' | 'nacional' | 'internacional'
+/** Filtra lotes por classe (um lote é internacional se tiver ≥1 item internacional — I7). */
+const filtrarClasseLote = (arr: LotePagamento[], origem: Origem): LotePagamento[] =>
+  origem === 'nacional'
+    ? arr.filter((l) => !l.itens.some((i) => i.internacional))
+    : origem === 'internacional'
+      ? arr.filter((l) => l.itens.some((i) => i.internacional))
+      : arr
 
 const fmtData = (ms?: number) =>
   ms === undefined ? '—' : new Date(ms).toLocaleDateString('pt-BR', { timeZone: 'UTC' })
@@ -72,25 +82,6 @@ function VencimentoBadge({ dias }: { dias?: number }) {
   return <Badge variant="outline">em {dias}d</Badge>
 }
 
-function StatusLoteBadge({ status }: { status: LotePagamento['status'] }) {
-  if (status === 'FINALIZADO')
-    return (
-      <Badge variant="outline" className="border-success/40 text-success">
-        finalizado
-      </Badge>
-    )
-  if (status === 'CANCELADO')
-    return (
-      <Badge variant="outline" className="text-muted-foreground">
-        cancelado
-      </Badge>
-    )
-  return (
-    <Badge variant="outline" className="border-info/40 text-info">
-      rascunho
-    </Badge>
-  )
-}
 
 export default function SispagPage() {
   const [painel, setPainel] = React.useState<SispagPainel | null>(null)
@@ -212,6 +203,30 @@ export default function SispagPage() {
     (b) => b.filCod,
     (b) => `${b.descricao ?? ''} ${b.borCod}`,
   )
+
+  // Lotes: candidatos (RASCUNHO) vs. finalizados (FINALIZADO/RETORNADO), com filtros + paginação.
+  const lotesRascunho = lotes.filter((l) => l.status === 'RASCUNHO')
+  const lotesFinalizados = lotes.filter(
+    (l) => l.status === 'FINALIZADO' || l.status === 'RETORNADO',
+  )
+  const [loteOrigemCand, setLoteOrigemCand] = React.useState<Origem>('todos')
+  const [loteOrigemFin, setLoteOrigemFin] = React.useState<Origem>('todos')
+  const [statusFin, setStatusFin] = React.useState<'todos' | 'aguardando' | 'retornado'>('todos')
+  const buscaLote = (l: LotePagamento) =>
+    `${l.filCod} ${l.criadoPor} ${l.itens.map((i) => i.credor ?? '').join(' ')}`
+  const abaCandidatos = useTabelaFiltro(
+    filtrarClasseLote(lotesRascunho, loteOrigemCand),
+    (l) => l.filCod,
+    buscaLote,
+  )
+  const finFiltrados = filtrarClasseLote(lotesFinalizados, loteOrigemFin).filter((l) =>
+    statusFin === 'aguardando'
+      ? l.status === 'FINALIZADO'
+      : statusFin === 'retornado'
+        ? l.status === 'RETORNADO'
+        : true,
+  )
+  const abaFinalizados = useTabelaFiltro(finFiltrados, (l) => l.filCod, buscaLote)
 
   const selTitulos = titulos.filter((t) => selecionados.has(keyOf(t)))
   const totalSelecionado = selTitulos.reduce((acc, t) => acc + t.valor, 0)
@@ -383,7 +398,10 @@ export default function SispagPage() {
             <TabsList>
               <TabsTrigger value="titulos">Títulos a pagar</TabsTrigger>
               <TabsTrigger value="lotes-candidatos">
-                Lotes candidatos ({lotes.filter((l) => l.status !== 'CANCELADO').length})
+                Lotes candidatos ({lotesRascunho.length})
+              </TabsTrigger>
+              <TabsTrigger value="lotes-finalizados">
+                Finalizados ({lotesFinalizados.length})
               </TabsTrigger>
               <TabsTrigger value="lotes">Lotes SISPAG (nativo)</TabsTrigger>
               <TabsTrigger value="borderos">Borderôs</TabsTrigger>
@@ -525,18 +543,34 @@ export default function SispagPage() {
               </p>
             </TabsContent>
 
-            {/* ---- Lotes candidatos (nossos) ---- */}
+            {/* ---- Lotes candidatos (RASCUNHO — falta finalizar) ---- */}
             <TabsContent value="lotes-candidatos" className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
-                  Lotes montados (manual ou automático) para revisar e aprovar.
+                  Lotes a finalizar (rascunho) — manual ou automático. Revise antes de aprovar.
                 </p>
                 <Button size="sm" variant="outline" onClick={formar} disabled={formando}>
                   <Layers className="size-4" />{' '}
                   {formando ? 'Formando…' : 'Formar lotes automáticos'}
                 </Button>
               </div>
-              {lotes.filter((l) => l.status !== 'CANCELADO').length === 0 ? (
+              <FiltroBarra
+                aba={abaCandidatos}
+                buscaPlaceholder="Buscar por filial, quem criou ou credor…"
+              />
+              <div className="flex gap-1">
+                {(['todos', 'nacional', 'internacional'] as const).map((o) => (
+                  <Button
+                    key={o}
+                    size="sm"
+                    variant={loteOrigemCand === o ? 'default' : 'outline'}
+                    onClick={() => setLoteOrigemCand(o)}
+                  >
+                    {o === 'todos' ? 'Todas' : o === 'nacional' ? 'Nacionais' : 'Internacionais'}
+                  </Button>
+                ))}
+              </div>
+              {abaCandidatos.total === 0 ? (
                 <EmptyState
                   icon={<Layers className="size-6" />}
                   title="Nenhum lote candidato"
@@ -544,143 +578,69 @@ export default function SispagPage() {
                 />
               ) : (
                 <div className="space-y-3">
-                  {lotes
-                    .filter((l) => l.status !== 'CANCELADO')
-                    .map((l) => {
-                      const total = l.itens.reduce((acc, i) => acc + (i.valor ?? 0), 0)
-                      return (
-                        <Card key={l.id}>
-                          <CardHeader className="flex flex-row items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <StatusLoteBadge status={l.status} />
-                              {l.automatico ? (
-                                <Badge
-                                  variant="outline"
-                                  className="border-info/40 text-info"
-                                  title="Formado automaticamente pelo cron — revise (remova/adicione) antes de aprovar."
-                                >
-                                  automático
-                                </Badge>
-                              ) : null}
-                              {l.itens.some((i) => i.internacional) ? (
-                                <Badge variant="outline" className="border-info/40 text-info">
-                                  internacional
-                                </Badge>
-                              ) : null}
-                              <CardTitle className="text-sm">
-                                Filial {l.filCod} · {l.itens.length} título(s) · {formatBRL(total)}
-                              </CardTitle>
-                            </div>
-                            <div className="flex flex-wrap gap-1">
-                              {l.status === 'RASCUNHO' ? (
-                                <Button
-                                  size="sm"
-                                  disabled={busy || l.itens.length === 0}
-                                  onClick={() =>
-                                    acaoLote(() => finalizarLote(l.id, l.versao), 'Lote finalizado')
-                                  }
-                                >
-                                  <CheckCircle2 className="size-4" /> Finalizar
-                                </Button>
-                              ) : (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={busy}
-                                  onClick={() =>
-                                    acaoLote(() => reabrirLote(l.id, l.versao), 'Lote reaberto')
-                                  }
-                                >
-                                  Reabrir
-                                </Button>
-                              )}
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={busy}
-                                onClick={() =>
-                                  acaoLote(() => cancelarLote(l.id, l.versao), 'Lote cancelado')
-                                }
-                              >
-                                Cancelar
-                              </Button>
-                            </div>
-                          </CardHeader>
-                          <CardContent>
-                            {l.itens.length === 0 ? (
-                              <p className="text-xs text-muted-foreground">Lote vazio.</p>
-                            ) : (
-                              <div className="overflow-x-auto rounded-lg border">
-                                <Table>
-                                  <TableHeader>
-                                    <TableRow>
-                                      <TableHead>Credor</TableHead>
-                                      <TableHead>Documento</TableHead>
-                                      <TableHead className="text-right">Valor</TableHead>
-                                      <TableHead>Vencimento</TableHead>
-                                      {l.status === 'RASCUNHO' ? <TableHead className="w-10" /> : null}
-                                    </TableRow>
-                                  </TableHeader>
-                                  <TableBody>
-                                    {l.itens.map((i) => (
-                                      <TableRow key={`${i.docCod}:${i.titCod}`}>
-                                        <TableCell className="max-w-[16rem] truncate">
-                                          {i.credor ?? '—'}
-                                        </TableCell>
-                                        <TableCell className="text-muted-foreground">
-                                          {i.docCod}/{i.titCod}
-                                        </TableCell>
-                                        <TableCell className="text-right tabular-nums">
-                                          {i.valor != null ? formatBRL(i.valor) : '—'}
-                                        </TableCell>
-                                        <TableCell className="text-xs text-muted-foreground">
-                                          {fmtData(i.vencimento)}
-                                        </TableCell>
-                                        {l.status === 'RASCUNHO' ? (
-                                          <TableCell>
-                                            <Button
-                                              size="icon"
-                                              variant="ghost"
-                                              disabled={busy}
-                                              aria-label="remover título"
-                                              onClick={() =>
-                                                acaoLote(
-                                                  () =>
-                                                    removerItem(l.id, {
-                                                      filCod: i.filCod,
-                                                      docCod: i.docCod,
-                                                      titCod: i.titCod,
-                                                    }),
-                                                  'Título removido',
-                                                )
-                                              }
-                                            >
-                                              <Trash2 className="size-4" />
-                                            </Button>
-                                          </TableCell>
-                                        ) : null}
-                                      </TableRow>
-                                    ))}
-                                  </TableBody>
-                                </Table>
-                              </div>
-                            )}
-                            {l.finalizadoPor ? (
-                              <p className="mt-2 text-xs text-muted-foreground">
-                                Finalizado por {l.finalizadoPor}
-                                {l.finalizadoEm
-                                  ? ` em ${new Date(l.finalizadoEm).toLocaleString('pt-BR')}`
-                                  : ''}
-                                .
-                              </p>
-                            ) : null}
-                          </CardContent>
-                        </Card>
-                      )
-                    })}
+                  {abaCandidatos.slice.map((l) => (
+                    <LoteCard key={l.id} lote={l} busy={busy} acao={acaoLote} />
+                  ))}
                 </div>
               )}
+              <Paginacao aba={abaCandidatos} />
             </TabsContent>
+
+            {/* ---- Lotes finalizados (aguardando retorno / de volta do Nexxera) ---- */}
+            <TabsContent value="lotes-finalizados" className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Lotes finalizados — aguardando o retorno do Nexxera, ou já de volta.
+              </p>
+              <FiltroBarra
+                aba={abaFinalizados}
+                buscaPlaceholder="Buscar por filial, quem finalizou ou credor…"
+              />
+              <div className="flex flex-wrap gap-x-3 gap-y-2">
+                <div className="flex gap-1">
+                  {(['todos', 'nacional', 'internacional'] as const).map((o) => (
+                    <Button
+                      key={o}
+                      size="sm"
+                      variant={loteOrigemFin === o ? 'default' : 'outline'}
+                      onClick={() => setLoteOrigemFin(o)}
+                    >
+                      {o === 'todos' ? 'Todas' : o === 'nacional' ? 'Nacionais' : 'Internacionais'}
+                    </Button>
+                  ))}
+                </div>
+                <div className="flex gap-1">
+                  {(['todos', 'aguardando', 'retornado'] as const).map((s) => (
+                    <Button
+                      key={s}
+                      size="sm"
+                      variant={statusFin === s ? 'default' : 'outline'}
+                      onClick={() => setStatusFin(s)}
+                    >
+                      {s === 'todos'
+                        ? 'Todos'
+                        : s === 'aguardando'
+                          ? 'Aguardando retorno'
+                          : 'De volta do Nexxera'}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              {abaFinalizados.total === 0 ? (
+                <EmptyState
+                  icon={<Layers className="size-6" />}
+                  title="Nenhum lote finalizado"
+                  description="Finalize um lote candidato para ele aparecer aqui, aguardando o retorno do Nexxera."
+                />
+              ) : (
+                <div className="space-y-3">
+                  {abaFinalizados.slice.map((l) => (
+                    <LoteCard key={l.id} lote={l} busy={busy} acao={acaoLote} />
+                  ))}
+                </div>
+              )}
+              <Paginacao aba={abaFinalizados} />
+            </TabsContent>
+
 
             {/* ---- Lotes SISPAG nativos ---- */}
             <TabsContent value="lotes" className="space-y-3">

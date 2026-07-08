@@ -133,6 +133,8 @@ export const LOTE_STATUS = {
     RASCUNHO: 'RASCUNHO',
     FINALIZADO: 'FINALIZADO',
     CANCELADO: 'CANCELADO',
+    /** Retorno do Nexxera recebido ("de volta do Nexxera"). */
+    RETORNADO: 'RETORNADO',
 } as const;
 
 export type LotePagamentoStatus = (typeof LOTE_STATUS)[keyof typeof LOTE_STATUS];
