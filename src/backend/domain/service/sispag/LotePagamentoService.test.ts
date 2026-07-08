@@ -56,6 +56,7 @@ interface RepoMock {
     contarItens: jest.Mock;
     tocarLote: jest.Mock;
     transicionarStatus: jest.Mock;
+    marcarManual: jest.Mock;
 }
 
 const buildRepo = (): RepoMock => ({
@@ -68,6 +69,7 @@ const buildRepo = (): RepoMock => ({
     contarItens: jest.fn().mockResolvedValue(1),
     tocarLote: jest.fn().mockResolvedValue(undefined),
     transicionarStatus: jest.fn().mockResolvedValue(1),
+    marcarManual: jest.fn().mockResolvedValue(undefined),
 });
 
 const make = (repo: RepoMock, conexosTitulo: TituloAPagar | null = titulo()) => {
@@ -203,6 +205,22 @@ describe('LotePagamentoService — invariantes', () => {
                 expect.anything(),
             );
             expect(repo.tocarLote).toHaveBeenCalled();
+        });
+
+        it('incluir num lote AUTOMÁTICO o adota (vira manual)', async () => {
+            const repo = buildRepo();
+            repo.getLoteComItens.mockResolvedValue(lote({ automatico: true }));
+            const { service } = make(repo, titulo({ docCod: '200' }));
+            await service.incluirTitulo({ ...input, docCod: '200' });
+            expect(repo.marcarManual).toHaveBeenCalledWith('L1', expect.anything());
+        });
+
+        it('incluir num lote MANUAL não chama marcarManual', async () => {
+            const repo = buildRepo();
+            repo.getLoteComItens.mockResolvedValue(lote({ automatico: false }));
+            const { service } = make(repo, titulo({ docCod: '200' }));
+            await service.incluirTitulo({ ...input, docCod: '200' });
+            expect(repo.marcarManual).not.toHaveBeenCalled();
         });
 
         it('idempotente — título já no lote não re-inclui', async () => {
@@ -341,6 +359,20 @@ describe('LotePagamentoService — invariantes', () => {
             });
             expect(repo.removerItem).toHaveBeenCalled();
             expect(repo.tocarLote).toHaveBeenCalled();
+        });
+
+        it('remover de um lote AUTOMÁTICO o adota (vira manual)', async () => {
+            const repo = buildRepo();
+            repo.getLoteComItens.mockResolvedValue(lote({ automatico: true }));
+            const { service } = make(repo);
+            await service.removerTitulo({
+                loteId: 'L1',
+                filCod: 2,
+                docCod: '100',
+                titCod: '1',
+                ator: 'u1',
+            });
+            expect(repo.marcarManual).toHaveBeenCalledWith('L1', expect.anything());
         });
 
         it('removerTitulo rejeita em lote não-RASCUNHO', async () => {

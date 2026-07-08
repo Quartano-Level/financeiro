@@ -1,5 +1,13 @@
 # Columbia Financeiro — Changelog
 
+## v0.16.3 (2026-07-08) — SISPAG: Lote automático "adotado" ao ser editado
+
+- **fix(sispag):** quando o analista **mexe num lote automático** (adiciona **ou** remove título),
+  o lote **vira manual** (`automatico=false`) e o **cron para de gerenciá-lo**. Evita o efeito
+  colateral de o cron **desfazer** um lote automático (regra desfaz-vencidos) depois que o analista
+  o curou — ex.: ao adicionar um título vencido. `LotePagamentoService.incluirTitulo`/`removerTitulo`
+  chamam `marcarManual` quando o lote era automático.
+
 ## v0.16.2 (2026-07-08) — SISPAG: Incrementar lote (adicionar títulos)
 
 - **feat(sispag):** o analista agora pode **adicionar títulos** a um lote RASCUNHO (não só

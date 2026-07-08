@@ -147,6 +147,8 @@ export default class LotePagamentoService {
                         },
                         tx,
                     );
+                    // O analista mexeu num lote automático → vira manual (cron para de gerenciar).
+                    if (lote.automatico) await this.repo.marcarManual(input.loteId, tx);
                     await this.repo.tocarLote(input.loteId, tx);
                 }),
             async () => {
@@ -180,6 +182,8 @@ export default class LotePagamentoService {
                 },
                 tx,
             );
+            // O analista mexeu num lote automático → vira manual (cron para de gerenciar).
+            if (lote.automatico) await this.repo.marcarManual(input.loteId, tx);
             await this.repo.tocarLote(input.loteId, tx);
         });
         await this.audit('removerTitulo', input.loteId, input.ator, {

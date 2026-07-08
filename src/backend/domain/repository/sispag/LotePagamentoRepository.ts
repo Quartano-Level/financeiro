@@ -112,6 +112,18 @@ export default class LotePagamentoRepository {
         return lote;
     };
 
+    /**
+     * Marca o lote como MANUAL (`automatico=FALSE`) — quando o analista mexe num lote
+     * automático (add/remove título), ele "adota" o lote e o cron para de gerenciá-lo
+     * (não desfaz nem re-forma). No-op se já for manual.
+     */
+    public marcarManual = async (loteId: string, tx?: TransactionClient): Promise<void> => {
+        await this.db(tx).update(
+            `UPDATE lote_pagamento SET automatico = FALSE, atualizado_em = now() WHERE id = $loteId`,
+            { loteId },
+        );
+    };
+
     /** Chaves (fil,doc,tit) de todos os títulos já num lote RASCUNHO — para o painel bloquear a seleção (I3). */
     public listTitulosEmRascunho = async (
         tx?: TransactionClient,
