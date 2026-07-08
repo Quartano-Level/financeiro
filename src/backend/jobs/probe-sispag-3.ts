@@ -75,7 +75,10 @@ async function main(): Promise<void> {
         const flp = Number(lote.flpCod);
         const tag = `flp${flp}-bnc${bnc}`;
         // 2) itens do lote
-        const itens = await listRO(`s2-itens-${tag}`, `fin015/finItemSispag/list/${FIL}/${bnc}/${flp}`);
+        const itens = await listRO(
+            `s2-itens-${tag}`,
+            `fin015/finItemSispag/list/${FIL}/${bnc}/${flp}`,
+        );
         for (const it of itens) {
             const its = Number(it.itsCodSeq ?? it.itsCod);
             if (!Number.isFinite(its)) continue;

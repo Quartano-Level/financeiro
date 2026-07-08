@@ -2,22 +2,28 @@
 name: lote-pagamento
 type: state-machine
 entity: LotePagamento
-ontology_version: "0.5"
+ontology_version: "0.8"
 implementation_status: planned
 status: draft
 owners: [yuri]
 related_files:
   - src/backend/migrations/0023_lote_pagamento.sql
+  - src/backend/migrations/0026_lote_automatico.sql
   - src/backend/domain/service/sispag/SispagPainelService.ts
+  - src/backend/domain/service/sispag/FormacaoLotesService.ts
+  - src/backend/domain/repository/sispag/LotePagamentoRepository.ts
+  - src/backend/jobs/formar-lotes.ts
   - src/backend/routes/sispag.ts
-last_review: 2026-07-07
+last_review: 2026-07-08
 states: [RASCUNHO, FINALIZADO, CANCELADO]
 out_of_scope_states: [PROCESSANDO, ENVIADO, BAIXADO]
 ---
 
 # Ciclo de vida — `LotePagamento` (lote candidato SISPAG)
 
-> **Vigência:** 2026-07-07 (v0.5.0, ADR-0015). Modela o estado do **lote candidato** que a analista
+> **Vigência:** 2026-07-07 (v0.5.0, ADR-0015); atualizada 2026-07-08 (v0.8.0, ADR-0018 — formação
+> automática: L1 também disparada pelo cron `formarLotesAutomaticos`; nova transição L6 desfazer-vencidos
+> dos auto-lotes RASCUNHO). Modela o estado do **lote candidato** que a analista
 > monta e finaliza (Escopo II, Fatia 1+2). É estado **local/persistido** (`lote_pagamento.status`),
 > não do ERP. O `FINALIZADO` é o **gatilho conceitual** ("pronto para processar"); o processamento
 > real (remessa/pasta/Nexxera/baixa) e seus estados (`PROCESSANDO`/`ENVIADO`/`BAIXADO`) são a
@@ -45,11 +51,12 @@ grava ator + timestamp (auditoria, I5) e incrementa `versao` (concorrência, I6)
 
 | # | De → Para | Ação (gatilho) | Regra | Vigência |
 |---|-----------|----------------|-------|----------|
-| L1 | `(novo) → RASCUNHO` | `criarLoteCandidato` | Abre um lote vazio para **uma** filial (`filCod`); banco/conta opcionais (metadado). Ver `actions/sispag/gerenciar-lote-candidato.md`. | 2026-07-07 |
+| L1 | `(novo) → RASCUNHO` | `criarLoteCandidato` (manual) / `formarLotesAutomaticos` (cron) | Abre um lote **RASCUNHO** para **uma** filial (`filCod`); banco/conta opcionais (metadado). Manual: analista abre vazio (`automatico=false`). Cron: `formarLotesAutomaticos` cria já preenchido (`automatico=true`) agrupando títulos a-vencer ≤7d por filial×classe×banco (I4/I7), para revisão. Ver `actions/sispag/gerenciar-lote-candidato.md` e `actions/sispag/formar-lotes-automaticos.md`. | 2026-07-08 |
 | L2 | `RASCUNHO → RASCUNHO` | `incluirTituloNoLote` / `removerTituloDoLote` | Item só entra se **aprovado + não pago** (I2, `elegibilidade-titulo-lote`), da **mesma filial** (I4, `lote-uma-filial`) e **não em outro RASCUNHO** (I3, `nao-duplicacao-titulo-lote`). Auto-transição (edição do agregado). | 2026-07-07 |
 | L3 | `RASCUNHO → FINALIZADO` | `finalizarLote` **(GATE)** | O lote tem ≥1 item; todos os itens ainda elegíveis. Registra `finalizadoPor`/`finalizadoEm`. **Sem downstream nesta fatia** — é o gatilho conceitual. Ver `actions/sispag/finalizar-lote.md`. | 2026-07-07 |
 | L4 | `FINALIZADO → RASCUNHO` | `reabrirLote` | Reversão do gate — permitida **enquanto não houver etapa downstream** (não há nesta fatia; I5). Volta a permitir edição. | 2026-07-07 |
-| L5 | `{RASCUNHO, FINALIZADO} → CANCELADO` | `cancelarLote` | Descarta o lote candidato. Libera os títulos (saem da UNIQUE de I3). **Terminal.** | 2026-07-07 |
+| L5 | `{RASCUNHO, FINALIZADO} → CANCELADO` | `cancelarLote` | Descarta o lote candidato (decisão da analista). Libera os títulos (saem da UNIQUE de I3). **Terminal.** | 2026-07-07 |
+| L6 | `RASCUNHO → (deletado)` | `formarLotesAutomaticos` (desfazer-vencidos) | **Só lote `automatico=true` em RASCUNHO.** A cada rodada do cron, um auto-lote RASCUNHO que passou a conter **≥1 título VENCIDO** é **DESFEITO (deletado)** e seus títulos **liberados** (`desfazerAutomaticosVencidos`) — só a-vencer é elegível ao lote automático. **Distinto de `CANCELADO`** (que é escolha da analista e é um *estado* terminal): aqui a linha do lote some (é re-formável na mesma rodada). **Nunca** atinge lote **manual** (`automatico=false`) nem **FINALIZADO/CANCELADO**. Ver ADR-0018. | 2026-07-08 |
 
 ```
         criarLoteCandidato (L1)
@@ -68,7 +75,25 @@ grava ator + timestamp (auditoria, I5) e incrementa `versao` (concorrência, I6)
                         └───────────┘
 ```
 
-## Decisões de modelagem (ADR-0015)
+## Auto-lotes: criados e desfeitos pelo cron (ADR-0018)
+
+A propriedade `automatico` particiona quem move o lote:
+
+- **Lote automático** (`automatico=true`, criado por `formarLotesAutomaticos`): nasce **RASCUNHO** já
+  preenchido e é **efêmero/re-formável** — a cada rodada o cron **desfaz** (L6, deleta) os auto-lotes
+  RASCUNHO que contêm título vencido e **re-forma** a partir do pool a-vencer. A analista ainda o
+  edita (L2), finaliza (L3), reabre (L4) ou cancela (L5) normalmente enquanto RASCUNHO — se ela
+  finalizar, ele deixa de ser candidato do cron (só RASCUNHO auto é desfeito).
+- **Lote manual** (`automatico=false`, criado por `criarLoteCandidato`): o cron **nunca** o toca — nem
+  cria, nem desfaz. Só a analista o move.
+
+**`DESFAZER` (L6) ≠ `CANCELADO` (L5):** `CANCELADO` é um **estado terminal** que a analista escolhe e
+que fica registrado (auditoria). `DESFAZER` é o cron **deletando** a linha de um auto-lote efêmero cujo
+título venceu — não é um estado, é a ausência do lote (será re-formado se ainda houver elegíveis). Não
+se criou um status `VENCIDO`: modelar o vencimento como estado do lote seria modelar antes da hora — o
+auto-lote é derivável a cada rodada.
+
+## Decisões de modelagem (ADR-0015, ADR-0018)
 
 - **Finalização reversível:** `finalizarLote` é reversível via `reabrirLote` (L4) **porque não há
   downstream nesta fatia**. Quando a próxima fatia plugar o transporte (pasta/Nexxera), a

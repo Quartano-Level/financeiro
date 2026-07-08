@@ -140,4 +140,30 @@ export default class TituloAPagarRepository {
         )) as TituloRow[];
         return rows.map(this.map);
     };
+
+    /**
+     * Elegíveis para FORMAÇÃO AUTOMÁTICA de lote: ativos, aprovados, não-pagos, A VENCER
+     * dentro de `maxDias` (vencidos NÃO entram), e que ainda NÃO estão em nenhum lote RASCUNHO
+     * (anti-join — não duplica o que o analista já tem em montagem, manual ou automático).
+     */
+    public listElegiveisParaFormacao = async (maxDias: number): Promise<TituloAPagar[]> => {
+        const rows = (await this.databaseClient.selectMany(
+            `SELECT t.fil_cod, t.doc_cod, t.tit_cod, t.credor, t.pes_cod, t.valor, t.moeda,
+                    t.vencimento, t.aprovado, t.pago, t.banco, t.num_remessa, t.tpd_cod,
+                    t.pronto_para_remessa, t.internacional
+             FROM titulo_a_pagar t
+             WHERE t.ativo = TRUE AND t.aprovado = TRUE AND t.pago = FALSE
+               AND t.vencimento IS NOT NULL
+               AND t.vencimento >= now()
+               AND t.vencimento <= now() + make_interval(days => $maxDias)
+               AND NOT EXISTS (
+                 SELECT 1 FROM lote_pagamento_item i
+                 JOIN lote_pagamento l ON l.id = i.lote_id
+                 WHERE l.status = 'RASCUNHO'
+                   AND i.fil_cod = t.fil_cod AND i.doc_cod = t.doc_cod AND i.tit_cod = t.tit_cod)
+             ORDER BY t.fil_cod, t.internacional, t.banco, t.vencimento ASC`,
+            { maxDias },
+        )) as TituloRow[];
+        return rows.map(this.map);
+    };
 }

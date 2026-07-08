@@ -1,0 +1,119 @@
+import { inject, injectable } from 'tsyringe';
+import { chunked } from '../../client/ConexosBaseClient.js';
+import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
+import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
+import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+import type { FormacaoLotesResult, TituloAPagar } from '../../interface/sispag/SispagInterface.js';
+import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
+import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
+import LogService from '../LogService.js';
+
+/** Horizonte da formação automática: só títulos a vencer nos próximos N dias. */
+const HORIZONTE_DIAS = 7;
+/** Teto de títulos por lote — lotes menores são melhores para a revisão humana. */
+const MAX_TITULOS_POR_LOTE = 25;
+/** Advisory lock EXCLUSIVO da formação (≠ ingestão 726354819, ≠ permutas). */
+export const FORMACAO_LOCK_KEY = 615243789;
+
+/**
+ * FormacaoLotesService — cron pós-ingestão que MONTA lotes candidatos automaticamente.
+ *
+ * Regras (as mesmas da montagem manual): mesma filial (I4), mesma classe nacional/
+ * internacional (I7), SÓ títulos A VENCER (≤7d; vencidos NÃO entram). Agrupa por
+ * (filial × classe × banco). Cada run: (1) DESFAZ lotes automáticos que já têm título
+ * vencido (libera os títulos); (2) forma lotes novos com os elegíveis ainda sem lote.
+ * Os lotes nascem RASCUNHO e caem em "Lotes candidatos" para o analista revisar antes
+ * de aprovar. NÃO toca em lotes manuais nem finalizados. Escreve só no Postgres (I1).
+ */
+@injectable()
+export default class FormacaoLotesService {
+    public constructor(
+        @inject(TituloAPagarRepository) private readonly tituloRepo: TituloAPagarRepository,
+        @inject(LotePagamentoRepository) private readonly loteRepo: LotePagamentoRepository,
+        @inject(PostgreeDatabaseClient) private readonly db: PostgreeDatabaseClient,
+        @inject(LogService) private readonly logService: LogService,
+    ) {}
+
+    public formar = async (input: { triggeredBy: string }): Promise<FormacaoLotesResult> =>
+        this.db.withAdvisoryLock(
+            FORMACAO_LOCK_KEY,
+            () => this.run(input),
+            async () => {
+                throw new IngestLockBusyError('lot formation already in progress');
+            },
+        );
+
+    private run = async (input: { triggeredBy: string }): Promise<FormacaoLotesResult> => {
+        // 1) desfaz lotes automáticos RASCUNHO com título vencido (libera os títulos).
+        const lotesDesfeitos = await this.loteRepo.desfazerAutomaticosVencidos();
+
+        // 2) forma lotes novos com os elegíveis (a vencer ≤7d, não lotados). Cada grupo
+        // (filial × classe) é fatiado em lotes de no máx. MAX_TITULOS_POR_LOTE para revisão.
+        const elegiveis = await this.tituloRepo.listElegiveisParaFormacao(HORIZONTE_DIAS);
+        const grupos = this.agrupar(elegiveis);
+        let lotesFormados = 0;
+        let titulosLotados = 0;
+        for (const titulos of grupos.values()) {
+            for (const fatia of chunked(titulos, MAX_TITULOS_POR_LOTE)) {
+                if (fatia.length === 0) continue;
+                await this.montarGrupo(fatia, input.triggeredBy);
+                lotesFormados += 1;
+                titulosLotados += fatia.length;
+            }
+        }
+
+        const result: FormacaoLotesResult = { lotesFormados, titulosLotados, lotesDesfeitos };
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'automatic lot formation completed',
+            data: { ...result, triggeredBy: input.triggeredBy },
+        });
+        return result;
+    };
+
+    /** Um lote por grupo, numa transação (raiz + itens). */
+    private montarGrupo = async (titulos: TituloAPagar[], ator: string): Promise<void> => {
+        const primeiro = titulos[0];
+        await this.db.withTransaction(async (tx) => {
+            const lote = await this.loteRepo.criarLote(
+                {
+                    filCod: primeiro.filCod,
+                    banco: primeiro.banco,
+                    automatico: true,
+                    criadoPor: ator,
+                },
+                tx,
+            );
+            await this.loteRepo.adicionarItens(
+                lote.id,
+                titulos.map((t) => ({
+                    filCod: t.filCod,
+                    docCod: t.docCod,
+                    titCod: t.titCod,
+                    credor: t.credor,
+                    valor: t.valor,
+                    vencimento: t.vencimento,
+                    internacional: t.internacional ?? false,
+                    incluidoPor: ator,
+                })),
+                tx,
+            );
+            await this.loteRepo.tocarLote(lote.id, tx);
+        });
+    };
+
+    /**
+     * Chave de grupo: filial × classe (nacional/internacional). O banco/conta NÃO entra —
+     * é buscado ao vivo só na hora da remessa (Fatia 3, anti-drift), não na montagem.
+     */
+    private agrupar = (titulos: TituloAPagar[]): Map<string, TituloAPagar[]> => {
+        const grupos = new Map<string, TituloAPagar[]>();
+        for (const t of titulos) {
+            const key = `${t.filCod}|${t.internacional ? 'I' : 'N'}`;
+            const atual = grupos.get(key);
+            if (atual) atual.push(t);
+            else grupos.set(key, [t]);
+        }
+        return grupos;
+    };
+}

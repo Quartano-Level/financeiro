@@ -1,231 +1,645 @@
 {
-  "_meta": {
-    "generated": "2026-07-08",
-    "version": "0.7.0",
-    "note": "Financeiro ontology — Frente I (Permutas) + Frente II (SISPAG). v0.7.0 (2026-07-08, ADR-0017, branch feat/sispag-ingestao-pagamentos): LOTE UNIFORME NACIONAL × INTERNACIONAL (SISPAG). NEW business-rule lote-uniforme-nacional-internacional (invariante I7, implemented, has_canonical_test): um LotePagamento é 100% nacional (boleto/PIX) OU 100% internacional (câmbio/exterior) — nunca misto; classe fixada pelo 1º item, item divergente → LoteTipoConflitoError (HTTP 422). Espelha a forma do I4 (uma filial). Discriminador com298 ufEspSigla='EX' (exterior=internacional; qualquer UF BR=nacional); o fin064 NÃO carrega ufEspSigla → classe ENRIQUECIDA via com298. NEW métodos READ-ONLY no ConexosSispagClient: isDocInternacional(filCod,docCod) (autoritativo single-doc, usado na inclusão do lote, anti-drift) + listExteriorDocCods(filCod) (set EX bulk, usado na ingestão). NEW field internacional em titulo_a_pagar + lote_pagamento_item (migration 0025): persistido na ingestão (IngestaoPagamentosService via set EX) p/ o FILTRO do painel (Todas/Nacionais/Internacionais) + badge; classe autoritativa reconfirmada via com298 na inclusão (LotePagamentoService.incluirTitulo). NEW erro LoteTipoConflitoError (422). Frontend /sispag: segmento de filtro + badge internacional + bloqueio da seleção mista no 'Criar lote'. READ-ONLY no ERP mantido (I1) — única escrita é o Postgres (coluna internacional). Prévio v0.6.0 (2026-07-08, ADR-0016, branch feat/sispag-ingestao-pagamentos): INGESTÃO DE PAGAMENTOS (SISPAG). A entidade TituloAPagar EVOLUI de read model read-through → carteira PERSISTIDA: os DADOS BÁSICOS são ingeridos (cron job:ingest-pagamentos + manual POST /sispag/ingestao) e persistidos em titulo_a_pagar (migration 0024, chave natural filCod:docCod:titCod, UPSERT), com run de auditoria pagamento_ingestao_run + idempotência pagamento_ingestao_idempotency. O painel passa a LER DO BANCO (SispagPainelService refatorado; TituloAPagarRepository.listAtivos); lotes/borderôs nativos seguem ao vivo (contexto). O DETALHE de remessa continua hidratado AO VIVO só no envio (Fatia 3, anti-drift). NEW action ingerirPagamentos (entity TituloAPagar, implemented) — espelha elegerAdiantamentos+ADR-0006: advisory-lock (IngestLockBusyError→409), idempotência, BoundedConcurrency fan-out, anti-fantasma (ativo via marcarInativosForaDaRun). NEW fields em titulo_a_pagar: aprovado (persistido — era o derivado 'liberado' do read model), pago, pes_cod, tpd_cod, banco, num_remessa, pronto_para_remessa (HEURÍSTICA informativa — validação real no envio), ativo (anti-fantasma), ingestao_run_id, atualizado_em. READ-ONLY no ERP mantido (I1) — única escrita é o Postgres próprio; escrita/remessa/Nexxera seguem DEFERIDAS (ADR-0015). Prévio v0.5.0 (2026-07-07, ADR-0015, branch feat/sispag-painel-montagem): INTRODUZ o Escopo II (SISPAG) Fatia 1+2 — painel read-only + montagem assistida de lote + gate de finalização. ZERO escrita no Conexos (I1); escrita/remessa/Nexxera/retorno/baixa/scheduler DEFERIDOS para a próxima fatia (contrato Nexxera/pasta/HML abertos). NEW entities: TituloAPagar (read model fin064+alçada com308; implemented — spike serve o painel) e LotePagamento/ItemLote (agregado LOCAL persistido lote_pagamento+lote_pagamento_item; planned). NEW state-machine lote-pagamento (RASCUNHO→FINALIZADO→CANCELADO; transições criar/incluir-remover/finalizar[gate]/reabrir/cancelar; PROCESSANDO/ENVIADO/BAIXADO fora de escopo). NEW actions sispag/: montarPainelPagamentos (read, implemented), gerenciarLoteCandidato (criar/incluir/remover/listar, planned), finalizarLote (gate + reabrir + cancelar, planned). NEW business-rules: elegibilidade-titulo-lote (I2 — só liberado+não pago), lote-uma-filial (I4 — compatível fin015 nativo), nao-duplicacao-titulo-lote (I3 — UNIQUE parcial RASCUNHO). Integração conexos ganhou a superfície SISPAG READ (fin064/fin015/fin010 via ConexosSispagClient, read-only) — write fin015/fin052 = futuro/gated. Decisões registradas (ADR-0015): finalização REVERSÍVEL (enquanto sem downstream), agrupamento por FILIAL (banco/conta metadado opcional). Prévio v0.4.0 (2026-06-24, ADR-0014, PR #7 deployado, sync retroativo de v0.7.0): (1) múltipla AUTOMÁTICA — casamento-manual único do processo cujo adto cobre todas as invoices (saldoNeg+1 ≥ Σ invoices) vira AUTOMÁTICA, exposta como casamentos sintéticos pré-distribuídos na aba 'Automáticas' (renomeada de 'Simples'); flag derivada autoElegivel (GestaoPermutasService.ts:322-335) → business-rules/multipla-automatica. (2) reclassificação 'ultrapassa invoice' — casamento simples cujos adtos ultrapassam o em-aberto da invoice cai para manual (N→cross-over, 1→multiplas; GestaoPermutasService.adtosQueUltrapassamInvoice:219-251) → business-rules/reclassificacao-ultrapassa-invoice. (3) auto-alocação ATÔMICA no Baixar (AlocacaoPermutasService.criarRascunhosAtomico:357-391, gatilho ReconciliacaoPermutaService:97-109; all-or-nothing, reverte falha parcial) → business-rules/auto-alocacao-atomica; I-Permuta-8. (4) status PERMUTA→BORDERÔ por adiantamento (BorderoGestaoService.statusPorAdiantamento:429-487; GET /permutas/status) — EM CADASTRO→aguardando-finalizacao, FINALIZADO→finalizado, cancelado/estornado/removido→reabre → state-machines/status-permuta-bordero; estorno+Liberar removidos da UI (removerDaTrilha removido, Regis R-1 P0 dupla-baixa). (5) cliente (importador) em TODAS as invoices via imp021 (migration 0017) + universo completo de invoices finalizadas (ConexosClient.listInvoicesFinalizadas). (6) cache de borderôs permuta_bordero (migration 0018, refreshCache:381-418) + índices (migration 0019). Regis-Review 2026-06-24-2011: 3 P0 + 2 P1 críticos remediados pré-merge (RBAC nas reads, Zod nos boundaries do ERP, atomicidade, remoção do removerDaTrilha, índices de perf). Prévio v0.3.0 (2026-06-23, ADR-0013): FASE 3 — write-back fin010. A baixa/permuta EFETIVA no ERP (ação reconciliarPermuta, ReconciliacaoPermutaService) saiu de planned → partial: handshake de 5 chamadas (criar borderô → validar tituloBaixa → validar tituloPermuta → atualizaValorLiquido → gravar baixas), contrato em business-rules/fin010-write-contract.md (engenharia reversa de HAR real). Estado EXECUTADA entra na máquina (T5); risco arquitetural #1 deixou de estar intocado. GATED por CONEXOS_WRITE_ENABLED+CONEXOS_DRY_RUN (default dry-run), homologação-first. Write-ahead + idempotência por par adto↔invoice (permuta_alocacao_execucao, business-rules/idempotencia-reconciliacao.md). Novos métodos de ESCRITA no ConexosClient (postGeneric → authenticatedPost). Prévio v0.2.9 (2026-06-22, ADR-0010): the automatic 'Simples' casamento (1 invoice : N adiantamentos) now does a GREEDY N:1 distribution with TETO (cap) and is PARTIAL — fixes the 1408 super-permuta (was 'usa 743.040', now 'usa 260.064'). Invoice gains valorAbertoNegociado (live em-aberto / taxaInvoice = the cap, fallback valorMoedaNegociada); the auto-casamento keeps residual saldo open (like the manual allocation) and recomputes the variação cambial on the PARTIAL amount. STILL READ-ONLY on Conexos (only our snapshot permuta_casamento). New business-rule distribuicao-simples-greedy. Prior v0.2.8 SYNC (commit df90fa6, deployed): the 5 permuta features (ADR-0006 ingestão manual; pagamento parcial; ADR-0007 cliente-filtro + permuta-manual; ADR-0008 alocação N:M cross-process; ADR-0009 tipos de permuta/abas) IMPLEMENTED in src/. NEW entities: Permuta (consumada/alocação — partial) and ClienteFiltro (implemented). NEW state PERMUTA_MANUAL; derived tipoPermuta (presentation). Risco arquitetural #1 (write-back fin010 / ação reconciliarPermuta) remains PLANNED (Fase 3).",
-    "upstream": "../../produtizacao/nf-projects",
-    "status_legend": {
-      "implemented": "code in src/ implements the entity/action (runs in the current Express/Render stack; DDD service/repo chain)",
-      "partial": "core implemented, but a material part of the entity/action is not yet implemented (e.g. Permuta: alocação live, write-back fin010 pending)",
-      "planned": "no code yet",
-      "planned-migration": "ontology imported from upstream; local code does not implement it (yet) — track in migration-debt"
-    }
+ "_meta": {
+  "generated": "2026-07-08",
+  "version": "0.8.0",
+  "note": "v0.8.0 (2026-07-08, ADR-0018, branch feat/sispag-ingestao-pagamentos): FORMAÇÃO AUTOMÁTICA DE LOTES (SISPAG). NEW action formarLotesAutomaticos (entity LotePagamento, implemented): um cron job:formar-lotes (encadeado LOGO APÓS o cron de ingestão) + trigger manual POST /sispag/lotes/formar (FormacaoLotesService.formar, advisory-lock FORMACAO_LOCK_KEY) MONTAM automaticamente lotes candidatos a partir da carteira persistida. Elegibilidade: títulos A VENCER ≤7d (vencidos EXCLUÍDOS) + aprovado/não pago (I2), agrupados por FILIAL × CLASSE (nacional/internacional) × BANCO (I4/I7); anti-join contra qualquer lote RASCUNHO (I3) — TituloAPagarRepository.listElegiveisParaFormacao(maxDias=7). Cada rodada (1) DESFAZ (deleta) os lotes AUTOMÁTICOS ainda RASCUNHO que contêm ≥1 título VENCIDO, liberando os títulos — LotePagamentoRepository.desfazerAutomaticosVencidos (só a-vencer é elegível; NÃO há status VENCIDO); (2) cria novos lotes via criarLote(automatico=true). Auto-lotes nascem RASCUNHO em 'Lotes candidatos' (badge 'automático') para a analista REVISAR antes de finalizar. O cron NUNCA toca lote MANUAL nem FINALIZADO/CANCELADO. NEW field lote_pagamento.automatico (migration 0026_lote_automatico.sql). CAVEAT: banco é NULL nos títulos a-pagar (fin064 não carrega banco pré-pagamento) → agrupamento por banco DEGENERA para filial×classe hoje (banco fica como dimensão estrutural, follow-up quando houver fonte de banco/conta). NEW state-machine transition L6 (RASCUNHO→deletado, desfazer-vencidos; distinto de CANCELADO). READ-ONLY no ERP mantido (I1) — lê a carteira DO BANCO (já ingerida, sem fan-out), escrita LOCAL (Postgres). Prévio Financeiro ontology — Frente I (Permutas) + Frente II (SISPAG). v0.7.0 (2026-07-08, ADR-0017, branch feat/sispag-ingestao-pagamentos): LOTE UNIFORME NACIONAL × INTERNACIONAL (SISPAG). NEW business-rule lote-uniforme-nacional-internacional (invariante I7, implemented, has_canonical_test): um LotePagamento é 100% nacional (boleto/PIX) OU 100% internacional (câmbio/exterior) — nunca misto; classe fixada pelo 1º item, item divergente → LoteTipoConflitoError (HTTP 422). Espelha a forma do I4 (uma filial). Discriminador com298 ufEspSigla='EX' (exterior=internacional; qualquer UF BR=nacional); o fin064 NÃO carrega ufEspSigla → classe ENRIQUECIDA via com298. NEW métodos READ-ONLY no ConexosSispagClient: isDocInternacional(filCod,docCod) (autoritativo single-doc, usado na inclusão do lote, anti-drift) + listExteriorDocCods(filCod) (set EX bulk, usado na ingestão). NEW field internacional em titulo_a_pagar + lote_pagamento_item (migration 0025): persistido na ingestão (IngestaoPagamentosService via set EX) p/ o FILTRO do painel (Todas/Nacionais/Internacionais) + badge; classe autoritativa reconfirmada via com298 na inclusão (LotePagamentoService.incluirTitulo). NEW erro LoteTipoConflitoError (422). Frontend /sispag: segmento de filtro + badge internacional + bloqueio da seleção mista no 'Criar lote'. READ-ONLY no ERP mantido (I1) — única escrita é o Postgres (coluna internacional). Prévio v0.6.0 (2026-07-08, ADR-0016, branch feat/sispag-ingestao-pagamentos): INGESTÃO DE PAGAMENTOS (SISPAG). A entidade TituloAPagar EVOLUI de read model read-through → carteira PERSISTIDA: os DADOS BÁSICOS são ingeridos (cron job:ingest-pagamentos + manual POST /sispag/ingestao) e persistidos em titulo_a_pagar (migration 0024, chave natural filCod:docCod:titCod, UPSERT), com run de auditoria pagamento_ingestao_run + idempotência pagamento_ingestao_idempotency. O painel passa a LER DO BANCO (SispagPainelService refatorado; TituloAPagarRepository.listAtivos); lotes/borderôs nativos seguem ao vivo (contexto). O DETALHE de remessa continua hidratado AO VIVO só no envio (Fatia 3, anti-drift). NEW action ingerirPagamentos (entity TituloAPagar, implemented) — espelha elegerAdiantamentos+ADR-0006: advisory-lock (IngestLockBusyError→409), idempotência, BoundedConcurrency fan-out, anti-fantasma (ativo via marcarInativosForaDaRun). NEW fields em titulo_a_pagar: aprovado (persistido — era o derivado 'liberado' do read model), pago, pes_cod, tpd_cod, banco, num_remessa, pronto_para_remessa (HEURÍSTICA informativa — validação real no envio), ativo (anti-fantasma), ingestao_run_id, atualizado_em. READ-ONLY no ERP mantido (I1) — única escrita é o Postgres próprio; escrita/remessa/Nexxera seguem DEFERIDAS (ADR-0015). Prévio v0.5.0 (2026-07-07, ADR-0015, branch feat/sispag-painel-montagem): INTRODUZ o Escopo II (SISPAG) Fatia 1+2 — painel read-only + montagem assistida de lote + gate de finalização. ZERO escrita no Conexos (I1); escrita/remessa/Nexxera/retorno/baixa/scheduler DEFERIDOS para a próxima fatia (contrato Nexxera/pasta/HML abertos). NEW entities: TituloAPagar (read model fin064+alçada com308; implemented — spike serve o painel) e LotePagamento/ItemLote (agregado LOCAL persistido lote_pagamento+lote_pagamento_item; planned). NEW state-machine lote-pagamento (RASCUNHO→FINALIZADO→CANCELADO; transições criar/incluir-remover/finalizar[gate]/reabrir/cancelar; PROCESSANDO/ENVIADO/BAIXADO fora de escopo). NEW actions sispag/: montarPainelPagamentos (read, implemented), gerenciarLoteCandidato (criar/incluir/remover/listar, planned), finalizarLote (gate + reabrir + cancelar, planned). NEW business-rules: elegibilidade-titulo-lote (I2 — só liberado+não pago), lote-uma-filial (I4 — compatível fin015 nativo), nao-duplicacao-titulo-lote (I3 — UNIQUE parcial RASCUNHO). Integração conexos ganhou a superfície SISPAG READ (fin064/fin015/fin010 via ConexosSispagClient, read-only) — write fin015/fin052 = futuro/gated. Decisões registradas (ADR-0015): finalização REVERSÍVEL (enquanto sem downstream), agrupamento por FILIAL (banco/conta metadado opcional). Prévio v0.4.0 (2026-06-24, ADR-0014, PR #7 deployado, sync retroativo de v0.7.0): (1) múltipla AUTOMÁTICA — casamento-manual único do processo cujo adto cobre todas as invoices (saldoNeg+1 ≥ Σ invoices) vira AUTOMÁTICA, exposta como casamentos sintéticos pré-distribuídos na aba 'Automáticas' (renomeada de 'Simples'); flag derivada autoElegivel (GestaoPermutasService.ts:322-335) → business-rules/multipla-automatica. (2) reclassificação 'ultrapassa invoice' — casamento simples cujos adtos ultrapassam o em-aberto da invoice cai para manual (N→cross-over, 1→multiplas; GestaoPermutasService.adtosQueUltrapassamInvoice:219-251) → business-rules/reclassificacao-ultrapassa-invoice. (3) auto-alocação ATÔMICA no Baixar (AlocacaoPermutasService.criarRascunhosAtomico:357-391, gatilho ReconciliacaoPermutaService:97-109; all-or-nothing, reverte falha parcial) → business-rules/auto-alocacao-atomica; I-Permuta-8. (4) status PERMUTA→BORDERÔ por adiantamento (BorderoGestaoService.statusPorAdiantamento:429-487; GET /permutas/status) — EM CADASTRO→aguardando-finalizacao, FINALIZADO→finalizado, cancelado/estornado/removido→reabre → state-machines/status-permuta-bordero; estorno+Liberar removidos da UI (removerDaTrilha removido, Regis R-1 P0 dupla-baixa). (5) cliente (importador) em TODAS as invoices via imp021 (migration 0017) + universo completo de invoices finalizadas (ConexosClient.listInvoicesFinalizadas). (6) cache de borderôs permuta_bordero (migration 0018, refreshCache:381-418) + índices (migration 0019). Regis-Review 2026-06-24-2011: 3 P0 + 2 P1 críticos remediados pré-merge (RBAC nas reads, Zod nos boundaries do ERP, atomicidade, remoção do removerDaTrilha, índices de perf). Prévio v0.3.0 (2026-06-23, ADR-0013): FASE 3 — write-back fin010. A baixa/permuta EFETIVA no ERP (ação reconciliarPermuta, ReconciliacaoPermutaService) saiu de planned → partial: handshake de 5 chamadas (criar borderô → validar tituloBaixa → validar tituloPermuta → atualizaValorLiquido → gravar baixas), contrato em business-rules/fin010-write-contract.md (engenharia reversa de HAR real). Estado EXECUTADA entra na máquina (T5); risco arquitetural #1 deixou de estar intocado. GATED por CONEXOS_WRITE_ENABLED+CONEXOS_DRY_RUN (default dry-run), homologação-first. Write-ahead + idempotência por par adto↔invoice (permuta_alocacao_execucao, business-rules/idempotencia-reconciliacao.md). Novos métodos de ESCRITA no ConexosClient (postGeneric → authenticatedPost). Prévio v0.2.9 (2026-06-22, ADR-0010): the automatic 'Simples' casamento (1 invoice : N adiantamentos) now does a GREEDY N:1 distribution with TETO (cap) and is PARTIAL — fixes the 1408 super-permuta (was 'usa 743.040', now 'usa 260.064'). Invoice gains valorAbertoNegociado (live em-aberto / taxaInvoice = the cap, fallback valorMoedaNegociada); the auto-casamento keeps residual saldo open (like the manual allocation) and recomputes the variação cambial on the PARTIAL amount. STILL READ-ONLY on Conexos (only our snapshot permuta_casamento). New business-rule distribuicao-simples-greedy. Prior v0.2.8 SYNC (commit df90fa6, deployed): the 5 permuta features (ADR-0006 ingestão manual; pagamento parcial; ADR-0007 cliente-filtro + permuta-manual; ADR-0008 alocação N:M cross-process; ADR-0009 tipos de permuta/abas) IMPLEMENTED in src/. NEW entities: Permuta (consumada/alocação — partial) and ClienteFiltro (implemented). NEW state PERMUTA_MANUAL; derived tipoPermuta (presentation). Risco arquitetural #1 (write-back fin010 / ação reconciliarPermuta) remains PLANNED (Fase 3).",
+  "upstream": "../../produtizacao/nf-projects",
+  "status_legend": {
+   "implemented": "code in src/ implements the entity/action (runs in the current Express/Render stack; DDD service/repo chain)",
+   "partial": "core implemented, but a material part of the entity/action is not yet implemented (e.g. Permuta: alocação live, write-back fin010 pending)",
+   "planned": "no code yet",
+   "planned-migration": "ontology imported from upstream; local code does not implement it (yet) — track in migration-debt"
+  }
+ },
+ "entities": {
+  "Adiantamento": {
+   "file": "entities/adiantamento.md",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/client/ConexosClient.ts",
+    "src/backend/domain/client/permutas/conexosPermutasConstants.ts",
+    "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
+    "src/backend/domain/repository/permutas/PermutaRelationalRepository.ts",
+    "src/backend/migrations/0010_adiantamento_pagamento_parcial.sql",
+    "src/backend/migrations/0011_adiantamento_importador.sql"
+   ],
+   "resolved_by": [
+    "P0-3 (filter wire key docVldTipoAdto=1 / FinDocCab; probe 2026-06-18)",
+    "gate-3-pago-via-detail (valorTotal/valorAberto via getDetalheTitulos; migration 0010)"
+   ],
+   "note": "Gate 3 (TOTALMENTE PAGO) + progresso de pagamento (% pago/falta) resolvidos pelo endpoint de detalhe (mnyTitValor/mnyTitAberto). pesCod/importador hidratados via imp021 (migration 0011) p/ roteamento cliente-filtro."
   },
-  "entities": {
-    "Adiantamento": {
-      "file": "entities/adiantamento.md",
-      "status": "implemented",
-      "impl_files": [
-        "src/backend/domain/client/ConexosClient.ts",
-        "src/backend/domain/client/permutas/conexosPermutasConstants.ts",
-        "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
-        "src/backend/domain/repository/permutas/PermutaRelationalRepository.ts",
-        "src/backend/migrations/0010_adiantamento_pagamento_parcial.sql",
-        "src/backend/migrations/0011_adiantamento_importador.sql"
-      ],
-      "resolved_by": ["P0-3 (filter wire key docVldTipoAdto=1 / FinDocCab; probe 2026-06-18)", "gate-3-pago-via-detail (valorTotal/valorAberto via getDetalheTitulos; migration 0010)"],
-      "note": "Gate 3 (TOTALMENTE PAGO) + progresso de pagamento (% pago/falta) resolvidos pelo endpoint de detalhe (mnyTitValor/mnyTitAberto). pesCod/importador hidratados via imp021 (migration 0011) p/ roteamento cliente-filtro."
-    },
-    "Invoice": {
-      "file": "entities/invoice.md",
-      "status": "implemented",
-      "impl_files": [
-        "src/backend/domain/client/ConexosClient.ts",
-        "src/backend/domain/interface/permutas/Invoice.ts",
-        "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
-        "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
-        "src/backend/domain/service/permutas/IngestaoPermutasService.ts",
-        "src/backend/domain/repository/permutas/PermutaRelationalRepository.ts",
-        "src/backend/migrations/0009_invoice_taxa.sql",
-        "src/backend/migrations/0017_invoice_importador.sql"
-      ],
-      "note": "ADR-0010: propriedade valorAbertoNegociado (mnyTitAberto / taxaInvoice via getDetalheTitulos) = TETO do lado-crédito no auto-casamento Simples; fallback valorMoedaNegociada. ADR-0014: pesCod/importador (imp021, migration 0017) em TODAS as invoices p/ busca por cliente; universo completo via ConexosClient.listInvoicesFinalizadas (ConexosClient.ts:709+)."
-    },
-    "DeclaracaoImportacao": {
-      "file": "entities/declaracao-importacao.md",
-      "status": "implemented",
-      "impl_files": [
-        "src/backend/domain/client/ConexosClient.ts",
-        "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
-        "src/backend/domain/service/permutas/AlocacaoPermutasService.ts"
-      ],
-      "resolved_by": ["P0-4 (dataBase wire fields cdiDtaCi imp019 / dioDtaDesembaraco imp223; probe 2026-06-18; XOR confirmed in real data)"],
-      "note": "Gate 4 (D.I XOR DUIMP) na permuta automática; na alocação cross-process a invoice escolhida DEVE ter D.I (data-base/variação vem dela). Adto cliente-filtro dispensa Gate 4 (ADR-0007)."
-    },
-    "VariacaoCambial": {
-      "file": "entities/variacao-cambial.md",
-      "status": "implemented",
-      "impl_files": [
-        "src/backend/domain/service/permutas/VariacaoCambialPermutaService.ts",
-        "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
-        "src/backend/domain/client/ConexosClient.ts",
-        "src/backend/migrations/0008_adiantamento_taxa.sql",
-        "src/backend/migrations/0009_invoice_taxa.sql"
-      ],
-      "resolved_by": ["P0-1", "P1-2"],
-      "note": "Classificação juros/desconto por comparação de TAXA. Na alocação (Permuta): delta = valorAlocado × (taxaAdto − taxaInvoice), data-base = D.I da invoice (ADR-0008)."
-    },
-    "PermutaCandidata": {
-      "file": "entities/permuta-candidata.md",
-      "status": "implemented",
-      "impl_files": [
-        "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
-        "src/backend/domain/service/permutas/GestaoPermutasService.ts",
-        "src/backend/domain/service/permutas/IngestaoPermutasService.ts",
-        "src/backend/domain/repository/permutas/PermutaRelationalRepository.ts",
-        "src/backend/domain/repository/permutas/PermutaSnapshotRepository.ts",
-        "src/backend/domain/interface/permutas/PermutaCandidata.ts",
-        "src/backend/domain/interface/permutas/Gestao.ts",
-        "src/backend/migrations/0012_estado_permuta_manual.sql",
-        "src/frontend/app/permutas/page.tsx"
-      ],
-      "resolved_by": ["P0-6", "P0-8", "P0-5", "P0-4 (aging column read; probe 2026-06-18)"],
-      "note": "Estados: descoberta|elegivel|casamento-manual|permuta-manual|bloqueada (migration 0012). Classificação derivada tipoPermuta (simples/multiplas/cross-over/cross-process, ADR-0009) calculada em GestaoPermutasService — não persiste. ADR-0010: auto-casamento Simples (toCasamentoRows) ficou PARCIAL — distribuição greedy N:1 com teto da invoice; expõe saldoRestante. ADR-0014: nova flag derivada autoElegivel (múltipla AUTOMÁTICA quando o adto cobre todas as invoices do processo, GestaoPermutasService.ts:322-335); tipoPermuta pode ser RECLASSIFICADO (simples→cross-over/multiplas quando ultrapassa a invoice, :219-251, :309-320). Aba 'Simples'→'Automáticas'."
-    },
-    "Permuta": {
-      "file": "entities/permuta.md",
-      "status": "partial",
-      "impl_files": [
-        "src/backend/migrations/0014_permuta_alocacao.sql",
-        "src/backend/migrations/0018_permuta_bordero_cache.sql",
-        "src/backend/migrations/0019_permuta_perf_indexes.sql",
-        "src/backend/domain/repository/permutas/PermutaAlocacaoRepository.ts",
-        "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
-        "src/backend/domain/service/permutas/GestaoPermutasService.ts",
-        "src/backend/domain/service/permutas/BorderoGestaoService.ts",
-        "src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts",
-        "src/backend/domain/errors/AlocacaoSaldoError.ts",
-        "src/backend/routes/permutas.ts",
-        "src/frontend/app/permutas/page.tsx"
-      ],
-      "open_gap": ["validação em produção do 1º caso real de baixa fin010 (Fase 3 implementada, gated por flags)"],
-      "note": "A Permuta consumada nasce como ALOCAÇÃO rascunho (permuta_alocacao, sobrevive à re-ingestão) e é CONSUMIDA pela ação reconciliarPermuta (ADR-0013), que executa a baixa no ERP fin010 (handshake de 5 chamadas; write-ahead em permuta_alocacao_execucao). GATED (CONEXOS_WRITE_ENABLED+CONEXOS_DRY_RUN, homologação-first). Invariantes de saldo, mesma filial, mesma moeda, invoice com D.I. ADR-0014: múltipla AUTOMÁTICA (autoAlocarSeElegivel:300-349) + auto-alocação ATÔMICA no Baixar (criarRascunhosAtomico:357-391, I-Permuta-8); status PERMUTA→BORDERÔ (BorderoGestaoService.statusPorAdiantamento:429-487, GET /permutas/status); cache de borderôs permuta_bordero (refreshCache:381-418, migrations 0018/0019). partial: alocação + write-back + classificação automática + ciclo de borderô implementados; falta validar 1º caso real de baixa em produção."
-    },
-    "ClienteFiltro": {
-      "file": "entities/cliente-filtro.md",
-      "status": "implemented",
-      "impl_files": [
-        "src/backend/migrations/0013_cliente_filtro.sql",
-        "src/backend/migrations/0011_adiantamento_importador.sql",
-        "src/backend/domain/repository/permutas/ClienteFiltroRepository.ts",
-        "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
-        "src/backend/routes/permutas.ts",
-        "src/frontend/app/permutas/clientes-filtro/page.tsx"
-      ],
-      "note": "Entidade de CONFIGURAÇÃO: estrutura (regra de roteamento por importador) na ontologia; valores (quais importadores) são config do cliente (cliente_filtro). Roteia adtos pago+saldo para permuta-manual (ADR-0007)."
-    },
-    "TituloAPagar": {
-      "file": "entities/titulo-a-pagar.md",
-      "status": "implemented",
-      "impl_files": [
-        "src/backend/migrations/0024_pagamento_ingestao.sql",
-        "src/backend/migrations/0025_titulo_internacional.sql",
-        "src/backend/domain/client/ConexosSispagClient.ts",
-        "src/backend/domain/repository/sispag/TituloAPagarRepository.ts",
-        "src/backend/domain/repository/sispag/PagamentoIngestaoRunRepository.ts",
-        "src/backend/domain/service/sispag/IngestaoPagamentosService.ts",
-        "src/backend/domain/service/sispag/SispagPainelService.ts",
-        "src/backend/domain/interface/sispag/SispagInterface.ts",
-        "src/backend/routes/sispag.ts",
-        "src/backend/jobs/ingest-pagamentos.ts",
-        "src/frontend/app/sispag/page.tsx"
-      ],
-      "note": "ADR-0016 (SISPAG ingestão): a carteira EVOLUIU de read model read-through → PERSISTIDA. Dados básicos ingeridos (cron + manual) e gravados em titulo_a_pagar (migration 0024, chave filCod:docCod:titCod, UPSERT); run de auditoria pagamento_ingestao_run (+ idempotency). Painel LÊ DO BANCO (TituloAPagarRepository.listAtivos). NEW fields: aprovado (persistido; era o derivado 'liberado' do ADR-0015), pago, pes_cod, tpd_cod, banco, num_remessa, pronto_para_remessa (heurística INFORMATIVA — validação real no envio), ativo (anti-fantasma via marcarInativosForaDaRun), ingestao_run_id, atualizado_em. ADR-0017 (lote uniforme I7): NEW field internacional (migration 0025) — classe nacional/internacional do título, discriminador com298 ufEspSigla='EX'; o fin064 NÃO carrega ufEspSigla → enriquecido via com298 (ConexosSispagClient.listExteriorDocCods set EX bulk na ingestão), persistido p/ o filtro do painel. Detalhe de remessa hidratado AO VIVO só no envio (Fatia 3, anti-drift). implemented. READ-only no ERP (I1) — única escrita é o Postgres. Ver ADR-0015 (prévio: read-through)."
-    },
-    "LotePagamento": {
-      "file": "entities/lote-pagamento.md",
-      "status": "planned",
-      "impl_files": [
-        "src/backend/migrations/0023_lote_pagamento.sql",
-        "src/backend/migrations/0025_titulo_internacional.sql",
-        "src/backend/domain/service/sispag/SispagPainelService.ts",
-        "src/backend/domain/service/sispag/LotePagamentoService.ts",
-        "src/backend/domain/repository/sispag/LotePagamentoRepository.ts",
-        "src/backend/domain/errors/LoteTipoConflitoError.ts",
-        "src/backend/domain/interface/sispag/SispagInterface.ts",
-        "src/backend/routes/sispag.ts",
-        "src/frontend/app/sispag/page.tsx"
-      ],
-      "note": "ADR-0015 (Escopo II/SISPAG): agregado LOCAL persistido (lote_pagamento raiz + lote_pagamento_item membro; ItemLote guarda snapshot valor/venc/credor). Lote candidato montado pela analista. Estados RASCUNHO|FINALIZADO|CANCELADO (state-machines/lote-pagamento). Invariantes I2 (elegibilidade), I3 (não-duplicação UNIQUE parcial), I4 (uma filial). ADR-0017: NEW invariante I7 (lote uniforme nacional × internacional) — 100% nacional OU 100% internacional, nunca misto; classe fixada pelo 1º item; item divergente → LoteTipoConflitoError (422); enforce em LotePagamentoService.incluirTitulo (classe autoritativa via com298, anti-drift); NEW field internacional em lote_pagamento_item (migration 0025). planned. ZERO escrita no ERP (I1) — FINALIZADO é gatilho conceitual, sem downstream nesta fatia."
-    }
+  "Invoice": {
+   "file": "entities/invoice.md",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/client/ConexosClient.ts",
+    "src/backend/domain/interface/permutas/Invoice.ts",
+    "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
+    "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
+    "src/backend/domain/service/permutas/IngestaoPermutasService.ts",
+    "src/backend/domain/repository/permutas/PermutaRelationalRepository.ts",
+    "src/backend/migrations/0009_invoice_taxa.sql",
+    "src/backend/migrations/0017_invoice_importador.sql"
+   ],
+   "note": "ADR-0010: propriedade valorAbertoNegociado (mnyTitAberto / taxaInvoice via getDetalheTitulos) = TETO do lado-crédito no auto-casamento Simples; fallback valorMoedaNegociada. ADR-0014: pesCod/importador (imp021, migration 0017) em TODAS as invoices p/ busca por cliente; universo completo via ConexosClient.listInvoicesFinalizadas (ConexosClient.ts:709+)."
   },
-  "actions": {
-    "elegerAdiantamentos": { "file": "actions/eleger-adiantamentos.md", "entity": "Adiantamento", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts", "src/backend/domain/service/permutas/IngestaoPermutasService.ts"], "resolved_by": ["P0-3 (docVldTipoAdto=1; probe 2026-06-18)", "P0-7"], "note": "Override de roteamento cliente-filtro → permuta-manual (ADR-0007). Trigger manual POST /permutas/ingestao + cron (ADR-0006)." },
-    "avaliarElegibilidade": { "file": "actions/avaliar-elegibilidade.md", "entity": "PermutaCandidata", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts"], "resolved_by": ["P0-4 (Gate 4 dataBase via cdiDtaCi/dioDtaDesembaraco; probe 2026-06-18)", "gate-3-pago-via-detail (resolvido via getDetalheTitulos)"] },
-    "casarInvoice": { "file": "actions/casar-invoice.md", "entity": "Invoice", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts"], "resolved_by": ["P0-6", "P0-5"] },
-    "calcularVariacaoCambial": { "file": "actions/calcular-variacao-cambial.md", "entity": "VariacaoCambial", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/VariacaoCambialPermutaService.ts", "src/backend/domain/service/permutas/AlocacaoPermutasService.ts"], "resolved_by": ["P0-1"] },
-    "exporNoPainel": { "file": "actions/expor-no-painel.md", "entity": "PermutaCandidata", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/GestaoPermutasService.ts", "src/frontend/app/permutas/page.tsx"], "resolved_by": ["P0-8", "P0-4 (aging column populates; probe 2026-06-18)"] },
-    "alocarPermuta": { "file": null, "entity": "Permuta", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/AlocacaoPermutasService.ts", "src/backend/domain/repository/permutas/PermutaAlocacaoRepository.ts"], "note": "Implementada (alocação N:M cross-process, ADR-0008). Documentada na entity Permuta; arquivo de ação dedicado a criar numa próxima curadoria se necessário." },
-    "buscarInvoiceCrossProcess": { "file": null, "entity": "Permuta", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/AlocacaoPermutasService.ts"], "note": "buscarInvoices(priCod, filCod) — busca LIVE escopada à filial, valida D.I, mesma moeda (ADR-0008/0009)." },
-    "reconciliarPermuta": { "file": "business-rules/fin010-write-contract.md", "entity": "Permuta", "status": "partial", "impl_files": ["src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts", "src/backend/domain/service/permutas/AlocacaoPermutasService.ts", "src/backend/domain/client/ConexosClient.ts", "src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts", "src/backend/migrations/0015_permuta_alocacao_execucao.sql", "src/backend/routes/permutas.ts", "src/frontend/app/permutas/page.tsx"], "open_gap": ["validação em produção do 1º caso real; baixa parcial (invoice N:M); finalização do borderô; caminho DESCONTO"], "note": "Baixa efetiva no ERP (fin010) — Fase 3 (ADR-0013). Handshake de 5 chamadas; write-ahead + idempotência (permuta_alocacao_execucao); GATED por CONEXOS_WRITE_ENABLED+CONEXOS_DRY_RUN; homologação-first. ADR-0014: caso automático sem rascunho AUTO-ALOCA (atômico) antes da baixa (ReconciliacaoPermutaService.ts:97-109 → AlocacaoPermutasService.criarRascunhosAtomico)." },
-    "autoAlocarPermuta": { "file": "business-rules/auto-alocacao-atomica.md", "entity": "Permuta", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/AlocacaoPermutasService.ts", "src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts"], "note": "ADR-0014: cria os rascunhos de permuta_alocacao sozinho no Baixar — múltipla AUTOMÁTICA (autoAlocarSeElegivel:300-349) ou casamento simples (autoAlocarDeCasamento:399-421), ATÔMICO (criarRascunhosAtomico:357-391, all-or-nothing). I-Permuta-8. READ-ONLY no ERP (só rascunho local)." },
-    "resolverStatusBordero": { "file": "actions/permuta/resolver-status-bordero.md", "entity": "Permuta", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/BorderoGestaoService.ts", "src/backend/routes/permutas.ts"], "note": "ADR-0014: status PERMUTA→BORDERÔ por adiantamento (statusPorAdiantamento:429-487, GET /permutas/status, lazy, requireRole admin). Resolve a situação viva do borderô (listBorderos borCod#IN); cancelado/estornado/removido → omite → reabre a permuta." },
-    "gerenciarBordero": { "file": "actions/permuta/gerenciar-bordero.md", "entity": "Permuta", "status": "implemented", "impl_files": ["src/backend/domain/service/permutas/BorderoGestaoService.ts", "src/backend/routes/permutas.ts", "src/backend/migrations/0018_permuta_bordero_cache.sql"], "note": "Ciclo de vida do borderô no fin010 (Fase 3.1, v0.6.0; estorno+Liberar REMOVIDOS da UI em v0.7.0/ADR-0014): finalizarBordero:196-212/cancelarBordero:217-232/excluirBaixa:81-147/excluirBordero:154-194 + estornarBordero:238-250 (gated, autorização server-side por trilha — requireOwnBorderoFilCod:266-275/guardAcaoBordero:282-283). Rotas POST /borderos/:borCod/{finalizar:454,cancelar:476,estornar:498} + DELETE /borderos/:borCod:520[/baixas/:invoiceDocCod:543] (requireRole admin). Listagem via cache permuta_bordero (listarBorderos:295-356). Endpoint removerDaTrilha/DELETE /trilha REMOVIDO (Regis R-1 P0 dupla-baixa)." },
-    "ingerirPagamentos": { "file": "actions/sispag/ingerir-pagamentos.md", "entity": "TituloAPagar", "status": "implemented", "impl_files": ["src/backend/migrations/0024_pagamento_ingestao.sql", "src/backend/migrations/0025_titulo_internacional.sql", "src/backend/domain/client/ConexosSispagClient.ts", "src/backend/domain/repository/sispag/TituloAPagarRepository.ts", "src/backend/domain/repository/sispag/PagamentoIngestaoRunRepository.ts", "src/backend/domain/service/sispag/IngestaoPagamentosService.ts", "src/backend/domain/service/sispag/SispagPainelService.ts", "src/backend/routes/sispag.ts", "src/backend/jobs/ingest-pagamentos.ts"], "resolved_by": ["ADR-0016", "ADR-0017"], "note": "SISPAG ingestão: cron (job:ingest-pagamentos) + manual (POST /sispag/ingestao), histórico GET /sispag/ingestao/runs. Persiste os DADOS BÁSICOS da carteira em titulo_a_pagar (UPSERT, chave filCod:docCod:titCod) + run de auditoria pagamento_ingestao_run; anti-fantasma (marcarInativosForaDaRun → ativo=false). Advisory-lock (IngestLockBusyError→409), idempotência (pagamento_ingestao_idempotency), BoundedConcurrency fan-out. Espelha elegerAdiantamentos+ADR-0006. ADR-0017: enriquece internacional em cada título (via ConexosSispagClient.listExteriorDocCods set EX bulk, com298) → persistido p/ o filtro do painel. Detalhe de remessa hidratado AO VIVO só no envio (anti-drift). READ-only no ERP (I1) — escrita LOCAL (Postgres)." },
-    "montarPainelPagamentos": { "file": "actions/sispag/montar-painel-pagamentos.md", "entity": "TituloAPagar", "status": "implemented", "impl_files": ["src/backend/domain/client/ConexosSispagClient.ts", "src/backend/domain/repository/sispag/TituloAPagarRepository.ts", "src/backend/domain/service/sispag/SispagPainelService.ts", "src/backend/domain/interface/sispag/SispagInterface.ts", "src/backend/routes/sispag.ts", "src/frontend/app/sispag/page.tsx"], "resolved_by": ["ADR-0015", "ADR-0016"], "note": "SISPAG Fatia 1: painel diário READ-ONLY (GET /sispag/painel). ADR-0016: os títulos passam a vir do BANCO (TituloAPagarRepository.listAtivos, carteira persistida pela ingestão) — janela −15d..+45d + aging + aprovado (alçada com308) + pago; KPIs; lotes fin015 nativos + borderôs fin010 a-pagar seguem AO VIVO como CONTEXTO. Leitura autenticada. Nenhuma escrita no ERP (I1)." },
-    "gerenciarLoteCandidato": { "file": "actions/sispag/gerenciar-lote-candidato.md", "entity": "LotePagamento", "status": "planned", "impl_files": ["src/backend/migrations/0023_lote_pagamento.sql", "src/backend/domain/service/sispag/SispagPainelService.ts", "src/backend/domain/interface/sispag/SispagInterface.ts", "src/backend/routes/sispag.ts", "src/frontend/app/sispag/page.tsx"], "resolved_by": ["ADR-0015"], "note": "SISPAG Fatia 2: criarLoteCandidato (L1)/incluirTituloNoLote+removerTituloDoLote (L2)/listarLotesCandidatos. Escrita LOCAL (lote_pagamento/_item) + auditoria; requireRole admin nas mutações. Inclusão valida I2 (elegibilidade)/I3 (não-duplicação)/I4 (uma filial); ItemLote com snapshot valor/venc/credor. Nenhuma escrita no ERP (I1)." },
-    "finalizarLote": { "file": "actions/sispag/finalizar-lote.md", "entity": "LotePagamento", "status": "planned", "impl_files": ["src/backend/migrations/0023_lote_pagamento.sql", "src/backend/domain/service/sispag/SispagPainelService.ts", "src/backend/domain/interface/sispag/SispagInterface.ts", "src/backend/routes/sispag.ts", "src/frontend/app/sispag/page.tsx"], "resolved_by": ["ADR-0015"], "note": "SISPAG Fatia 2 — o GATE: finalizarLote (L3 RASCUNHO→FINALIZADO, registra finalizadoPor/em, revalida itens elegíveis) + reabrirLote (L4, reversível enquanto sem downstream) + cancelarLote (L5, terminal). requireRole admin. SEM downstream nesta fatia (I1) — FINALIZADO é gatilho conceitual (ponto de sutura da próxima fatia)." }
+  "DeclaracaoImportacao": {
+   "file": "entities/declaracao-importacao.md",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/client/ConexosClient.ts",
+    "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
+    "src/backend/domain/service/permutas/AlocacaoPermutasService.ts"
+   ],
+   "resolved_by": [
+    "P0-4 (dataBase wire fields cdiDtaCi imp019 / dioDtaDesembaraco imp223; probe 2026-06-18; XOR confirmed in real data)"
+   ],
+   "note": "Gate 4 (D.I XOR DUIMP) na permuta automática; na alocação cross-process a invoice escolhida DEVE ter D.I (data-base/variação vem dela). Adto cliente-filtro dispensa Gate 4 (ADR-0007)."
   },
-  "business_rules": {
-    "elegibilidade-permuta": { "file": "business-rules/elegibilidade-permuta.md", "invariant": "I3", "status": "implemented", "has_canonical_test": false, "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts"], "resolved_by": ["P0-6", "P0-5", "gate-3-pago-via-detail"] },
-    "di-xor-duimp": { "file": "business-rules/di-xor-duimp.md", "invariant": "I2", "status": "implemented", "has_canonical_test": false, "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts"], "resolved_by": ["P0-4 (dataBase read + XOR confirmed in real data; probe 2026-06-18)"] },
-    "classificacao-juros-desconto": { "file": "business-rules/classificacao-juros-desconto.md", "status": "implemented", "has_canonical_test": false, "impl_files": ["src/backend/domain/service/permutas/VariacaoCambialPermutaService.ts"], "resolved_by": ["P0-1", "P1-2"] },
-    "aging-anchor": { "file": "business-rules/aging-anchor.md", "status": "implemented", "has_canonical_test": false, "impl_files": ["src/backend/domain/service/permutas/EleicaoPermutasService.ts"], "resolved_by": ["P0-8", "P0-4 (dataBase read; probe 2026-06-18)"] },
-    "distribuicao-simples-greedy": { "file": "business-rules/distribuicao-simples-greedy.md", "invariant": "I-Permuta-2", "status": "implemented", "has_canonical_test": true, "impl_files": ["src/backend/domain/interface/permutas/Invoice.ts", "src/backend/domain/interface/permutas/Gestao.ts", "src/backend/domain/service/permutas/EleicaoPermutasService.ts", "src/backend/domain/service/permutas/IngestaoPermutasService.ts", "src/backend/domain/service/permutas/GestaoPermutasService.ts", "src/frontend/app/permutas/page.tsx"], "resolved_by": ["ADR-0010 (greedy N:1 com teto; caso 1408 ZNSHINE)"], "open_gap": ["residual grande num único adto → validar com o time se vira revisão manual (ADR-0010)"], "note": "Auto-casamento Simples N:1 = greedy (maior saldo primeiro; desempate aging) + teto da invoice (valorAbertoNegociado) + parcial (residual em aberto). READ-ONLY no ERP." },
-    "multipla-automatica": { "file": "business-rules/multipla-automatica.md", "invariant": "I-Permuta-6", "status": "implemented", "has_canonical_test": true, "impl_files": ["src/backend/domain/service/permutas/GestaoPermutasService.ts", "src/backend/domain/service/permutas/AlocacaoPermutasService.ts", "src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts"], "resolved_by": ["ADR-0014"], "note": "Casamento-manual único do processo cujo saldoNeg cobre Σ invoices (saldoNeg+1 ≥ Σ, USD) vira AUTOMÁTICA (casamentos sintéticos pré-distribuídos). autoElegivel em GestaoPermutasService.ts:322-335; defesa server-side AlocacaoPermutasService.autoAlocarSeElegivel:300-349. Testes diretos (Regis R-2 Testability P0)." },
-    "reclassificacao-ultrapassa-invoice": { "file": "business-rules/reclassificacao-ultrapassa-invoice.md", "invariant": "I-Permuta-7", "status": "implemented", "has_canonical_test": true, "impl_files": ["src/backend/domain/service/permutas/GestaoPermutasService.ts"], "resolved_by": ["ADR-0014"], "note": "Casamento simples cujos adtos ultrapassam o em-aberto da invoice (Σ saldoNeg − Σ valorASerUsado > 1) cai para manual: N→cross-over, 1→multiplas. adtosQueUltrapassamInvoice:219-251." },
-    "auto-alocacao-atomica": { "file": "business-rules/auto-alocacao-atomica.md", "invariant": "I-Permuta-8", "status": "implemented", "has_canonical_test": true, "impl_files": ["src/backend/domain/service/permutas/AlocacaoPermutasService.ts", "src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts"], "resolved_by": ["ADR-0014", "Regis-Review 2026-06-24-2011 R-2 (Availability/Fault-Tolerance P1, Testability P0)"], "note": "Auto-alocação no Baixar é all-or-nothing: criarRascunhosAtomico:357-391 reverte rascunhos na falha parcial (sem meia-permuta). Compensação local (rascunhos não tocam o ERP)." },
-    "elegibilidade-titulo-lote": { "file": "business-rules/elegibilidade-titulo-lote.md", "invariant": "I2", "status": "planned", "has_canonical_test": false, "impl_files": ["src/backend/domain/service/sispag/SispagPainelService.ts", "src/backend/domain/client/ConexosSispagClient.ts"], "resolved_by": ["ADR-0015"], "open_gap": ["níveis-de-alçada (Flávia)", "residual-pago-centavos (herdado de Permutas)"], "note": "SISPAG: só título liberado (AND titVld1/2/3libera, com308) + não pago entra no lote. Valida na inclusão e revalida na finalização. Espelha o Gate 3 de Permutas." },
-    "lote-uma-filial": { "file": "business-rules/lote-uma-filial.md", "invariant": "I4", "status": "planned", "has_canonical_test": false, "impl_files": ["src/backend/migrations/0023_lote_pagamento.sql", "src/backend/domain/service/sispag/SispagPainelService.ts"], "resolved_by": ["ADR-0015"], "open_gap": ["agrupamento-banco-conta (Flávia) — filial só nesta fatia; banco/conta metadado opcional"], "note": "SISPAG: todos os itens de um lote são da mesma filial (compatível com o fin015 nativo, por filial/banco). Multi-filial = múltiplos lotes." },
-    "nao-duplicacao-titulo-lote": { "file": "business-rules/nao-duplicacao-titulo-lote.md", "invariant": "I3", "status": "planned", "has_canonical_test": false, "impl_files": ["src/backend/migrations/0023_lote_pagamento.sql", "src/backend/domain/service/sispag/SispagPainelService.ts"], "resolved_by": ["ADR-0015"], "note": "SISPAG: título (filCod:docCod:titCod) não em dois lotes RASCUNHO — UNIQUE parcial (WHERE status='RASCUNHO') + check em app (defesa em profundidade, espelha permuta_alocacao). Cancelar libera o título." },
-    "lote-uniforme-nacional-internacional": { "file": "business-rules/lote-uniforme-nacional-internacional.md", "invariant": "I7", "status": "implemented", "has_canonical_test": true, "impl_files": ["src/backend/migrations/0025_titulo_internacional.sql", "src/backend/domain/client/ConexosSispagClient.ts", "src/backend/domain/service/sispag/IngestaoPagamentosService.ts", "src/backend/domain/service/sispag/LotePagamentoService.ts", "src/backend/domain/repository/sispag/LotePagamentoRepository.ts", "src/backend/domain/errors/LoteTipoConflitoError.ts", "src/frontend/app/sispag/page.tsx"], "resolved_by": ["ADR-0017"], "note": "SISPAG: um lote é 100% nacional (boleto/PIX) OU 100% internacional (câmbio/exterior) — nunca misto (trilhos de remessa distintos). Classe fixada pelo 1º item; item divergente → LoteTipoConflitoError (HTTP 422). Discriminador com298 ufEspSigla='EX' (exterior=internacional; UF BR=nacional); fin064 NÃO carrega ufEspSigla → enriquecido via com298 (isDocInternacional autoritativo single-doc na inclusão, anti-drift; listExteriorDocCods set EX bulk na ingestão). internacional persistido em titulo_a_pagar + lote_pagamento_item (migration 0025) p/ o filtro do painel. Espelha a forma do I4 (uma filial). READ-ONLY no ERP (I1)." }
+  "VariacaoCambial": {
+   "file": "entities/variacao-cambial.md",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/service/permutas/VariacaoCambialPermutaService.ts",
+    "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
+    "src/backend/domain/client/ConexosClient.ts",
+    "src/backend/migrations/0008_adiantamento_taxa.sql",
+    "src/backend/migrations/0009_invoice_taxa.sql"
+   ],
+   "resolved_by": [
+    "P0-1",
+    "P1-2"
+   ],
+   "note": "Classificação juros/desconto por comparação de TAXA. Na alocação (Permuta): delta = valorAlocado × (taxaAdto − taxaInvoice), data-base = D.I da invoice (ADR-0008)."
   },
-  "state_machines": {
-    "elegibilidade-permuta-candidata": {
-      "file": "state-machines/elegibilidade-permuta-candidata.md",
-      "entity": "PermutaCandidata",
-      "status": "partial",
-      "impl_files": [
-        "src/backend/migrations/0005_estado_casamento_manual.sql",
-        "src/backend/migrations/0012_estado_permuta_manual.sql",
-        "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
-        "src/backend/domain/service/permutas/GestaoPermutasService.ts"
-      ],
-      "note": "States descoberta|elegivel|casamento-manual|permuta-manual|bloqueada implementados (T1-T4). EXECUTADA (baixa fin010) = Fase 3 (ADR-0013) = partial: T5 reconciliarPermuta implementada e gated (dry-run não transiciona)."
-    },
-    "status-permuta-bordero": {
-      "file": "state-machines/status-permuta-bordero.md",
-      "entity": "Permuta",
-      "status": "implemented",
-      "impl_files": [
-        "src/backend/domain/service/permutas/BorderoGestaoService.ts",
-        "src/backend/routes/permutas.ts",
-        "src/backend/migrations/0018_permuta_bordero_cache.sql"
-      ],
-      "note": "ADR-0014: status da permuta vs borderô do fin010 (pendente | aguardando-finalizacao | finalizado). statusPorAdiantamento:429-487 (GET /permutas/status). B1 baixa settled (EM CADASTRO); B2 finalizar; B3 cancelado/estornado/removido → reabre (pendente). Estorno+Liberar removidos da UI (estornarBordero/route /estornar seguem no backend)."
-    },
-    "lote-pagamento": {
-      "file": "state-machines/lote-pagamento.md",
-      "entity": "LotePagamento",
-      "status": "planned",
-      "impl_files": [
-        "src/backend/migrations/0023_lote_pagamento.sql",
-        "src/backend/domain/service/sispag/SispagPainelService.ts",
-        "src/backend/routes/sispag.ts"
-      ],
-      "note": "ADR-0015 (SISPAG): ciclo do lote candidato RASCUNHO|FINALIZADO|CANCELADO (estado LOCAL). Transições L1 criarLoteCandidato / L2 incluir-removerTitulo / L3 finalizarLote (gate) / L4 reabrirLote (reversível enquanto sem downstream) / L5 cancelarLote (terminal). Estados PROCESSANDO/ENVIADO/BAIXADO fora de escopo (out_of_scope_states, próxima fatia). planned."
-    }
+  "PermutaCandidata": {
+   "file": "entities/permuta-candidata.md",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
+    "src/backend/domain/service/permutas/GestaoPermutasService.ts",
+    "src/backend/domain/service/permutas/IngestaoPermutasService.ts",
+    "src/backend/domain/repository/permutas/PermutaRelationalRepository.ts",
+    "src/backend/domain/repository/permutas/PermutaSnapshotRepository.ts",
+    "src/backend/domain/interface/permutas/PermutaCandidata.ts",
+    "src/backend/domain/interface/permutas/Gestao.ts",
+    "src/backend/migrations/0012_estado_permuta_manual.sql",
+    "src/frontend/app/permutas/page.tsx"
+   ],
+   "resolved_by": [
+    "P0-6",
+    "P0-8",
+    "P0-5",
+    "P0-4 (aging column read; probe 2026-06-18)"
+   ],
+   "note": "Estados: descoberta|elegivel|casamento-manual|permuta-manual|bloqueada (migration 0012). Classificação derivada tipoPermuta (simples/multiplas/cross-over/cross-process, ADR-0009) calculada em GestaoPermutasService — não persiste. ADR-0010: auto-casamento Simples (toCasamentoRows) ficou PARCIAL — distribuição greedy N:1 com teto da invoice; expõe saldoRestante. ADR-0014: nova flag derivada autoElegivel (múltipla AUTOMÁTICA quando o adto cobre todas as invoices do processo, GestaoPermutasService.ts:322-335); tipoPermuta pode ser RECLASSIFICADO (simples→cross-over/multiplas quando ultrapassa a invoice, :219-251, :309-320). Aba 'Simples'→'Automáticas'."
   },
-  "integrations": {
-    "conexos": {
-      "file": "integrations/conexos.md",
-      "direction": "read-write (read amplo Permutas+SISPAG + write-back fin010 gated; SISPAG READ-only)",
-      "status": "implemented",
-      "impl_files": ["src/backend/domain/client/ConexosClient.ts", "src/backend/domain/client/ConexosSispagClient.ts", "src/backend/domain/client/permutas/conexosPermutasConstants.ts", "src/backend/domain/client/permutas/conexosPermutasSchemas.ts", "src/backend/domain/service/permutas/BorderoGestaoService.ts", "src/backend/domain/service/sispag/SispagPainelService.ts", "src/backend/migrations/0017_invoice_importador.sql", "src/backend/migrations/0018_permuta_bordero_cache.sql", "src/backend/migrations/0019_permuta_perf_indexes.sql"],
-      "resolved_by": ["P0-3 (docVldTipoAdto=1; probe 2026-06-18)", "P0-4 (cdiDtaCi / dioDtaDesembaraco; probe 2026-06-18)", "P0-7", "gate-3-pago-via-detail (getDetalheTitulos)", "ADR-0015 (SISPAG read surface)"],
-      "note": "Leitura de adtos/invoices/D.I + detalhe + busca live cross-process (Permutas). ADR-0014: universo completo de invoices finalizadas (listInvoicesFinalizadas:709+), importador via imp021 (listProcessos:467+), borderôs de permuta (listBorderos:1301+ borVldTipo=2) + baixas (listBaixas:1155+); cache local permuta_bordero (migrations 0018/0019). Write-back fin010 (escrita) = Fase 3 (ADR-0013) gated. ADR-0015 (Escopo II/SISPAG): superfície de LEITURA via ConexosSispagClient (READ-only, I1) — fin064 carteira de pagamentos + com308 alçada (liberado) + fin015 lotes nativos (contexto) + fin010 borderôs a-pagar (contexto). ADR-0017: NEW métodos READ-only no ConexosSispagClient — isDocInternacional(filCod,docCod) (autoritativo single-doc, com298, usado na inclusão do lote) + listExteriorDocCods(filCod) (set EX bulk, com298, usado na ingestão) p/ classificar nacional × internacional (ufEspSigla='EX'; fin064 não carrega). Escrita SISPAG (fin015 gerar remessa / fin052 retorno / fin010 baixa) = FUTURO/gated, próxima fatia (transporte pasta+Nexxera)."
-    }
+  "Permuta": {
+   "file": "entities/permuta.md",
+   "status": "partial",
+   "impl_files": [
+    "src/backend/migrations/0014_permuta_alocacao.sql",
+    "src/backend/migrations/0018_permuta_bordero_cache.sql",
+    "src/backend/migrations/0019_permuta_perf_indexes.sql",
+    "src/backend/domain/repository/permutas/PermutaAlocacaoRepository.ts",
+    "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
+    "src/backend/domain/service/permutas/GestaoPermutasService.ts",
+    "src/backend/domain/service/permutas/BorderoGestaoService.ts",
+    "src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts",
+    "src/backend/domain/errors/AlocacaoSaldoError.ts",
+    "src/backend/routes/permutas.ts",
+    "src/frontend/app/permutas/page.tsx"
+   ],
+   "open_gap": [
+    "validação em produção do 1º caso real de baixa fin010 (Fase 3 implementada, gated por flags)"
+   ],
+   "note": "A Permuta consumada nasce como ALOCAÇÃO rascunho (permuta_alocacao, sobrevive à re-ingestão) e é CONSUMIDA pela ação reconciliarPermuta (ADR-0013), que executa a baixa no ERP fin010 (handshake de 5 chamadas; write-ahead em permuta_alocacao_execucao). GATED (CONEXOS_WRITE_ENABLED+CONEXOS_DRY_RUN, homologação-first). Invariantes de saldo, mesma filial, mesma moeda, invoice com D.I. ADR-0014: múltipla AUTOMÁTICA (autoAlocarSeElegivel:300-349) + auto-alocação ATÔMICA no Baixar (criarRascunhosAtomico:357-391, I-Permuta-8); status PERMUTA→BORDERÔ (BorderoGestaoService.statusPorAdiantamento:429-487, GET /permutas/status); cache de borderôs permuta_bordero (refreshCache:381-418, migrations 0018/0019). partial: alocação + write-back + classificação automática + ciclo de borderô implementados; falta validar 1º caso real de baixa em produção."
   },
-  "ui_flows": {},
-  "workflows": {}
+  "ClienteFiltro": {
+   "file": "entities/cliente-filtro.md",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/migrations/0013_cliente_filtro.sql",
+    "src/backend/migrations/0011_adiantamento_importador.sql",
+    "src/backend/domain/repository/permutas/ClienteFiltroRepository.ts",
+    "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
+    "src/backend/routes/permutas.ts",
+    "src/frontend/app/permutas/clientes-filtro/page.tsx"
+   ],
+   "note": "Entidade de CONFIGURAÇÃO: estrutura (regra de roteamento por importador) na ontologia; valores (quais importadores) são config do cliente (cliente_filtro). Roteia adtos pago+saldo para permuta-manual (ADR-0007)."
+  },
+  "TituloAPagar": {
+   "file": "entities/titulo-a-pagar.md",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/migrations/0024_pagamento_ingestao.sql",
+    "src/backend/migrations/0025_titulo_internacional.sql",
+    "src/backend/domain/client/ConexosSispagClient.ts",
+    "src/backend/domain/repository/sispag/TituloAPagarRepository.ts",
+    "src/backend/domain/repository/sispag/PagamentoIngestaoRunRepository.ts",
+    "src/backend/domain/service/sispag/IngestaoPagamentosService.ts",
+    "src/backend/domain/service/sispag/SispagPainelService.ts",
+    "src/backend/domain/interface/sispag/SispagInterface.ts",
+    "src/backend/routes/sispag.ts",
+    "src/backend/jobs/ingest-pagamentos.ts",
+    "src/frontend/app/sispag/page.tsx"
+   ],
+   "note": "ADR-0016 (SISPAG ingestão): a carteira EVOLUIU de read model read-through → PERSISTIDA. Dados básicos ingeridos (cron + manual) e gravados em titulo_a_pagar (migration 0024, chave filCod:docCod:titCod, UPSERT); run de auditoria pagamento_ingestao_run (+ idempotency). Painel LÊ DO BANCO (TituloAPagarRepository.listAtivos). NEW fields: aprovado (persistido; era o derivado 'liberado' do ADR-0015), pago, pes_cod, tpd_cod, banco, num_remessa, pronto_para_remessa (heurística INFORMATIVA — validação real no envio), ativo (anti-fantasma via marcarInativosForaDaRun), ingestao_run_id, atualizado_em. ADR-0017 (lote uniforme I7): NEW field internacional (migration 0025) — classe nacional/internacional do título, discriminador com298 ufEspSigla='EX'; o fin064 NÃO carrega ufEspSigla → enriquecido via com298 (ConexosSispagClient.listExteriorDocCods set EX bulk na ingestão), persistido p/ o filtro do painel. Detalhe de remessa hidratado AO VIVO só no envio (Fatia 3, anti-drift). implemented. READ-only no ERP (I1) — única escrita é o Postgres. Ver ADR-0015 (prévio: read-through)."
+  },
+  "LotePagamento": {
+   "file": "entities/lote-pagamento.md",
+   "status": "planned",
+   "impl_files": [
+    "src/backend/migrations/0023_lote_pagamento.sql",
+    "src/backend/migrations/0025_titulo_internacional.sql",
+    "src/backend/domain/service/sispag/SispagPainelService.ts",
+    "src/backend/domain/service/sispag/LotePagamentoService.ts",
+    "src/backend/domain/repository/sispag/LotePagamentoRepository.ts",
+    "src/backend/domain/errors/LoteTipoConflitoError.ts",
+    "src/backend/domain/interface/sispag/SispagInterface.ts",
+    "src/backend/routes/sispag.ts",
+    "src/frontend/app/sispag/page.tsx",
+    "src/backend/migrations/0026_lote_automatico.sql",
+    "src/backend/domain/service/sispag/FormacaoLotesService.ts",
+    "src/backend/domain/repository/sispag/TituloAPagarRepository.ts",
+    "src/backend/jobs/formar-lotes.ts"
+   ],
+   "note": "ADR-0015 (Escopo II/SISPAG): agregado LOCAL persistido (lote_pagamento raiz + lote_pagamento_item membro; ItemLote guarda snapshot valor/venc/credor). Lote candidato montado pela analista. Estados RASCUNHO|FINALIZADO|CANCELADO (state-machines/lote-pagamento). Invariantes I2 (elegibilidade), I3 (não-duplicação UNIQUE parcial), I4 (uma filial). ADR-0017: NEW invariante I7 (lote uniforme nacional × internacional) — 100% nacional OU 100% internacional, nunca misto; classe fixada pelo 1º item; item divergente → LoteTipoConflitoError (422); enforce em LotePagamentoService.incluirTitulo (classe autoritativa via com298, anti-drift); NEW field internacional em lote_pagamento_item (migration 0025). planned. ZERO escrita no ERP (I1) — FINALIZADO é gatilho conceitual, sem downstream nesta fatia. ADR-0018: NEW propriedade automatico (formado pelo cron formarLotesAutomaticos vs. montado à mão) — migration 0026. O cron (pós-ingestão) + manual POST /sispag/lotes/formar pré-montam lotes candidatos (a-vencer ≤7d, filial×classe×banco, I4/I7) que nascem RASCUNHO p/ revisão; auto-lote RASCUNHO com título vencido é DESFEITO/liberado (desfazerAutomaticosVencidos, sem status VENCIDO). Cron nunca toca lote manual/finalizado. CAVEAT: banco NULL nos títulos a-pagar → agrupamento degenera p/ filial×classe. READ-only no ERP (I1)."
+  }
+ },
+ "actions": {
+  "elegerAdiantamentos": {
+   "file": "actions/eleger-adiantamentos.md",
+   "entity": "Adiantamento",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
+    "src/backend/domain/service/permutas/IngestaoPermutasService.ts"
+   ],
+   "resolved_by": [
+    "P0-3 (docVldTipoAdto=1; probe 2026-06-18)",
+    "P0-7"
+   ],
+   "note": "Override de roteamento cliente-filtro → permuta-manual (ADR-0007). Trigger manual POST /permutas/ingestao + cron (ADR-0006)."
+  },
+  "avaliarElegibilidade": {
+   "file": "actions/avaliar-elegibilidade.md",
+   "entity": "PermutaCandidata",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/service/permutas/EleicaoPermutasService.ts"
+   ],
+   "resolved_by": [
+    "P0-4 (Gate 4 dataBase via cdiDtaCi/dioDtaDesembaraco; probe 2026-06-18)",
+    "gate-3-pago-via-detail (resolvido via getDetalheTitulos)"
+   ]
+  },
+  "casarInvoice": {
+   "file": "actions/casar-invoice.md",
+   "entity": "Invoice",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/service/permutas/EleicaoPermutasService.ts"
+   ],
+   "resolved_by": [
+    "P0-6",
+    "P0-5"
+   ]
+  },
+  "calcularVariacaoCambial": {
+   "file": "actions/calcular-variacao-cambial.md",
+   "entity": "VariacaoCambial",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/service/permutas/VariacaoCambialPermutaService.ts",
+    "src/backend/domain/service/permutas/AlocacaoPermutasService.ts"
+   ],
+   "resolved_by": [
+    "P0-1"
+   ]
+  },
+  "exporNoPainel": {
+   "file": "actions/expor-no-painel.md",
+   "entity": "PermutaCandidata",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/service/permutas/GestaoPermutasService.ts",
+    "src/frontend/app/permutas/page.tsx"
+   ],
+   "resolved_by": [
+    "P0-8",
+    "P0-4 (aging column populates; probe 2026-06-18)"
+   ]
+  },
+  "alocarPermuta": {
+   "file": null,
+   "entity": "Permuta",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
+    "src/backend/domain/repository/permutas/PermutaAlocacaoRepository.ts"
+   ],
+   "note": "Implementada (alocação N:M cross-process, ADR-0008). Documentada na entity Permuta; arquivo de ação dedicado a criar numa próxima curadoria se necessário."
+  },
+  "buscarInvoiceCrossProcess": {
+   "file": null,
+   "entity": "Permuta",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/service/permutas/AlocacaoPermutasService.ts"
+   ],
+   "note": "buscarInvoices(priCod, filCod) — busca LIVE escopada à filial, valida D.I, mesma moeda (ADR-0008/0009)."
+  },
+  "reconciliarPermuta": {
+   "file": "business-rules/fin010-write-contract.md",
+   "entity": "Permuta",
+   "status": "partial",
+   "impl_files": [
+    "src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts",
+    "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
+    "src/backend/domain/client/ConexosClient.ts",
+    "src/backend/domain/repository/permutas/PermutaExecucaoRepository.ts",
+    "src/backend/migrations/0015_permuta_alocacao_execucao.sql",
+    "src/backend/routes/permutas.ts",
+    "src/frontend/app/permutas/page.tsx"
+   ],
+   "open_gap": [
+    "validação em produção do 1º caso real; baixa parcial (invoice N:M); finalização do borderô; caminho DESCONTO"
+   ],
+   "note": "Baixa efetiva no ERP (fin010) — Fase 3 (ADR-0013). Handshake de 5 chamadas; write-ahead + idempotência (permuta_alocacao_execucao); GATED por CONEXOS_WRITE_ENABLED+CONEXOS_DRY_RUN; homologação-first. ADR-0014: caso automático sem rascunho AUTO-ALOCA (atômico) antes da baixa (ReconciliacaoPermutaService.ts:97-109 → AlocacaoPermutasService.criarRascunhosAtomico)."
+  },
+  "autoAlocarPermuta": {
+   "file": "business-rules/auto-alocacao-atomica.md",
+   "entity": "Permuta",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
+    "src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts"
+   ],
+   "note": "ADR-0014: cria os rascunhos de permuta_alocacao sozinho no Baixar — múltipla AUTOMÁTICA (autoAlocarSeElegivel:300-349) ou casamento simples (autoAlocarDeCasamento:399-421), ATÔMICO (criarRascunhosAtomico:357-391, all-or-nothing). I-Permuta-8. READ-ONLY no ERP (só rascunho local)."
+  },
+  "resolverStatusBordero": {
+   "file": "actions/permuta/resolver-status-bordero.md",
+   "entity": "Permuta",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/service/permutas/BorderoGestaoService.ts",
+    "src/backend/routes/permutas.ts"
+   ],
+   "note": "ADR-0014: status PERMUTA→BORDERÔ por adiantamento (statusPorAdiantamento:429-487, GET /permutas/status, lazy, requireRole admin). Resolve a situação viva do borderô (listBorderos borCod#IN); cancelado/estornado/removido → omite → reabre a permuta."
+  },
+  "gerenciarBordero": {
+   "file": "actions/permuta/gerenciar-bordero.md",
+   "entity": "Permuta",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/service/permutas/BorderoGestaoService.ts",
+    "src/backend/routes/permutas.ts",
+    "src/backend/migrations/0018_permuta_bordero_cache.sql"
+   ],
+   "note": "Ciclo de vida do borderô no fin010 (Fase 3.1, v0.6.0; estorno+Liberar REMOVIDOS da UI em v0.7.0/ADR-0014): finalizarBordero:196-212/cancelarBordero:217-232/excluirBaixa:81-147/excluirBordero:154-194 + estornarBordero:238-250 (gated, autorização server-side por trilha — requireOwnBorderoFilCod:266-275/guardAcaoBordero:282-283). Rotas POST /borderos/:borCod/{finalizar:454,cancelar:476,estornar:498} + DELETE /borderos/:borCod:520[/baixas/:invoiceDocCod:543] (requireRole admin). Listagem via cache permuta_bordero (listarBorderos:295-356). Endpoint removerDaTrilha/DELETE /trilha REMOVIDO (Regis R-1 P0 dupla-baixa)."
+  },
+  "ingerirPagamentos": {
+   "file": "actions/sispag/ingerir-pagamentos.md",
+   "entity": "TituloAPagar",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/migrations/0024_pagamento_ingestao.sql",
+    "src/backend/migrations/0025_titulo_internacional.sql",
+    "src/backend/domain/client/ConexosSispagClient.ts",
+    "src/backend/domain/repository/sispag/TituloAPagarRepository.ts",
+    "src/backend/domain/repository/sispag/PagamentoIngestaoRunRepository.ts",
+    "src/backend/domain/service/sispag/IngestaoPagamentosService.ts",
+    "src/backend/domain/service/sispag/SispagPainelService.ts",
+    "src/backend/routes/sispag.ts",
+    "src/backend/jobs/ingest-pagamentos.ts"
+   ],
+   "resolved_by": [
+    "ADR-0016",
+    "ADR-0017"
+   ],
+   "note": "SISPAG ingestão: cron (job:ingest-pagamentos) + manual (POST /sispag/ingestao), histórico GET /sispag/ingestao/runs. Persiste os DADOS BÁSICOS da carteira em titulo_a_pagar (UPSERT, chave filCod:docCod:titCod) + run de auditoria pagamento_ingestao_run; anti-fantasma (marcarInativosForaDaRun → ativo=false). Advisory-lock (IngestLockBusyError→409), idempotência (pagamento_ingestao_idempotency), BoundedConcurrency fan-out. Espelha elegerAdiantamentos+ADR-0006. ADR-0017: enriquece internacional em cada título (via ConexosSispagClient.listExteriorDocCods set EX bulk, com298) → persistido p/ o filtro do painel. Detalhe de remessa hidratado AO VIVO só no envio (anti-drift). READ-only no ERP (I1) — escrita LOCAL (Postgres)."
+  },
+  "montarPainelPagamentos": {
+   "file": "actions/sispag/montar-painel-pagamentos.md",
+   "entity": "TituloAPagar",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/client/ConexosSispagClient.ts",
+    "src/backend/domain/repository/sispag/TituloAPagarRepository.ts",
+    "src/backend/domain/service/sispag/SispagPainelService.ts",
+    "src/backend/domain/interface/sispag/SispagInterface.ts",
+    "src/backend/routes/sispag.ts",
+    "src/frontend/app/sispag/page.tsx"
+   ],
+   "resolved_by": [
+    "ADR-0015",
+    "ADR-0016"
+   ],
+   "note": "SISPAG Fatia 1: painel diário READ-ONLY (GET /sispag/painel). ADR-0016: os títulos passam a vir do BANCO (TituloAPagarRepository.listAtivos, carteira persistida pela ingestão) — janela −15d..+45d + aging + aprovado (alçada com308) + pago; KPIs; lotes fin015 nativos + borderôs fin010 a-pagar seguem AO VIVO como CONTEXTO. Leitura autenticada. Nenhuma escrita no ERP (I1)."
+  },
+  "gerenciarLoteCandidato": {
+   "file": "actions/sispag/gerenciar-lote-candidato.md",
+   "entity": "LotePagamento",
+   "status": "planned",
+   "impl_files": [
+    "src/backend/migrations/0023_lote_pagamento.sql",
+    "src/backend/domain/service/sispag/SispagPainelService.ts",
+    "src/backend/domain/interface/sispag/SispagInterface.ts",
+    "src/backend/routes/sispag.ts",
+    "src/frontend/app/sispag/page.tsx"
+   ],
+   "resolved_by": [
+    "ADR-0015"
+   ],
+   "note": "SISPAG Fatia 2: criarLoteCandidato (L1)/incluirTituloNoLote+removerTituloDoLote (L2)/listarLotesCandidatos. Escrita LOCAL (lote_pagamento/_item) + auditoria; requireRole admin nas mutações. Inclusão valida I2 (elegibilidade)/I3 (não-duplicação)/I4 (uma filial); ItemLote com snapshot valor/venc/credor. Nenhuma escrita no ERP (I1)."
+  },
+  "finalizarLote": {
+   "file": "actions/sispag/finalizar-lote.md",
+   "entity": "LotePagamento",
+   "status": "planned",
+   "impl_files": [
+    "src/backend/migrations/0023_lote_pagamento.sql",
+    "src/backend/domain/service/sispag/SispagPainelService.ts",
+    "src/backend/domain/interface/sispag/SispagInterface.ts",
+    "src/backend/routes/sispag.ts",
+    "src/frontend/app/sispag/page.tsx"
+   ],
+   "resolved_by": [
+    "ADR-0015"
+   ],
+   "note": "SISPAG Fatia 2 — o GATE: finalizarLote (L3 RASCUNHO→FINALIZADO, registra finalizadoPor/em, revalida itens elegíveis) + reabrirLote (L4, reversível enquanto sem downstream) + cancelarLote (L5, terminal). requireRole admin. SEM downstream nesta fatia (I1) — FINALIZADO é gatilho conceitual (ponto de sutura da próxima fatia)."
+  },
+  "formarLotesAutomaticos": {
+   "file": "actions/sispag/formar-lotes-automaticos.md",
+   "entity": "LotePagamento",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/migrations/0026_lote_automatico.sql",
+    "src/backend/domain/service/sispag/FormacaoLotesService.ts",
+    "src/backend/domain/repository/sispag/LotePagamentoRepository.ts",
+    "src/backend/domain/repository/sispag/TituloAPagarRepository.ts",
+    "src/backend/jobs/formar-lotes.ts",
+    "src/backend/routes/sispag.ts",
+    "src/frontend/app/sispag/page.tsx"
+   ],
+   "resolved_by": [
+    "ADR-0018"
+   ],
+   "note": "SISPAG formação automática: cron job:formar-lotes (pós-ingestão) + manual POST /sispag/lotes/formar (FormacaoLotesService.formar, advisory-lock FORMACAO_LOCK_KEY). Monta lotes candidatos automaticamente da carteira persistida: elegíveis = A VENCER ≤7d + aprovado/não pago (I2), anti-join vs lote RASCUNHO (I3) (listElegiveisParaFormacao); agrupa por filial×classe×banco (I4/I7). Passo desfazer-vencidos: deleta lotes AUTOMÁTICOS RASCUNHO com título vencido e libera títulos (desfazerAutomaticosVencidos) — só a-vencer é elegível, sem status VENCIDO. Cria via criarLote(automatico=true); nasce RASCUNHO p/ revisão (badge automático). Cron NUNCA toca lote manual/finalizado. NEW field lote_pagamento.automatico (migration 0026). CAVEAT: banco NULL nos títulos a-pagar → agrupamento degenera p/ filial×classe. READ-only no ERP (I1) — lê do banco, escrita LOCAL."
+  }
+ },
+ "business_rules": {
+  "elegibilidade-permuta": {
+   "file": "business-rules/elegibilidade-permuta.md",
+   "invariant": "I3",
+   "status": "implemented",
+   "has_canonical_test": false,
+   "impl_files": [
+    "src/backend/domain/service/permutas/EleicaoPermutasService.ts"
+   ],
+   "resolved_by": [
+    "P0-6",
+    "P0-5",
+    "gate-3-pago-via-detail"
+   ]
+  },
+  "di-xor-duimp": {
+   "file": "business-rules/di-xor-duimp.md",
+   "invariant": "I2",
+   "status": "implemented",
+   "has_canonical_test": false,
+   "impl_files": [
+    "src/backend/domain/service/permutas/EleicaoPermutasService.ts"
+   ],
+   "resolved_by": [
+    "P0-4 (dataBase read + XOR confirmed in real data; probe 2026-06-18)"
+   ]
+  },
+  "classificacao-juros-desconto": {
+   "file": "business-rules/classificacao-juros-desconto.md",
+   "status": "implemented",
+   "has_canonical_test": false,
+   "impl_files": [
+    "src/backend/domain/service/permutas/VariacaoCambialPermutaService.ts"
+   ],
+   "resolved_by": [
+    "P0-1",
+    "P1-2"
+   ]
+  },
+  "aging-anchor": {
+   "file": "business-rules/aging-anchor.md",
+   "status": "implemented",
+   "has_canonical_test": false,
+   "impl_files": [
+    "src/backend/domain/service/permutas/EleicaoPermutasService.ts"
+   ],
+   "resolved_by": [
+    "P0-8",
+    "P0-4 (dataBase read; probe 2026-06-18)"
+   ]
+  },
+  "distribuicao-simples-greedy": {
+   "file": "business-rules/distribuicao-simples-greedy.md",
+   "invariant": "I-Permuta-2",
+   "status": "implemented",
+   "has_canonical_test": true,
+   "impl_files": [
+    "src/backend/domain/interface/permutas/Invoice.ts",
+    "src/backend/domain/interface/permutas/Gestao.ts",
+    "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
+    "src/backend/domain/service/permutas/IngestaoPermutasService.ts",
+    "src/backend/domain/service/permutas/GestaoPermutasService.ts",
+    "src/frontend/app/permutas/page.tsx"
+   ],
+   "resolved_by": [
+    "ADR-0010 (greedy N:1 com teto; caso 1408 ZNSHINE)"
+   ],
+   "open_gap": [
+    "residual grande num único adto → validar com o time se vira revisão manual (ADR-0010)"
+   ],
+   "note": "Auto-casamento Simples N:1 = greedy (maior saldo primeiro; desempate aging) + teto da invoice (valorAbertoNegociado) + parcial (residual em aberto). READ-ONLY no ERP."
+  },
+  "multipla-automatica": {
+   "file": "business-rules/multipla-automatica.md",
+   "invariant": "I-Permuta-6",
+   "status": "implemented",
+   "has_canonical_test": true,
+   "impl_files": [
+    "src/backend/domain/service/permutas/GestaoPermutasService.ts",
+    "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
+    "src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts"
+   ],
+   "resolved_by": [
+    "ADR-0014"
+   ],
+   "note": "Casamento-manual único do processo cujo saldoNeg cobre Σ invoices (saldoNeg+1 ≥ Σ, USD) vira AUTOMÁTICA (casamentos sintéticos pré-distribuídos). autoElegivel em GestaoPermutasService.ts:322-335; defesa server-side AlocacaoPermutasService.autoAlocarSeElegivel:300-349. Testes diretos (Regis R-2 Testability P0)."
+  },
+  "reclassificacao-ultrapassa-invoice": {
+   "file": "business-rules/reclassificacao-ultrapassa-invoice.md",
+   "invariant": "I-Permuta-7",
+   "status": "implemented",
+   "has_canonical_test": true,
+   "impl_files": [
+    "src/backend/domain/service/permutas/GestaoPermutasService.ts"
+   ],
+   "resolved_by": [
+    "ADR-0014"
+   ],
+   "note": "Casamento simples cujos adtos ultrapassam o em-aberto da invoice (Σ saldoNeg − Σ valorASerUsado > 1) cai para manual: N→cross-over, 1→multiplas. adtosQueUltrapassamInvoice:219-251."
+  },
+  "auto-alocacao-atomica": {
+   "file": "business-rules/auto-alocacao-atomica.md",
+   "invariant": "I-Permuta-8",
+   "status": "implemented",
+   "has_canonical_test": true,
+   "impl_files": [
+    "src/backend/domain/service/permutas/AlocacaoPermutasService.ts",
+    "src/backend/domain/service/permutas/ReconciliacaoPermutaService.ts"
+   ],
+   "resolved_by": [
+    "ADR-0014",
+    "Regis-Review 2026-06-24-2011 R-2 (Availability/Fault-Tolerance P1, Testability P0)"
+   ],
+   "note": "Auto-alocação no Baixar é all-or-nothing: criarRascunhosAtomico:357-391 reverte rascunhos na falha parcial (sem meia-permuta). Compensação local (rascunhos não tocam o ERP)."
+  },
+  "elegibilidade-titulo-lote": {
+   "file": "business-rules/elegibilidade-titulo-lote.md",
+   "invariant": "I2",
+   "status": "planned",
+   "has_canonical_test": false,
+   "impl_files": [
+    "src/backend/domain/service/sispag/SispagPainelService.ts",
+    "src/backend/domain/client/ConexosSispagClient.ts"
+   ],
+   "resolved_by": [
+    "ADR-0015"
+   ],
+   "open_gap": [
+    "níveis-de-alçada (Flávia)",
+    "residual-pago-centavos (herdado de Permutas)"
+   ],
+   "note": "SISPAG: só título liberado (AND titVld1/2/3libera, com308) + não pago entra no lote. Valida na inclusão e revalida na finalização. Espelha o Gate 3 de Permutas."
+  },
+  "lote-uma-filial": {
+   "file": "business-rules/lote-uma-filial.md",
+   "invariant": "I4",
+   "status": "planned",
+   "has_canonical_test": false,
+   "impl_files": [
+    "src/backend/migrations/0023_lote_pagamento.sql",
+    "src/backend/domain/service/sispag/SispagPainelService.ts"
+   ],
+   "resolved_by": [
+    "ADR-0015"
+   ],
+   "open_gap": [
+    "agrupamento-banco-conta (Flávia) — filial só nesta fatia; banco/conta metadado opcional"
+   ],
+   "note": "SISPAG: todos os itens de um lote são da mesma filial (compatível com o fin015 nativo, por filial/banco). Multi-filial = múltiplos lotes."
+  },
+  "nao-duplicacao-titulo-lote": {
+   "file": "business-rules/nao-duplicacao-titulo-lote.md",
+   "invariant": "I3",
+   "status": "planned",
+   "has_canonical_test": false,
+   "impl_files": [
+    "src/backend/migrations/0023_lote_pagamento.sql",
+    "src/backend/domain/service/sispag/SispagPainelService.ts"
+   ],
+   "resolved_by": [
+    "ADR-0015"
+   ],
+   "note": "SISPAG: título (filCod:docCod:titCod) não em dois lotes RASCUNHO — UNIQUE parcial (WHERE status='RASCUNHO') + check em app (defesa em profundidade, espelha permuta_alocacao). Cancelar libera o título."
+  },
+  "lote-uniforme-nacional-internacional": {
+   "file": "business-rules/lote-uniforme-nacional-internacional.md",
+   "invariant": "I7",
+   "status": "implemented",
+   "has_canonical_test": true,
+   "impl_files": [
+    "src/backend/migrations/0025_titulo_internacional.sql",
+    "src/backend/domain/client/ConexosSispagClient.ts",
+    "src/backend/domain/service/sispag/IngestaoPagamentosService.ts",
+    "src/backend/domain/service/sispag/LotePagamentoService.ts",
+    "src/backend/domain/repository/sispag/LotePagamentoRepository.ts",
+    "src/backend/domain/errors/LoteTipoConflitoError.ts",
+    "src/frontend/app/sispag/page.tsx"
+   ],
+   "resolved_by": [
+    "ADR-0017"
+   ],
+   "note": "SISPAG: um lote é 100% nacional (boleto/PIX) OU 100% internacional (câmbio/exterior) — nunca misto (trilhos de remessa distintos). Classe fixada pelo 1º item; item divergente → LoteTipoConflitoError (HTTP 422). Discriminador com298 ufEspSigla='EX' (exterior=internacional; UF BR=nacional); fin064 NÃO carrega ufEspSigla → enriquecido via com298 (isDocInternacional autoritativo single-doc na inclusão, anti-drift; listExteriorDocCods set EX bulk na ingestão). internacional persistido em titulo_a_pagar + lote_pagamento_item (migration 0025) p/ o filtro do painel. Espelha a forma do I4 (uma filial). READ-ONLY no ERP (I1)."
+  }
+ },
+ "state_machines": {
+  "elegibilidade-permuta-candidata": {
+   "file": "state-machines/elegibilidade-permuta-candidata.md",
+   "entity": "PermutaCandidata",
+   "status": "partial",
+   "impl_files": [
+    "src/backend/migrations/0005_estado_casamento_manual.sql",
+    "src/backend/migrations/0012_estado_permuta_manual.sql",
+    "src/backend/domain/service/permutas/EleicaoPermutasService.ts",
+    "src/backend/domain/service/permutas/GestaoPermutasService.ts"
+   ],
+   "note": "States descoberta|elegivel|casamento-manual|permuta-manual|bloqueada implementados (T1-T4). EXECUTADA (baixa fin010) = Fase 3 (ADR-0013) = partial: T5 reconciliarPermuta implementada e gated (dry-run não transiciona)."
+  },
+  "status-permuta-bordero": {
+   "file": "state-machines/status-permuta-bordero.md",
+   "entity": "Permuta",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/service/permutas/BorderoGestaoService.ts",
+    "src/backend/routes/permutas.ts",
+    "src/backend/migrations/0018_permuta_bordero_cache.sql"
+   ],
+   "note": "ADR-0014: status da permuta vs borderô do fin010 (pendente | aguardando-finalizacao | finalizado). statusPorAdiantamento:429-487 (GET /permutas/status). B1 baixa settled (EM CADASTRO); B2 finalizar; B3 cancelado/estornado/removido → reabre (pendente). Estorno+Liberar removidos da UI (estornarBordero/route /estornar seguem no backend)."
+  },
+  "lote-pagamento": {
+   "file": "state-machines/lote-pagamento.md",
+   "entity": "LotePagamento",
+   "status": "planned",
+   "impl_files": [
+    "src/backend/migrations/0023_lote_pagamento.sql",
+    "src/backend/domain/service/sispag/SispagPainelService.ts",
+    "src/backend/routes/sispag.ts",
+    "src/backend/migrations/0026_lote_automatico.sql",
+    "src/backend/domain/service/sispag/FormacaoLotesService.ts",
+    "src/backend/domain/repository/sispag/LotePagamentoRepository.ts",
+    "src/backend/jobs/formar-lotes.ts"
+   ],
+   "note": "ADR-0015 (SISPAG): ciclo do lote candidato RASCUNHO|FINALIZADO|CANCELADO (estado LOCAL). Transições L1 criarLoteCandidato / L2 incluir-removerTitulo / L3 finalizarLote (gate) / L4 reabrirLote (reversível enquanto sem downstream) / L5 cancelarLote (terminal). Estados PROCESSANDO/ENVIADO/BAIXADO fora de escopo (out_of_scope_states, próxima fatia). planned. ADR-0018: L1 também disparada pelo cron formarLotesAutomaticos (auto-lote automatico=true, nasce RASCUNHO). NEW transição L6 RASCUNHO→(deletado) desfazer-vencidos: auto-lote RASCUNHO com título vencido é DESFEITO/liberado (só a-vencer elegível) — distinto de CANCELADO (estado terminal da analista); cron nunca toca lote manual/finalizado. Sem status VENCIDO."
+  }
+ },
+ "integrations": {
+  "conexos": {
+   "file": "integrations/conexos.md",
+   "direction": "read-write (read amplo Permutas+SISPAG + write-back fin010 gated; SISPAG READ-only)",
+   "status": "implemented",
+   "impl_files": [
+    "src/backend/domain/client/ConexosClient.ts",
+    "src/backend/domain/client/ConexosSispagClient.ts",
+    "src/backend/domain/client/permutas/conexosPermutasConstants.ts",
+    "src/backend/domain/client/permutas/conexosPermutasSchemas.ts",
+    "src/backend/domain/service/permutas/BorderoGestaoService.ts",
+    "src/backend/domain/service/sispag/SispagPainelService.ts",
+    "src/backend/migrations/0017_invoice_importador.sql",
+    "src/backend/migrations/0018_permuta_bordero_cache.sql",
+    "src/backend/migrations/0019_permuta_perf_indexes.sql"
+   ],
+   "resolved_by": [
+    "P0-3 (docVldTipoAdto=1; probe 2026-06-18)",
+    "P0-4 (cdiDtaCi / dioDtaDesembaraco; probe 2026-06-18)",
+    "P0-7",
+    "gate-3-pago-via-detail (getDetalheTitulos)",
+    "ADR-0015 (SISPAG read surface)"
+   ],
+   "note": "Leitura de adtos/invoices/D.I + detalhe + busca live cross-process (Permutas). ADR-0014: universo completo de invoices finalizadas (listInvoicesFinalizadas:709+), importador via imp021 (listProcessos:467+), borderôs de permuta (listBorderos:1301+ borVldTipo=2) + baixas (listBaixas:1155+); cache local permuta_bordero (migrations 0018/0019). Write-back fin010 (escrita) = Fase 3 (ADR-0013) gated. ADR-0015 (Escopo II/SISPAG): superfície de LEITURA via ConexosSispagClient (READ-only, I1) — fin064 carteira de pagamentos + com308 alçada (liberado) + fin015 lotes nativos (contexto) + fin010 borderôs a-pagar (contexto). ADR-0017: NEW métodos READ-only no ConexosSispagClient — isDocInternacional(filCod,docCod) (autoritativo single-doc, com298, usado na inclusão do lote) + listExteriorDocCods(filCod) (set EX bulk, com298, usado na ingestão) p/ classificar nacional × internacional (ufEspSigla='EX'; fin064 não carrega). Escrita SISPAG (fin015 gerar remessa / fin052 retorno / fin010 baixa) = FUTURO/gated, próxima fatia (transporte pasta+Nexxera)."
+  }
+ },
+ "ui_flows": {},
+ "workflows": {}
 }

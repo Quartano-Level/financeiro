@@ -25,6 +25,7 @@ interface LoteHeaderRow {
     finalizado_em: Date | null;
     versao: number;
     criado_em: Date;
+    automatico: boolean;
 }
 
 interface ItemRow {
@@ -79,23 +80,31 @@ export default class LotePagamentoRepository {
         finalizadoEm: h.finalizado_em ? h.finalizado_em.toISOString() : undefined,
         versao: h.versao,
         criadoEm: h.criado_em ? h.criado_em.toISOString() : undefined,
+        automatico: h.automatico,
         itens,
     });
 
     public criarLote = async (
-        input: { filCod: number; banco?: string; conta?: string; criadoPor: string },
+        input: {
+            filCod: number;
+            banco?: string;
+            conta?: string;
+            criadoPor: string;
+            automatico?: boolean;
+        },
         tx?: TransactionClient,
     ): Promise<LotePagamento> => {
         const id = randomUUID();
         await this.db(tx).insert(
-            `INSERT INTO lote_pagamento (id, fil_cod, banco, conta, status, criado_por)
-             VALUES ($id, $filCod, $banco, $conta, 'RASCUNHO', $criadoPor)`,
+            `INSERT INTO lote_pagamento (id, fil_cod, banco, conta, status, criado_por, automatico)
+             VALUES ($id, $filCod, $banco, $conta, 'RASCUNHO', $criadoPor, $automatico)`,
             {
                 id,
                 filCod: input.filCod,
                 banco: input.banco ?? null,
                 conta: input.conta ?? null,
                 criadoPor: input.criadoPor,
+                automatico: input.automatico ?? false,
             },
         );
         const lote = await this.getLoteComItens(id, tx);
@@ -103,13 +112,27 @@ export default class LotePagamentoRepository {
         return lote;
     };
 
+    /**
+     * Desfaz (DELETE) os lotes AUTOMÁTICOS em RASCUNHO que já contêm algum título VENCIDO —
+     * só títulos a vencer são elegíveis. Os itens caem por CASCATA (títulos voltam a ficar
+     * livres). NÃO toca em lotes manuais nem finalizados. Retorna quantos lotes foram desfeitos.
+     */
+    public desfazerAutomaticosVencidos = async (tx?: TransactionClient): Promise<number> =>
+        this.db(tx).update(
+            `DELETE FROM lote_pagamento l
+             WHERE l.automatico = TRUE AND l.status = 'RASCUNHO'
+               AND EXISTS (
+                 SELECT 1 FROM lote_pagamento_item i
+                 WHERE i.lote_id = l.id AND i.vencimento IS NOT NULL AND i.vencimento < now())`,
+        );
+
     public getLoteComItens = async (
         id: string,
         tx?: TransactionClient,
     ): Promise<LotePagamento | null> => {
         const header = await this.db(tx).selectFirst<LoteHeaderRow>(
             `SELECT id, fil_cod, banco, conta, status, criado_por, finalizado_por,
-                    finalizado_em, versao, criado_em
+                    finalizado_em, versao, criado_em, automatico
              FROM lote_pagamento WHERE id = $id`,
             { id },
         );
@@ -126,7 +149,7 @@ export default class LotePagamentoRepository {
     public listLotes = async (filtro: ListarLotesFiltro): Promise<LotePagamento[]> => {
         const headers = (await this.databaseClient.selectMany(
             `SELECT id, fil_cod, banco, conta, status, criado_por, finalizado_por,
-                    finalizado_em, versao, criado_em
+                    finalizado_em, versao, criado_em, automatico
              FROM lote_pagamento
              WHERE ($status::text IS NULL OR status = $status)
                AND ($filCod::int IS NULL OR fil_cod = $filCod)
@@ -197,6 +220,46 @@ export default class LotePagamentoRepository {
                 internacional: item.internacional ?? false,
                 incluidoPor: item.incluidoPor,
             },
+        );
+    };
+
+    /** Insere VÁRIOS itens num único INSERT multi-linha (formação automática — rápido). */
+    public adicionarItens = async (
+        loteId: string,
+        itens: Array<{
+            filCod: number;
+            docCod: string;
+            titCod: string;
+            credor?: string;
+            valor?: number;
+            vencimento?: number;
+            internacional?: boolean;
+            incluidoPor: string;
+        }>,
+        tx?: TransactionClient,
+    ): Promise<void> => {
+        if (itens.length === 0) return;
+        const tuples: string[] = [];
+        const params: Record<string, unknown> = { loteId };
+        itens.forEach((it, i) => {
+            tuples.push(
+                `($loteId, $f${i}, $d${i}, $t${i}, $cr${i}, $v${i}, $ve${i}, $in${i}, $ip${i})`,
+            );
+            params[`f${i}`] = it.filCod;
+            params[`d${i}`] = it.docCod;
+            params[`t${i}`] = it.titCod;
+            params[`cr${i}`] = it.credor ?? null;
+            params[`v${i}`] = it.valor ?? null;
+            params[`ve${i}`] = it.vencimento != null ? new Date(it.vencimento) : null;
+            params[`in${i}`] = it.internacional ?? false;
+            params[`ip${i}`] = it.incluidoPor;
+        });
+        await this.db(tx).insert(
+            `INSERT INTO lote_pagamento_item
+                (lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento, internacional, incluido_por)
+             VALUES ${tuples.join(', ')}
+             ON CONFLICT (lote_id, fil_cod, doc_cod, tit_cod) DO NOTHING`,
+            params,
         );
     };
 

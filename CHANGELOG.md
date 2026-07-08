@@ -1,5 +1,23 @@
 # Columbia Financeiro — Changelog
 
+## v0.15.0 (2026-07-08) — SISPAG: Formação automática de lotes (cron pós-ingestão)
+
+- **feat(sispag):** um cron novo (`job:formar-lotes`, roda logo após a ingestão) + endpoint
+  manual (`POST /sispag/lotes/formar`) que **monta lotes candidatos automaticamente** a partir
+  da carteira persistida — o analista revisa (add/remove) antes de aprovar.
+  - **Regras** (as mesmas da montagem manual): mesma filial (I4), mesma classe nacional/
+    internacional (I7), e **só títulos A VENCER** (≤7 dias — vencidos NÃO entram).
+    **Agrupamento** por filial × classe × banco.
+  - **Desfaz-vencidos:** a cada run, lotes automáticos ainda em RASCUNHO que já contêm título
+    vencido são **desfeitos** (títulos liberados) — só a vencer é elegível. O cron **nunca** mexe
+    em lotes manuais nem finalizados.
+  - **Anti-duplicação:** só forma lote com títulos que ainda não estão em nenhum RASCUNHO (anti-join).
+  - Lotes automáticos nascem **RASCUNHO** e aparecem em **"Lotes candidatos"** com badge
+    "automático". Migration `0026` (`lote_pagamento.automatico`). Ontologia v0.8 (ADR-0018).
+  - **Caveat:** hoje `banco` vem nulo nos títulos a-pagar (fin064 não o traz antes do pagamento),
+    então o agrupamento por banco degenera para filial × classe. Follow-up quando houver fonte de banco/conta.
+  - Verificado ao vivo: 9 lotes automáticos / 699 títulos.
+
 ## v0.14.0 (2026-07-08) — SISPAG: Nacional × Internacional (filtro + lote uniforme)
 
 - **feat(sispag):** classificação **Nacional × Internacional** dos títulos a pagar e a regra de

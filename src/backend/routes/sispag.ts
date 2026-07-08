@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { bootstrapAppContainer } from '../domain/appContainer.js';
 import { isHandlerError } from '../domain/libs/handler/HandlerError.js';
 import PagamentoIngestaoRunRepository from '../domain/repository/sispag/PagamentoIngestaoRunRepository.js';
+import FormacaoLotesService from '../domain/service/sispag/FormacaoLotesService.js';
 import IngestaoPagamentosService from '../domain/service/sispag/IngestaoPagamentosService.js';
 import LotePagamentoService from '../domain/service/sispag/LotePagamentoService.js';
 import SispagPainelService from '../domain/service/sispag/SispagPainelService.js';
@@ -219,6 +220,24 @@ router.post(
         const idempotencyKey = req.header('Idempotency-Key') ?? undefined;
         try {
             const result = await service.executar({ triggeredBy: ator(req), idempotencyKey });
+            res.json(result);
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
+
+// POST /sispag/lotes/formar — forma lotes candidatos automaticamente (cron/manual).
+// Mesmas regras da montagem (I4/I7, só a vencer ≤7d). `IngestLockBusyError` → 409.
+router.post(
+    '/lotes/formar',
+    requireRole('admin'),
+    heavyRouteLimiter,
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(FormacaoLotesService);
+        try {
+            const result = await service.formar({ triggeredBy: ator(req) });
             res.json(result);
         } catch (err) {
             if (!respondLoteError(req, res, err)) throw err;

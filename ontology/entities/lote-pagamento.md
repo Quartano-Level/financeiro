@@ -1,19 +1,23 @@
 ---
 name: LotePagamento
 type: entity
-ontology_version: "0.7"
+ontology_version: "0.8"
 implementation_status: planned
 status: draft
 owners: [yuri]
 related_files:
   - src/backend/migrations/0023_lote_pagamento.sql
   - src/backend/migrations/0025_titulo_internacional.sql
+  - src/backend/migrations/0026_lote_automatico.sql
   - src/backend/domain/service/sispag/SispagPainelService.ts
   - src/backend/domain/service/sispag/LotePagamentoService.ts
+  - src/backend/domain/service/sispag/FormacaoLotesService.ts
   - src/backend/domain/repository/sispag/LotePagamentoRepository.ts
+  - src/backend/domain/repository/sispag/TituloAPagarRepository.ts
   - src/backend/domain/errors/LoteTipoConflitoError.ts
   - src/backend/domain/interface/sispag/SispagInterface.ts
   - src/backend/routes/sispag.ts
+  - src/backend/jobs/formar-lotes.ts
   - src/frontend/app/sispag/page.tsx
 properties:
   - id
@@ -21,6 +25,7 @@ properties:
   - banco
   - conta
   - status
+  - automatico
   - criadoPor
   - finalizadoPor
   - finalizadoEm
@@ -30,9 +35,10 @@ relationships:
   - "LotePagamento 1—N ItemLote (agregado — os títulos incluídos, snapshot de valor/venc na inclusão)"
   - "LotePagamento N—1 Filial (via filCod — todos os itens são da MESMA filial, I4)"
   - "ItemLote N—1 TituloAPagar (via filCod:docCod:titCod — o título do ERP incluído no lote)"
-last_review: 2026-07-07
+last_review: 2026-07-08
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): montar o lote diário de pagamentos, analista revisa e finaliza (human-in-the-loop)"
+  - "ADR-0018 — formação AUTOMÁTICA de lotes candidatos (cron pós-ingestão + manual): pré-montar os lotes das obrigações a-vencer é a automação natural sobre a montagem manual; universal em contas-a-pagar de trading com comex"
   - "ontology/_inbox/sispag-native-vs-nexxera.md §1 — 17 lotes fin015 reais (FinLoteSispag por filial/banco/conta, analistas FLAVIA_SANTOS/RENE_DUARTE) — o lote de pagamento é conceito nativo do ERP"
   - "ontology/_inbox/sispag-painel-montagem-interview.md — Eixo 1/2, lote candidato montado pela analista (RASCUNHO→FINALIZADO)"
   - "Conceito universal de financeiro/comex: agrupar títulos a pagar em um lote para revisão e liberação em bloco (o borderô/lote de pagamento)"
@@ -57,6 +63,24 @@ run) — espelha a doutrina de `permuta_alocacao` (rascunho persistido) da Frent
 Na próxima fatia, um `LotePagamento` FINALIZADO é o insumo que **dirige** o `fin015` (montar +
 gerar remessa) — não um gerador de arquivo paralelo. Ver ADR-0015.
 
+## Formação automática vs. montagem manual (`automatico`, ADR-0018)
+
+Um `LotePagamento` nasce de dois caminhos, discriminados pela propriedade `automatico`:
+
+- **Manual** (`automatico=false`) — a analista abre e preenche o lote à mão (`gerenciarLoteCandidato`).
+- **Automático** (`automatico=true`) — o cron `formarLotesAutomaticos` (encadeado após a ingestão) +
+  o trigger manual `POST /sispag/lotes/formar` **pré-montam** lotes candidatos a partir da carteira
+  persistida: agrupam títulos **a-vencer ≤7d** por **filial × classe × banco** (I4/I7), nascendo
+  **RASCUNHO** em "Lotes candidatos" para a analista **revisar** antes de finalizar (badge
+  "automático"). Ver `actions/sispag/formar-lotes-automaticos.md`.
+
+**Comportamento `desfazer-vencidos` (só afeta o automático):** a cada rodada, um lote **automático**
+ainda **RASCUNHO** que passou a conter **≥1 título VENCIDO** é **desfeito** (deletado) e seus títulos
+**liberados** — só a-vencer é elegível a lote automático. Isso **não** é um status novo (não há
+`VENCIDO` na máquina): o auto-lote é **efêmero/re-formável**, distinto do `CANCELADO` (decisão da
+analista) e do lote **manual** (que o cron **nunca** toca). Lotes **FINALIZADOS/CANCELADOS** também são
+intocáveis. Ver `state-machines/lote-pagamento.md` (transição L6) e ADR-0018.
+
 ## Agregado: `LotePagamento` (raiz) + `ItemLote` (membro)
 
 O agregado é a **raiz de consistência**: as invariantes (uma filial por lote I4, não-duplicação
@@ -73,7 +97,8 @@ fora de um lote.
 | `banco` | string? | `lote_pagamento.banco` | **Metadado opcional** — agrupamento é por filial nesta fatia; banco/conta é informativo (ADR-0015). |
 | `conta` | string? | `lote_pagamento.conta` | Metadado opcional (idem `banco`). |
 | `status` | enum | `lote_pagamento.status` | `RASCUNHO \| FINALIZADO \| CANCELADO` — constantes tipadas. Ver `state-machines/lote-pagamento.md`. |
-| `criadoPor` | string | `lote_pagamento.criado_por` | Auditoria: quem abriu o lote. |
+| `automatico` | boolean | `lote_pagamento.automatico` (migration 0026) | **Procedência do lote** — `true` = formado pelo cron `formarLotesAutomaticos`; `false` = montado à mão pela analista (`gerenciarLoteCandidato`). Dirige o **badge "automático"** na UI e, sobretudo, o **escopo do cron**: a formação só cria/desfaz lotes **automáticos RASCUNHO** — lotes manuais e finalizados são **intocáveis** (ADR-0018). Ver `actions/sispag/formar-lotes-automaticos.md`. |
+| `criadoPor` | string | `lote_pagamento.criado_por` | Auditoria: quem abriu o lote (`'cron'` nos automáticos, username nos manuais). |
 | `finalizadoPor` | string? | `lote_pagamento.finalizado_por` | Auditoria: quem finalizou (gate). `null` enquanto RASCUNHO. |
 | `finalizadoEm` | Date? | `lote_pagamento.finalizado_em` | Timestamp da finalização. `null` enquanto RASCUNHO. |
 | `versao` | number | `lote_pagamento.versao` | Controle otimista de concorrência (I6 — 2 analistas). Incrementa a cada transição. |

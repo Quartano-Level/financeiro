@@ -164,7 +164,16 @@ export interface LotePagamento {
     finalizadoEm?: string;
     versao: number;
     criadoEm?: string;
+    /** Formado pelo cron de formação automática (vs. montado manualmente pelo analista). */
+    automatico?: boolean;
     itens: ItemLote[];
+}
+
+/** Resultado de um run de formação automática de lotes. */
+export interface FormacaoLotesResult {
+    lotesFormados: number;
+    titulosLotados: number;
+    lotesDesfeitos: number;
 }
 
 /** Entrada — criar lote. */

@@ -36,6 +36,7 @@ import {
   fetchSispagPainel,
   fetchIngestaoRuns,
   finalizarLote,
+  formarLotes,
   incluirTitulo,
   IngestaoPagamentosEmAndamentoError,
   type PagamentoIngestaoRun,
@@ -101,6 +102,7 @@ export default function SispagPage() {
   const [selecionados, setSelecionados] = React.useState<Set<string>>(new Set())
   const [busy, setBusy] = React.useState(false)
   const [ingerindo, setIngerindo] = React.useState(false)
+  const [formando, setFormando] = React.useState(false)
   const [ingestaoOpen, setIngestaoOpen] = React.useState(false)
   const [runs, setRuns] = React.useState<PagamentoIngestaoRun[] | null>(null)
   const [runsLoading, setRunsLoading] = React.useState(false)
@@ -163,6 +165,25 @@ export default function SispagPage() {
       }
     } finally {
       setIngerindo(false)
+    }
+  }
+
+  const formar = async () => {
+    setFormando(true)
+    try {
+      const r = await formarLotes()
+      await Promise.all([carregar(), recarregarLotes()])
+      toast.success('Formação concluída', {
+        description: `${r.lotesFormados} lote(s) · ${r.titulosLotados} título(s)${
+          r.lotesDesfeitos ? ` · ${r.lotesDesfeitos} desfeito(s)` : ''
+        }.`,
+      })
+    } catch (e) {
+      toast.error('Falha ao formar lotes', {
+        description: e instanceof Error ? e.message : undefined,
+      })
+    } finally {
+      setFormando(false)
     }
   }
 
@@ -506,11 +527,20 @@ export default function SispagPage() {
 
             {/* ---- Lotes candidatos (nossos) ---- */}
             <TabsContent value="lotes-candidatos" className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  Lotes montados (manual ou automático) para revisar e aprovar.
+                </p>
+                <Button size="sm" variant="outline" onClick={formar} disabled={formando}>
+                  <Layers className="size-4" />{' '}
+                  {formando ? 'Formando…' : 'Formar lotes automáticos'}
+                </Button>
+              </div>
               {lotes.filter((l) => l.status !== 'CANCELADO').length === 0 ? (
                 <EmptyState
                   icon={<Layers className="size-6" />}
                   title="Nenhum lote candidato"
-                  description="Selecione títulos na aba anterior e clique em Criar lote."
+                  description='Clique em "Formar lotes automáticos" ou selecione títulos e crie um lote manual.'
                 />
               ) : (
                 <div className="space-y-3">
@@ -523,6 +553,20 @@ export default function SispagPage() {
                           <CardHeader className="flex flex-row items-center justify-between gap-2">
                             <div className="flex items-center gap-2">
                               <StatusLoteBadge status={l.status} />
+                              {l.automatico ? (
+                                <Badge
+                                  variant="outline"
+                                  className="border-info/40 text-info"
+                                  title="Formado automaticamente pelo cron — revise (remova/adicione) antes de aprovar."
+                                >
+                                  automático
+                                </Badge>
+                              ) : null}
+                              {l.itens.some((i) => i.internacional) ? (
+                                <Badge variant="outline" className="border-info/40 text-info">
+                                  internacional
+                                </Badge>
+                              ) : null}
                               <CardTitle className="text-sm">
                                 Filial {l.filCod} · {l.itens.length} título(s) · {formatBRL(total)}
                               </CardTitle>

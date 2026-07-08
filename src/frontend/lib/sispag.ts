@@ -139,6 +139,7 @@ export interface ItemLote {
   credor?: string
   valor?: number
   vencimento?: number
+  internacional?: boolean
   incluidoPor: string
   incluidoEm?: string
 }
@@ -154,7 +155,15 @@ export interface LotePagamento {
   finalizadoEm?: string
   versao: number
   criadoEm?: string
+  /** Formado pelo cron de formação automática (vs. montado manualmente). */
+  automatico?: boolean
   itens: ItemLote[]
+}
+
+export interface FormacaoLotesResult {
+  lotesFormados: number
+  titulosLotados: number
+  lotesDesfeitos: number
 }
 
 /** Chamada que devolve `{ lote }` — lança Error com a mensagem do backend (409/422). */
@@ -243,4 +252,16 @@ export async function fetchIngestaoRuns(limit = 10): Promise<PagamentoIngestaoRu
   if (!res.ok) throw new Error(`API ${res.status}`)
   const j = (await res.json()) as { runs: PagamentoIngestaoRun[] }
   return j.runs ?? []
+}
+
+/** Dispara a formação automática de lotes candidatos (mesmo motor do cron). */
+export async function formarLotes(): Promise<FormacaoLotesResult> {
+  const res = await apiFetch(`${API}/sispag/lotes/formar`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(await withAuthHeaders()) },
+  })
+  if (res.status === 409)
+    throw new Error('Já existe uma formação de lotes em andamento. Aguarde e tente de novo.')
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  return (await res.json()) as FormacaoLotesResult
 }
