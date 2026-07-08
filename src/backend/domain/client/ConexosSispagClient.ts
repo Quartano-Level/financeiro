@@ -197,9 +197,60 @@ export default class ConexosSispagClient {
             if (!parsed.success) continue;
             const r = parsed.data;
             if (r.docCod !== docCod || (r.titCod ?? '1') !== titCod) continue;
-            return this.mapTitulo(r, filCod);
+            const titulo = this.mapTitulo(r, filCod);
+            // Classe (nacional/internacional) é autoritativa via com298 — o fin064 não a traz.
+            titulo.internacional = await this.isDocInternacional(filCod, docCod);
+            return titulo;
         }
         return null;
+    };
+
+    /**
+     * Classe do documento (`com298`): `ufEspSigla='EX'` = pagamento ao EXTERIOR
+     * (internacional); qualquer UF brasileira = nacional. Leitura AUTORITATIVA
+     * (anti-drift) usada no invariante I7 (lote uniforme). O `fin064` não traz `ufEspSigla`.
+     */
+    public isDocInternacional = async (filCod: number, docCod: string): Promise<boolean> => {
+        const { rows } = await this.base.listGenericPaginated<Record<string, unknown>>(
+            'com298/list',
+            {
+                fieldList: ['docCod', 'ufEspSigla'],
+                filterList: { 'docCod#EQ': docCod },
+                serviceName: 'com298',
+                pageNumber: 1,
+                pageSize: 50,
+            },
+            { filCod },
+        );
+        for (const r of rows) {
+            if (String(r.docCod) === docCod) {
+                return String(r.ufEspSigla ?? '').toUpperCase() === 'EX';
+            }
+        }
+        return false;
+    };
+
+    /**
+     * Conjunto de `docCod` INTERNACIONAIS (exterior) de uma filial — `com298` filtrado
+     * por `ufEspSigla='EX'`. Usado na ingestão para classificar a carteira em massa.
+     */
+    public listExteriorDocCods = async (filCod: number): Promise<Set<string>> => {
+        const { rows } = await this.base.listGenericPaginated<Record<string, unknown>>(
+            'com298/list',
+            {
+                fieldList: ['docCod', 'ufEspSigla'],
+                filterList: { 'vldStatus#IN': ['1', '3'], 'ufEspSigla#LIKE': 'EX' },
+                serviceName: 'com298',
+                pageNumber: 1,
+                pageSize: 5000,
+            },
+            { filCod },
+        );
+        const set = new Set<string>();
+        for (const r of rows) {
+            if (r.docCod !== null && r.docCod !== undefined) set.add(String(r.docCod));
+        }
+        return set;
     };
 
     /** Lotes SISPAG nativos de uma filial (`fin015/list`). */

@@ -131,4 +131,42 @@ describe('ConexosSispagClient (read-only)', () => {
             'borVldTipo#EQ': 2,
         });
     });
+
+    it('isDocInternacional detecta exterior por ufEspSigla=EX (com298)', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValue({
+            count: 1,
+            rows: [{ docCod: '200', ufEspSigla: 'EX' }],
+        });
+        expect(await make(base).isDocInternacional(2, '200')).toBe(true);
+        const [endpoint, body] = base.listGenericPaginated.mock.calls[0];
+        expect(endpoint).toBe('com298/list');
+        expect((body as { filterList: Record<string, unknown> }).filterList).toMatchObject({
+            'docCod#EQ': '200',
+        });
+    });
+
+    it('isDocInternacional retorna false para UF brasileira', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValue({
+            count: 1,
+            rows: [{ docCod: '200', ufEspSigla: 'SP' }],
+        });
+        expect(await make(base).isDocInternacional(2, '200')).toBe(false);
+    });
+
+    it('listExteriorDocCods devolve o conjunto de docCods EX', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValue({
+            count: 2,
+            rows: [{ docCod: 200 }, { docCod: '201' }],
+        });
+        const set = await make(base).listExteriorDocCods(2);
+        expect(set.has('200')).toBe(true);
+        expect(set.has('201')).toBe(true);
+        const [, body] = base.listGenericPaginated.mock.calls[0];
+        expect((body as { filterList: Record<string, unknown> }).filterList).toMatchObject({
+            'ufEspSigla#LIKE': 'EX',
+        });
+    });
 });

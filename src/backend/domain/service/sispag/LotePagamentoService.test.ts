@@ -3,6 +3,7 @@ import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteFilialError from '../../errors/LoteFilialError.js';
+import LoteTipoConflitoError from '../../errors/LoteTipoConflitoError.js';
 import LoteVersaoConflitoError from '../../errors/LoteVersaoConflitoError.js';
 import TituloEmOutroLoteError from '../../errors/TituloEmOutroLoteError.js';
 import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
@@ -120,6 +121,53 @@ describe('LotePagamentoService — invariantes', () => {
                 LoteFilialError,
             );
             expect(conexos.getTituloAPagar as jest.Mock).not.toHaveBeenCalled();
+        });
+
+        it('I7 — rejeita título de classe diferente (lote nacional × título internacional)', async () => {
+            const repo = buildRepo();
+            repo.getLoteComItens.mockResolvedValue(
+                lote({
+                    itens: [
+                        {
+                            loteId: 'L1',
+                            filCod: 2,
+                            docCod: '100',
+                            titCod: '9',
+                            internacional: false,
+                            incluidoPor: 'u1',
+                        },
+                    ],
+                }),
+            );
+            const { service } = make(repo, titulo({ docCod: '200', internacional: true }));
+            await expect(service.incluirTitulo({ ...input, docCod: '200' })).rejects.toBeInstanceOf(
+                LoteTipoConflitoError,
+            );
+            expect(repo.adicionarItem).not.toHaveBeenCalled();
+        });
+
+        it('I7 — aceita título da MESMA classe e propaga internacional ao item', async () => {
+            const repo = buildRepo();
+            repo.getLoteComItens.mockResolvedValue(
+                lote({
+                    itens: [
+                        {
+                            loteId: 'L1',
+                            filCod: 2,
+                            docCod: '100',
+                            titCod: '9',
+                            internacional: true,
+                            incluidoPor: 'u1',
+                        },
+                    ],
+                }),
+            );
+            const { service } = make(repo, titulo({ docCod: '200', internacional: true }));
+            await service.incluirTitulo({ ...input, docCod: '200' });
+            expect(repo.adicionarItem).toHaveBeenCalledWith(
+                expect.objectContaining({ internacional: true }),
+                expect.anything(),
+            );
         });
 
         it('I3 — rejeita título já em OUTRO lote RASCUNHO', async () => {

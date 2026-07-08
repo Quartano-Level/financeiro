@@ -22,6 +22,7 @@ interface TituloRow {
     num_remessa: string | null;
     tpd_cod: string | null;
     pronto_para_remessa: boolean;
+    internacional: boolean;
 }
 
 /**
@@ -51,6 +52,7 @@ export default class TituloAPagarRepository {
         numRemessa: r.num_remessa ?? undefined,
         tpdCod: r.tpd_cod ?? undefined,
         prontoParaRemessa: r.pronto_para_remessa,
+        internacional: r.internacional,
         ativo: true,
     });
 
@@ -74,7 +76,7 @@ export default class TituloAPagarRepository {
         chunk.forEach((t, i) => {
             tuples.push(
                 `($f${i}, $d${i}, $t${i}, $cr${i}, $pe${i}, $v${i}, $mo${i}, $ve${i}, ` +
-                    `$ap${i}, $pa${i}, $ba${i}, $nr${i}, $tp${i}, $pr${i}, TRUE, $runId, now())`,
+                    `$ap${i}, $pa${i}, $ba${i}, $nr${i}, $tp${i}, $pr${i}, $in${i}, TRUE, $runId, now())`,
             );
             params[`f${i}`] = t.filCod;
             params[`d${i}`] = t.docCod;
@@ -90,11 +92,12 @@ export default class TituloAPagarRepository {
             params[`nr${i}`] = t.numRemessa ?? null;
             params[`tp${i}`] = t.tpdCod ?? null;
             params[`pr${i}`] = t.prontoParaRemessa ?? false;
+            params[`in${i}`] = t.internacional ?? false;
         });
         await tx.insert(
             `INSERT INTO titulo_a_pagar (
                 fil_cod, doc_cod, tit_cod, credor, pes_cod, valor, moeda, vencimento,
-                aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa,
+                aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, internacional,
                 ativo, ingestao_run_id, atualizado_em
              ) VALUES ${tuples.join(', ')}
              ON CONFLICT (fil_cod, doc_cod, tit_cod) DO UPDATE SET
@@ -102,6 +105,7 @@ export default class TituloAPagarRepository {
                 moeda = EXCLUDED.moeda, vencimento = EXCLUDED.vencimento, aprovado = EXCLUDED.aprovado,
                 pago = EXCLUDED.pago, banco = EXCLUDED.banco, num_remessa = EXCLUDED.num_remessa,
                 tpd_cod = EXCLUDED.tpd_cod, pronto_para_remessa = EXCLUDED.pronto_para_remessa,
+                internacional = EXCLUDED.internacional,
                 ativo = TRUE, ingestao_run_id = EXCLUDED.ingestao_run_id, atualizado_em = now()`,
             params,
         );
@@ -129,7 +133,7 @@ export default class TituloAPagarRepository {
     public listAtivos = async (): Promise<TituloAPagar[]> => {
         const rows = (await this.databaseClient.selectMany(
             `SELECT fil_cod, doc_cod, tit_cod, credor, pes_cod, valor, moeda, vencimento,
-                    aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa
+                    aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, internacional
              FROM titulo_a_pagar
              WHERE ativo = TRUE
              ORDER BY vencimento ASC NULLS LAST`,

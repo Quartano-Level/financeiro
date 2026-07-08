@@ -94,6 +94,7 @@ export default function SispagPage() {
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [filtro, setFiltro] = React.useState<'a-vencer' | 'vencidos' | 'todos'>('todos')
+  const [origem, setOrigem] = React.useState<'todos' | 'nacional' | 'internacional'>('todos')
   const [selecionados, setSelecionados] = React.useState<Set<string>>(new Set())
   const [busy, setBusy] = React.useState(false)
   const [ingerindo, setIngerindo] = React.useState(false)
@@ -147,10 +148,13 @@ export default function SispagPage() {
 
   const titulos = painel?.titulos ?? []
   const titulosFiltrados = React.useMemo(() => {
-    if (filtro === 'a-vencer') return titulos.filter((t) => (t.diasAteVencimento ?? -1) >= 0)
-    if (filtro === 'vencidos') return titulos.filter((t) => (t.diasAteVencimento ?? 0) < 0)
-    return titulos
-  }, [titulos, filtro])
+    let base = titulos
+    if (origem === 'nacional') base = base.filter((t) => !t.internacional)
+    else if (origem === 'internacional') base = base.filter((t) => t.internacional)
+    if (filtro === 'a-vencer') return base.filter((t) => (t.diasAteVencimento ?? -1) >= 0)
+    if (filtro === 'vencidos') return base.filter((t) => (t.diasAteVencimento ?? 0) < 0)
+    return base
+  }, [titulos, filtro, origem])
 
   // Filial + busca + paginação — mesmo kit do painel de Permutas (consistência de UX).
   const abaTitulos = useTabelaFiltro(
@@ -182,6 +186,14 @@ export default function SispagPage() {
     if (filiais.size > 1) {
       toast.error('Selecione títulos de uma única filial', {
         description: 'Um lote é de uma filial só. Filtre por filial e monte um lote por vez.',
+      })
+      return
+    }
+    // I7 — um lote é 100% nacional OU 100% internacional (rails de pagamento distintos).
+    if (selTitulos.some((t) => t.internacional) && selTitulos.some((t) => !t.internacional)) {
+      toast.error('Não misture nacional com internacional', {
+        description:
+          'Um lote é 100% nacional ou 100% internacional. Use o filtro acima e monte um lote de cada.',
       })
       return
     }
@@ -328,17 +340,31 @@ export default function SispagPage() {
             <TabsContent value="titulos" className="space-y-3">
               <FiltroBarra aba={abaTitulos} buscaPlaceholder="Buscar por credor, documento ou banco…" />
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex gap-1">
-                  {(['todos', 'a-vencer', 'vencidos'] as const).map((f) => (
-                    <Button
-                      key={f}
-                      size="sm"
-                      variant={filtro === f ? 'default' : 'outline'}
-                      onClick={() => setFiltro(f)}
-                    >
-                      {f === 'todos' ? 'Todos' : f === 'a-vencer' ? 'A vencer' : 'Vencidos'}
-                    </Button>
-                  ))}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <div className="flex gap-1">
+                    {(['todos', 'nacional', 'internacional'] as const).map((o) => (
+                      <Button
+                        key={o}
+                        size="sm"
+                        variant={origem === o ? 'default' : 'outline'}
+                        onClick={() => setOrigem(o)}
+                      >
+                        {o === 'todos' ? 'Todas' : o === 'nacional' ? 'Nacionais' : 'Internacionais'}
+                      </Button>
+                    ))}
+                  </div>
+                  <div className="flex gap-1">
+                    {(['todos', 'a-vencer', 'vencidos'] as const).map((f) => (
+                      <Button
+                        key={f}
+                        size="sm"
+                        variant={filtro === f ? 'default' : 'outline'}
+                        onClick={() => setFiltro(f)}
+                      >
+                        {f === 'todos' ? 'Todos' : f === 'a-vencer' ? 'A vencer' : 'Vencidos'}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   {selecionados.size > 0 ? (
@@ -410,6 +436,15 @@ export default function SispagPage() {
                               ) : (
                                 <Badge variant="outline">bloqueado</Badge>
                               )}
+                              {t.internacional ? (
+                                <Badge
+                                  variant="outline"
+                                  className="border-info/40 text-info"
+                                  title="Pagamento ao exterior (câmbio) — não entra em lote nacional."
+                                >
+                                  internacional
+                                </Badge>
+                              ) : null}
                               {t.prontoParaRemessa === false ? (
                                 <Badge
                                   variant="outline"

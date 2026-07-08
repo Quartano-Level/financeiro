@@ -1,12 +1,13 @@
 ---
 name: TituloAPagar
 type: entity
-ontology_version: "0.6"
+ontology_version: "0.7"
 implementation_status: implemented
 status: draft
 owners: [yuri]
 related_files:
   - src/backend/migrations/0024_pagamento_ingestao.sql
+  - src/backend/migrations/0025_titulo_internacional.sql
   - src/backend/domain/client/ConexosSispagClient.ts
   - src/backend/domain/repository/sispag/TituloAPagarRepository.ts
   - src/backend/domain/repository/sispag/PagamentoIngestaoRunRepository.ts
@@ -30,6 +31,7 @@ properties:
   - banco
   - numRemessa
   - tpdCod
+  - internacional
   - prontoParaRemessa
   - ativo
   - ingestaoRunId
@@ -42,6 +44,7 @@ relationships:
 last_review: 2026-07-08
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): pagamentos de importação a vencer/aprovados"
+  - "ADR-0017 — classe nacional × internacional do título (discriminador com298 ufEspSigla='EX'): pagamentos correm por trilhos distintos (boleto/PIX × câmbio/exterior); base do lote uniforme (I7)"
   - "ontology/_inbox/sispag-briefing.md §2 — sondagem read-only Conexos PRD (2026-07-07): fin064 Gestão de Pagamentos, 2.100 (fil1) / 18.234 (fil2) títulos reais"
   - "ontology/_inbox/sispag-native-vs-nexxera.md §2.5/§3 — 'aprovado para baixa' = flags de alçada titVld1/2/3libera (com308), doc 100 título 1 R$135.724,80 aprovado nos 3 níveis"
   - "ADR-0016 — a carteira de pagamentos vira PERSISTIDA (cadência diária, espelha a ingestão de Permutas): base durável do painel diário"
@@ -98,6 +101,7 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
 | `banco` | string? | `fin064` → banco/conta do título (`bncCod`/`ccoCod`) → `banco` | Banco/conta destino. **Metadado** nesta fatia (o agrupamento é por filial; ver ADR-0015). |
 | `numRemessa` | string? | `fin064` → `titNumRemessa` → `num_remessa` | Nº da remessa quando o título já saiu (contexto). |
 | `tpdCod` | string? | `com298` → `tpd_cod` | Tipo de documento. |
+| `internacional` | boolean | **enriquecido** na ingestão via `com298.ufEspSigla` (`'EX'` = exterior) → `internacional` | **Classe do título** — `true` = internacional (câmbio/exterior, `ufEspSigla='EX'`), `false` = nacional (boleto/PIX, UF brasileira). O `fin064` **não** carrega `ufEspSigla`, então a classe é hidratada do `com298` (bulk `listExteriorDocCods` na ingestão; autoritativo `isDocInternacional` na inclusão do lote). **Persistido** para o filtro do painel (Todas / Nacionais / Internacionais). Base do **lote uniforme** (I7). Ver `business-rules/lote-uniforme-nacional-internacional.md` (migration 0025). |
 | `prontoParaRemessa` | boolean | **heurística** da ingestão (ver abaixo) → `pronto_para_remessa` | **INFORMATIVO** — tem modalidade + destino (banco/conta, barras ou PIX)? Palpite de completude. A **validação autoritativa** acontece **no envio, ao vivo** (Fatia 3). **Não** é gate de elegibilidade. |
 | `ativo` | boolean | anti-fantasma: título fora da run mais recente → `ativo=false` | Título que **some** da run de ingestão mais recente é marcado **inativo** (some do painel). Ver "Anti-fantasma". |
 | `ingestaoRunId` | string? (UUID) | FK → `pagamento_ingestao_run.id` | A run que gravou/atualizou este título (auditoria de cadência). |
@@ -125,6 +129,21 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
 - A **validação autoritativa** do que pode virar remessa acontece **na Fatia de transporte, ao vivo
   no envio**, com o detalhe completo lido do ERP no momento — evita drift entre o palpite persistido
   e a realidade do ERP na hora de gerar o arquivo.
+
+## `internacional` (classe nacional × internacional) — ADR-0017
+
+- Um título a pagar é **nacional** (boleto/PIX, UF brasileira) ou **internacional** (câmbio/exterior).
+  O discriminador é o `ufEspSigla` do documento no `com298`: **`'EX'` = exterior = internacional**;
+  qualquer UF brasileira (`SP`/`RJ`/`ES`/…) = nacional.
+- O `fin064` (fonte da carteira) **não** carrega `ufEspSigla`, então a classe é **enriquecida** do
+  `com298`: na **ingestão**, `ConexosSispagClient.listExteriorDocCods(filCod)` traz o conjunto EX da
+  filial e `IngestaoPagamentosService` marca `internacional` em cada título; o booleano é
+  **persistido** em `titulo_a_pagar.internacional` (migration 0025) e serve o **filtro** do painel
+  (Todas / Nacionais / Internacionais).
+- A classe é a base do **lote uniforme** (I7): um lote é 100% nacional **ou** 100% internacional —
+  trilhos de remessa distintos, nunca misturados. Na **inclusão** no lote, a classe autoritativa é
+  reconfirmada single-doc via `ConexosSispagClient.isDocInternacional` (`com298`), anti-drift. Ver
+  `business-rules/lote-uniforme-nacional-internacional.md` e ADR-0017. READ-ONLY no ERP (I1).
 
 ## Anti-fantasma (`ativo`)
 

@@ -27,6 +27,8 @@ export interface TituloAPagar {
     banco?: string;
     /** Nº da remessa se já entrou num lote — `titNumRemessa`. */
     numRemessa?: string;
+    /** Pagamento ao exterior (`ufEspSigla='EX'` no com298) vs. nacional. Rails distintos. */
+    internacional?: boolean;
     // ---- campos da carteira PERSISTIDA (ingestão) ----
     pesCod?: string;
     tpdCod?: string;
@@ -144,6 +146,8 @@ export interface ItemLote {
     credor?: string;
     valor?: number;
     vencimento?: number;
+    /** Classe do título no momento da inclusão (base do invariante I7 — lote uniforme). */
+    internacional?: boolean;
     incluidoPor: string;
     incluidoEm?: string;
 }

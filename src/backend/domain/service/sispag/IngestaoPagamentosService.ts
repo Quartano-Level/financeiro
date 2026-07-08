@@ -75,9 +75,16 @@ export default class IngestaoPagamentosService {
             const minVencimento = now - 15 * DAY_MS;
             const maxVencimento = now + 45 * DAY_MS;
 
+            // Por filial: títulos (fin064) + conjunto de docs INTERNACIONAIS (com298, ufEspSigla=EX).
             const settled = await this.bounded.run(
                 filCods,
-                (filCod) => this.sispag.listTitulosAPagar(filCod, { minVencimento, maxVencimento }),
+                async (filCod) => {
+                    const [titulos, exterior] = await Promise.all([
+                        this.sispag.listTitulosAPagar(filCod, { minVencimento, maxVencimento }),
+                        this.sispag.listExteriorDocCods(filCod),
+                    ]);
+                    return { titulos, exterior };
+                },
                 FANOUT_LIMIT,
             );
 
@@ -89,7 +96,12 @@ export default class IngestaoPagamentosService {
                 const s = settled[i];
                 if (s.status === 'fulfilled') {
                     filiaisLidas.push(filCods[i]);
-                    titulos.push(...s.value.filter((t) => !t.pago));
+                    for (const t of s.value.titulos) {
+                        if (t.pago) continue;
+                        // classifica nacional × internacional (exterior) pela carteira com298.
+                        t.internacional = s.value.exterior.has(t.docCod);
+                        titulos.push(t);
+                    }
                 } else {
                     await this.logService.warn({
                         type: LOG_TYPE.BUSINESS_WARN,

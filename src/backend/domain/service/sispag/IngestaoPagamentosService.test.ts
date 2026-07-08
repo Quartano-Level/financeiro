@@ -35,6 +35,7 @@ interface Mocks {
         recordIdempotencyKey: jest.Mock;
     };
     listTitulos: jest.Mock;
+    listExterior: jest.Mock;
     acquire: boolean;
     filiais: Array<{ filCod: number }>;
 }
@@ -53,7 +54,10 @@ const make = (over: Partial<Mocks> = {}) => {
     const listTitulos =
         over.listTitulos ??
         jest.fn().mockResolvedValue([titulo(), titulo({ titCod: '2', pago: true })]);
-    const sispag = { listTitulosAPagar: listTitulos } as unknown as ConexosSispagClient;
+    const sispag = {
+        listTitulosAPagar: listTitulos,
+        listExteriorDocCods: over.listExterior ?? jest.fn().mockResolvedValue(new Set<string>()),
+    } as unknown as ConexosSispagClient;
     const base = {
         getFiliais: jest.fn().mockResolvedValue(over.filiais ?? [{ filCod: 2 }]),
     } as unknown as ConexosBaseClient;
@@ -103,6 +107,20 @@ describe('IngestaoPagamentosService', () => {
         await service.executar({ triggeredBy: 'cron' });
         // inativa só na filial 2 (lida); a 4 (falha) preserva seus títulos.
         expect(tituloRepo.marcarInativosForaDaRun).toHaveBeenCalledWith('RUN1', [2]);
+    });
+
+    it('classifica internacional pelos docs EX do com298 (ufEspSigla)', async () => {
+        const listTitulos = jest
+            .fn()
+            .mockResolvedValue([titulo({ docCod: '100' }), titulo({ docCod: '200', titCod: '2' })]);
+        const listExterior = jest.fn().mockResolvedValue(new Set(['200'])); // doc 200 = exterior
+        const { service, tituloRepo } = make({ listTitulos, listExterior });
+        await service.executar({ triggeredBy: 'cron' });
+        const [persistidos] = tituloRepo.upsertMany.mock.calls[0];
+        const doc100 = persistidos.find((t: { docCod: string }) => t.docCod === '100');
+        const doc200 = persistidos.find((t: { docCod: string }) => t.docCod === '200');
+        expect(doc100.internacional).toBe(false);
+        expect(doc200.internacional).toBe(true);
     });
 
     it('idempotência — key já vista devolve o run existente sem rodar', async () => {

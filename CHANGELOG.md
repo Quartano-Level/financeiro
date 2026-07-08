@@ -1,5 +1,22 @@
 # Columbia Financeiro — Changelog
 
+## v0.14.0 (2026-07-08) — SISPAG: Nacional × Internacional (filtro + lote uniforme)
+
+- **feat(sispag):** classificação **Nacional × Internacional** dos títulos a pagar e a regra de
+  negócio **I7 — lote uniforme** (um lote é 100% nacional **ou** 100% internacional, nunca misto;
+  rails de pagamento distintos: boleto/PIX nacional vs. câmbio/exterior).
+  - **Discriminador:** `ufEspSigla` no Conexos `com298` — `'EX'` = exterior (internacional); UF BR =
+    nacional. O `fin064` (fonte dos títulos) **não** traz `ufEspSigla`, então a classe é enriquecida
+    via `com298` (`ConexosSispagClient.isDocInternacional` / `listExteriorDocCods` — READ-only).
+  - **Ingestão** enriquece cada título com `internacional` e **persiste** (`titulo_a_pagar`, migration
+    `0025`) para o filtro do painel.
+  - **Invariante I7** autoritativo no `LotePagamentoService.incluirTitulo` (classe via com298;
+    1º item define a classe do lote, os seguintes têm de bater) → erro `LoteTipoConflitoError` (422).
+    Também bloqueado no front na hora de "Criar lote".
+  - **Frontend:** segmento de filtro **Todas / Nacionais / Internacionais** + badge "internacional"
+    nos títulos + bloqueio de seleção mista.
+  - Ontologia v0.7 (business-rule `lote-uniforme-nacional-internacional` + ADR-0017).
+
 ## v0.13.0 (2026-07-08) — SISPAG: Ingestão de pagamentos (carteira persistida + cadência diária)
 
 - **feat(sispag):** a carteira de **títulos a pagar** deixa de ser lida ao vivo e passa a ser

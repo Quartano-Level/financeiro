@@ -26,6 +26,8 @@ export interface TituloAPagar {
   tpdCod?: string
   prontoParaRemessa?: boolean
   ativo?: boolean
+  /** Pagamento ao exterior (ufEspSigla='EX') vs. nacional. Rails distintos (I7). */
+  internacional?: boolean
 }
 
 export interface LoteSispag {
