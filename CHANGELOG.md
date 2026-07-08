@@ -1,5 +1,12 @@
 # Columbia Financeiro — Changelog
 
+## v0.16.2 (2026-07-08) — SISPAG: Incrementar lote (adicionar títulos)
+
+- **feat(sispag):** o analista agora pode **adicionar títulos** a um lote RASCUNHO (não só
+  remover). Botão **"Adicionar título"** no card do lote abre um modal com os títulos elegíveis
+  (mesma filial + mesma classe nacional/internacional, aprovados, ainda sem lote), com busca e
+  seleção múltipla. Usa o `incluirTitulo` já existente (invariantes I2/I3/I4/I7 no backend).
+
 ## v0.16.1 (2026-07-08) — SISPAG: UX dos lotes + trava anti-reatache
 
 - **fix(sispag):** cards de lote agora são **colapsáveis** (só o resumo por padrão; os títulos

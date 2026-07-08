@@ -48,6 +48,7 @@ import {
   type TituloAPagar,
 } from '@/lib/sispag'
 import { FiltroBarra, Paginacao, useTabelaFiltro } from '@/app/permutas/components/tabela-filtro'
+import { AdicionarTituloDialog } from './components/AdicionarTituloDialog'
 import { IngestaoDialog } from './components/IngestaoDialog'
 import { LoteCard } from './components/LoteCard'
 
@@ -212,6 +213,7 @@ export default function SispagPage() {
   const [loteOrigemCand, setLoteOrigemCand] = React.useState<Origem>('todos')
   const [loteOrigemFin, setLoteOrigemFin] = React.useState<Origem>('todos')
   const [statusFin, setStatusFin] = React.useState<'todos' | 'aguardando' | 'retornado'>('todos')
+  const [adicionarLote, setAdicionarLote] = React.useState<LotePagamento | null>(null)
   const buscaLote = (l: LotePagamento) =>
     `${l.filCod} ${l.criadoPor} ${l.itens.map((i) => i.credor ?? '').join(' ')}`
   const abaCandidatos = useTabelaFiltro(
@@ -340,6 +342,15 @@ export default function SispagPage() {
         runs={runs}
         runsLoading={runsLoading}
         rodarIngestao={ingerir}
+      />
+
+      <AdicionarTituloDialog
+        lote={adicionarLote}
+        titulos={titulos}
+        onClose={() => setAdicionarLote(null)}
+        onAdded={async () => {
+          await Promise.all([carregar(), recarregarLotes()])
+        }}
       />
 
       <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
@@ -593,7 +604,13 @@ export default function SispagPage() {
               ) : (
                 <div className="space-y-3">
                   {abaCandidatos.slice.map((l) => (
-                    <LoteCard key={l.id} lote={l} busy={busy} acao={acaoLote} />
+                    <LoteCard
+                      key={l.id}
+                      lote={l}
+                      busy={busy}
+                      acao={acaoLote}
+                      onAdicionar={setAdicionarLote}
+                    />
                   ))}
                 </div>
               )}

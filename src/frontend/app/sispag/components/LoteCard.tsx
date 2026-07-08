@@ -1,6 +1,6 @@
 'use client'
 
-import { CheckCircle2, ChevronDown, Trash2 } from 'lucide-react'
+import { CheckCircle2, ChevronDown, Plus, Trash2 } from 'lucide-react'
 import * as React from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -59,10 +59,12 @@ export function LoteCard({
   lote: l,
   busy,
   acao,
+  onAdicionar,
 }: {
   lote: LotePagamento
   busy: boolean
   acao: Acao
+  onAdicionar?: (lote: LotePagamento) => void
 }) {
   const [aberto, setAberto] = React.useState(false)
   const total = l.itens.reduce((acc, i) => acc + (i.valor ?? 0), 0)
@@ -104,6 +106,17 @@ export function LoteCard({
         <div className="flex shrink-0 flex-wrap gap-1">
           {isRascunho ? (
             <>
+              {onAdicionar ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => onAdicionar(l)}
+                  title="Adicionar mais títulos elegíveis a este lote"
+                >
+                  <Plus className="size-4" /> Adicionar título
+                </Button>
+              ) : null}
               <Button
                 size="sm"
                 disabled={busy || l.itens.length === 0}
