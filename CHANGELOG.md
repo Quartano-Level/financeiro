@@ -1,5 +1,13 @@
 # Columbia Financeiro — Changelog
 
+## v0.16.4 (2026-07-09) — SISPAG: remove a aba Borderôs
+
+- **refactor(sispag):** removida a aba **Borderôs** do painel (era diagnóstico e mostrava o pool
+  a-pagar inteiro, incluindo permutas). Com ela, saiu também o **fetch ao vivo de borderôs** no
+  `SispagPainelService` (fan-out Conexos que não tinha mais consumidor) e os KPIs
+  `borderosViaRemessa`/`borderosTotalAmostra`. O painel agora só faz 1 leitura ao vivo por filial
+  (lotes nativos). `ConexosSispagClient.listBorderosAPagar` fica como capacidade read-only (sem uso).
+
 ## v0.16.3 (2026-07-08) — SISPAG: Lote automático "adotado" ao ser editado
 
 - **fix(sispag):** quando o analista **mexe num lote automático** (adiciona **ou** remove título),

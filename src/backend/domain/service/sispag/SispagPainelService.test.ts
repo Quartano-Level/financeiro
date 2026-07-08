@@ -3,11 +3,7 @@ import type ConexosBaseClient from '../../client/ConexosBaseClient.js';
 import type ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import type EnvironmentProvider from '../../libs/environment/EnvironmentProvider.js';
-import type {
-    BorderoAPagar,
-    LoteSispag,
-    TituloAPagar,
-} from '../../interface/sispag/SispagInterface.js';
+import type { LoteSispag, TituloAPagar } from '../../interface/sispag/SispagInterface.js';
 import type LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import type PagamentoIngestaoRunRepository from '../../repository/sispag/PagamentoIngestaoRunRepository.js';
 import type TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
@@ -38,15 +34,6 @@ const loteNativo = (): LoteSispag => ({
     itensRetorno: 0,
 });
 
-const bordero = (): BorderoAPagar => ({
-    borCod: 1,
-    filCod: 2,
-    valor: 100,
-    finalizado: 3,
-    temRemessa: false,
-    temBaixa: true,
-});
-
 const buildLog = () =>
     ({
         info: jest.fn().mockResolvedValue(undefined),
@@ -57,7 +44,6 @@ const make = (
     over: {
         titulosAtivos?: TituloAPagar[];
         listLotes?: jest.Mock;
-        listBorderosAPagar?: jest.Mock;
         ultimaRun?: Date | null;
         emRascunho?: Array<{ filCod: number; docCod: string; titCod: string }>;
         log?: LogService;
@@ -65,7 +51,6 @@ const make = (
 ) => {
     const sispag = {
         listLotes: over.listLotes ?? jest.fn().mockResolvedValue([loteNativo()]),
-        listBorderosAPagar: over.listBorderosAPagar ?? jest.fn().mockResolvedValue([bordero()]),
     } as unknown as ConexosSispagClient;
     const base = {
         getFiliais: jest.fn().mockResolvedValue([{ filCod: 2 }, { filCod: 4 }]),
@@ -111,7 +96,6 @@ describe('SispagPainelService.montarPainel', () => {
         expect(painel.kpis.titulosAVencer7d).toBe(1);
         // contexto ao vivo: 2 filiais × 1
         expect(painel.lotes.length).toBe(2);
-        expect(painel.borderos.length).toBe(2);
         expect(painel.kpis.lotesEnviados).toBe(2);
         // proveniência da ingestão
         expect(painel.ingestao.ultimaRunEm).toBe('2026-07-08T06:00:00.000Z');

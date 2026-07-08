@@ -48,17 +48,6 @@ export interface LoteSispag {
   dataCredito?: number
 }
 
-export interface BorderoAPagar {
-  borCod: number
-  filCod: number
-  descricao?: string
-  valor: number
-  data?: number
-  finalizado: number
-  temRemessa: boolean
-  temBaixa: boolean
-}
-
 export interface SispagKpis {
   titulosAVencer7d: number
   titulosAVencer30d: number
@@ -66,8 +55,6 @@ export interface SispagKpis {
   valorAVencer30d: number
   lotesAbertos: number
   lotesEnviados: number
-  borderosViaRemessa: number
-  borderosTotalAmostra: number
 }
 
 export interface SispagPainel {
@@ -83,7 +70,6 @@ export interface SispagPainel {
   kpis: SispagKpis
   titulos: TituloAPagar[]
   lotes: LoteSispag[]
-  borderos: BorderoAPagar[]
 }
 
 export interface PagamentoIngestaoRun {

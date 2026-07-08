@@ -34,9 +34,7 @@ async function main(): Promise<void> {
             soma: l.soma,
         })),
     );
-    console.log(
-        `totais: titulos=${painel.titulos.length} lotes=${painel.lotes.length} borderos=${painel.borderos.length}`,
-    );
+    console.log(`totais: titulos=${painel.titulos.length} lotes=${painel.lotes.length}`);
 }
 
 main()

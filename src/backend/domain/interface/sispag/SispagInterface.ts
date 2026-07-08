@@ -103,8 +103,6 @@ export interface SispagKpis {
     valorAVencer30d: number;
     lotesAbertos: number;
     lotesEnviados: number;
-    borderosViaRemessa: number;
-    borderosTotalAmostra: number;
 }
 
 /** Resposta do painel SISPAG (read-only). */
@@ -123,7 +121,6 @@ export interface SispagPainelResponse {
     kpis: SispagKpis;
     titulos: TituloAPagar[];
     lotes: LoteSispag[];
-    borderos: BorderoAPagar[];
 }
 
 // ============================================================ Fatia 2 — LotePagamento

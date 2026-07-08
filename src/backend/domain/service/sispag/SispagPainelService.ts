@@ -4,7 +4,6 @@ import ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import type {
-    BorderoAPagar,
     LoteSispag,
     SispagKpis,
     SispagPainelResponse,
@@ -20,16 +19,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** Nº máx. de títulos devolvidos ao painel (evita payload gigante). */
 const TITULOS_CAP = 400;
 /**
- * Teto de chamadas Conexos SIMULTÂNEAS no fan-out do painel (lotes + borderôs).
+ * Teto de chamadas Conexos SIMULTÂNEAS no fan-out do painel (lotes nativos).
  * Evita o burst que pressiona o pool de sessões do Conexos (`LOGIN_ERROR_MAX_SESSIONS`).
  */
 const CONEXOS_FANOUT_LIMIT = 4;
-
-type LeituraKind = 'lote' | 'bordero';
-interface LeituraTask {
-    kind: LeituraKind;
-    filCod: number;
-}
 
 /**
  * SispagPainelService — monta o painel READ-ONLY do Escopo II (spike / Fatia 1).
@@ -73,30 +66,23 @@ export default class SispagPainelService {
             t.emLote = emLote.has(`${t.filCod}:${t.docCod}:${t.titCod}`);
         }
 
-        // Contexto AO VIVO (lotes nativos + borderôs): fan-out LIMITADO (2×N leituras),
+        // Contexto AO VIVO (lotes SISPAG nativos): fan-out LIMITADO (1 leitura/filial),
         // tolerante a falha per-leitura.
-        const tasks: LeituraTask[] = filCods.flatMap((filCod) => [
-            { kind: 'lote', filCod },
-            { kind: 'bordero', filCod },
-        ]);
         const settled = await this.bounded.run(
-            tasks,
-            (task) => this.executarLeitura(task),
+            filCods,
+            (filCod) => this.sispag.listLotes(filCod),
             CONEXOS_FANOUT_LIMIT,
         );
 
         const lotesRaw: LoteSispag[] = [];
-        const borderosRaw: BorderoAPagar[] = [];
         for (let i = 0; i < settled.length; i += 1) {
             const result = settled[i];
-            const task = tasks[i];
             if (result.status === 'rejected') {
                 await this.logService.warn({
                     type: LOG_TYPE.BUSINESS_WARN,
-                    message: 'SISPAG: leitura de filial falhou (ignorada no painel)',
+                    message: 'SISPAG: leitura de lotes nativos falhou (ignorada no painel)',
                     data: {
-                        kind: task.kind,
-                        filCod: task.filCod,
+                        filCod: filCods[i],
                         reason:
                             result.reason instanceof Error
                                 ? result.reason.message
@@ -105,13 +91,12 @@ export default class SispagPainelService {
                 });
                 continue;
             }
-            if (task.kind === 'lote') lotesRaw.push(...(result.value as LoteSispag[]));
-            else borderosRaw.push(...(result.value as BorderoAPagar[]));
+            lotesRaw.push(...result.value);
         }
 
         // Carteira completa (KPIs calculam sobre ela); a resposta corta em CAP.
         const titulosPreparados = this.prepararTitulos(titulosRaw, now);
-        const kpis = this.calcularKpis(titulosPreparados, lotesRaw, borderosRaw);
+        const kpis = this.calcularKpis(titulosPreparados, lotesRaw);
         const titulos = titulosPreparados.slice(0, TITULOS_CAP);
         const envVars = await this.env.getEnvironmentVars();
 
@@ -122,7 +107,6 @@ export default class SispagPainelService {
                 filiais: filCods.length,
                 titulos: titulos.length,
                 lotes: lotesRaw.length,
-                borderos: borderosRaw.length,
             },
         });
 
@@ -139,14 +123,7 @@ export default class SispagPainelService {
             kpis,
             titulos,
             lotes: this.ordenarLotes(lotesRaw),
-            borderos: borderosRaw.slice(0, 100),
         };
-    };
-
-    /** Worker do pool limitado: UMA leitura de contexto (lote/borderô de uma filial). */
-    private executarLeitura = (task: LeituraTask): Promise<LoteSispag[] | BorderoAPagar[]> => {
-        if (task.kind === 'lote') return this.sispag.listLotes(task.filCod);
-        return this.sispag.listBorderosAPagar(task.filCod);
     };
 
     /** Filtra não-pagos, deriva aging e ordena por vencimento (mais urgente 1º). */
@@ -165,11 +142,7 @@ export default class SispagPainelService {
     private ordenarLotes = (lotes: LoteSispag[]): LoteSispag[] =>
         [...lotes].sort((a, b) => (b.dataCredito ?? 0) - (a.dataCredito ?? 0));
 
-    private calcularKpis = (
-        titulos: TituloAPagar[],
-        lotes: LoteSispag[],
-        borderos: BorderoAPagar[],
-    ): SispagKpis => {
+    private calcularKpis = (titulos: TituloAPagar[], lotes: LoteSispag[]): SispagKpis => {
         const aprovado = (t: TituloAPagar): boolean => t.liberado && !t.pago;
         const dias = (t: TituloAPagar): number => t.diasAteVencimento ?? Infinity;
         const aVencer7d = titulos.filter((t) => aprovado(t) && dias(t) >= 0 && dias(t) <= 7);
@@ -182,8 +155,6 @@ export default class SispagPainelService {
             valorAVencer30d: aVencer30d.reduce((acc, t) => acc + t.valor, 0),
             lotesAbertos: lotes.filter((l) => !l.envioConfirmado).length,
             lotesEnviados: lotes.filter((l) => l.envioConfirmado).length,
-            borderosViaRemessa: borderos.filter((b) => b.temRemessa).length,
-            borderosTotalAmostra: borderos.length,
         };
     };
 }

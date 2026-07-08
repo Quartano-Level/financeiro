@@ -199,12 +199,6 @@ export default function SispagPage() {
     (t) => t.filCod,
     (t) => `${t.credor ?? ''} ${t.docCod}/${t.titCod} ${t.banco ?? ''}`,
   )
-  const abaBorderos = useTabelaFiltro(
-    painel?.borderos ?? [],
-    (b) => b.filCod,
-    (b) => `${b.descricao ?? ''} ${b.borCod}`,
-  )
-
   // Lotes: candidatos (RASCUNHO) vs. finalizados (FINALIZADO/RETORNADO), com filtros + paginação.
   const lotesRascunho = lotes.filter((l) => l.status === 'RASCUNHO')
   const lotesFinalizados = lotes.filter(
@@ -418,7 +412,6 @@ export default function SispagPage() {
                 Finalizados ({lotesFinalizados.length})
               </TabsTrigger>
               <TabsTrigger value="lotes">Lotes SISPAG (nativo)</TabsTrigger>
-              <TabsTrigger value="borderos">Borderôs</TabsTrigger>
             </TabsList>
 
             {/* ---- Títulos a pagar ---- */}
@@ -731,55 +724,11 @@ export default function SispagPage() {
                 </Table>
               </div>
               <p className="text-xs text-muted-foreground">
-                {painel.lotes.length} lotes nativos (fin015). O fluxo de remessa SISPAG é pouco usado — a
-                maioria das baixas é direta (ver aba Borderôs).
+                {painel.lotes.length} lotes nativos (fin015). O fluxo de remessa SISPAG é pouco usado —
+                a maioria das baixas é direta.
               </p>
             </TabsContent>
 
-            {/* ---- Borderôs ---- */}
-            <TabsContent value="borderos" className="space-y-3">
-              <FiltroBarra aba={abaBorderos} buscaPlaceholder="Buscar por banco ou nº do borderô…" />
-              <div className="overflow-x-auto rounded-lg border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Borderô</TableHead>
-                      <TableHead>Descrição (banco)</TableHead>
-                      <TableHead className="text-right">Valor</TableHead>
-                      <TableHead>Data</TableHead>
-                      <TableHead>Via remessa?</TableHead>
-                      <TableHead>Filial</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {abaBorderos.slice.map((b) => (
-                      <TableRow key={`${b.filCod}:${b.borCod}`}>
-                        <TableCell className="tabular-nums">{b.borCod}</TableCell>
-                        <TableCell className="max-w-[22rem] truncate">{b.descricao ?? '—'}</TableCell>
-                        <TableCell className="text-right tabular-nums">{formatBRL(b.valor)}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{fmtData(b.data)}</TableCell>
-                        <TableCell>
-                          {b.temRemessa ? (
-                            <Badge variant="outline" className="border-info/40 text-info">
-                              sim
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline">baixa direta</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">{b.filCod}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              <Paginacao aba={abaBorderos} />
-              <p className="text-xs text-muted-foreground">
-                Amostra de {painel.borderos.length}. Via remessa SISPAG:{' '}
-                <strong>{painel.kpis.borderosViaRemessa}</strong> de {painel.kpis.borderosTotalAmostra} —
-                evidência de que a baixa direta domina.
-              </p>
-            </TabsContent>
           </Tabs>
         </>
       ) : null}
