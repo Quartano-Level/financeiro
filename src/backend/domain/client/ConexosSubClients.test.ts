@@ -506,27 +506,16 @@ describe('ConexosClient', () => {
     });
 
     describe('legacyConexosAdapter.listGeneric', () => {
-        it('forwards filCod opt to conexosService.authenticatedPost', async () => {
+        it('forwards filCod opt to the resolved session authenticatedPost', async () => {
             const authenticatedPost = jest.fn().mockResolvedValue({ rows: [] });
-            jest.doMock('../../services/conexos.js', () => ({
-                conexosService: {
-                    ensureSid: jest.fn().mockResolvedValue(undefined),
-                    getFiliais: jest.fn().mockResolvedValue([]),
-                    getFilCodDefault: jest.fn().mockResolvedValue(null),
-                    getSid: jest.fn().mockResolvedValue({ sid: 's', usnCod: '97' }),
-                    authenticatedPost,
-                    authenticatedGet: jest.fn().mockResolvedValue({ rows: [] }),
-                },
-            }));
+            // A sessão resolvida (robô ou usuário) expõe os métodos da ConexosService.
+            const resolvedSession = {
+                authenticatedPost,
+                authenticatedGet: jest.fn().mockResolvedValue({ rows: [] }),
+            } as unknown as import('../../services/conexos.js').ConexosService;
 
-            // Late require to honour jest.doMock.
             const { buildLegacyConexosAdapter } = await import('./legacyConexosAdapter.js');
-            const adapter = await buildLegacyConexosAdapter({
-                conexosBaseUrl: 'http://x',
-                conexosUsername: 'u',
-                conexosPassword: 'p',
-                filCod: 1,
-            });
+            const adapter = buildLegacyConexosAdapter(async () => resolvedSession);
 
             await adapter.listGeneric<unknown[]>('imp021/list', { fieldList: [] }, { filCod: 9 });
 
@@ -535,8 +524,6 @@ describe('ConexosClient', () => {
                 { fieldList: [] },
                 { filCod: 9 },
             );
-
-            jest.dontMock('../../services/conexos.js');
         });
     });
 

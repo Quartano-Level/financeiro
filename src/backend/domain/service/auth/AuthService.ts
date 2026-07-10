@@ -48,6 +48,9 @@ export default class AuthService {
     public login = async ({ username, password }: LoginInput): Promise<LoginResult | null> => {
         const user = await this.userRepository.findByUsername(username);
         if (!user) return null;
+        // Usuário desativado pela gestão (soft-disable): recusa o login como se a
+        // credencial fosse inválida (não revela que a conta existe).
+        if (!user.ativo) return null;
 
         const passwordMatches = await bcrypt.compare(password, user.passwordHash);
         if (!passwordMatches) return null;

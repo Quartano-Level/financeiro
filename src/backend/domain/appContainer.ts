@@ -3,6 +3,7 @@ import { container } from 'tsyringe';
 import MigrationRunner from '../migrations/runMigrations.js';
 import { buildLegacyConexosAdapter } from './client/legacyConexosAdapter.js';
 import ConexosBaseClient, { LEGACY_CONEXOS_TOKEN } from './client/ConexosBaseClient.js';
+import ConexosSessionResolver from './client/ConexosSessionResolver.js';
 import PostgreeDatabaseClient from './client/database/PostgreeDatabaseClient.js';
 import EnvironmentProvider from './libs/environment/EnvironmentProvider.js';
 
@@ -53,12 +54,11 @@ export const bootstrapAppContainer = async (): Promise<void> => {
     if (bootstrapped) return;
     const env = await container.resolve(EnvironmentProvider).getEnvironmentVars();
 
-    const adapter = await buildLegacyConexosAdapter({
-        conexosBaseUrl: env.conexosApiUrl,
-        conexosUsername: env.conexosLogin,
-        conexosPassword: env.conexosPassword,
-        filCod: env.conexosFilCod,
-    });
+    // O adapter resolve a sessão Conexos POR REQUEST (Fatia B): usuário logado
+    // com vínculo válido → sessão dele; senão → robô. Fora de request (jobs/crons)
+    // o resolver cai no robô. Decisão num único ponto — sub-clients não mudam.
+    const resolver = container.resolve(ConexosSessionResolver);
+    const adapter = buildLegacyConexosAdapter(() => resolver.resolve());
 
     container.register(LEGACY_CONEXOS_TOKEN, { useValue: adapter });
     container.resolve(ConexosBaseClient); // eager warm (shared auth/HTTP/pagination)

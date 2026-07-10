@@ -1,9 +1,10 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { type ConexosStatus, fetchConexosStatus } from '../usuarios'
 import { assertAuthEnv, isDevAuthBypass } from './env'
 import { registerSessionExpiredHandler } from './session-events'
-import { decodeJwtExp, TOKEN_STORAGE_KEY, USERNAME_STORAGE_KEY } from './token'
+import { decodeJwtExp, decodeJwtRole, TOKEN_STORAGE_KEY, USERNAME_STORAGE_KEY } from './token'
 
 // Fail-fast: crash on import if dev-bypass is on in a non-local build, instead
 // of silently rendering an unauthenticated app.
@@ -35,6 +36,12 @@ export interface AuthContextValue {
   notifySessionExpired: () => void
   /** Clears the expired flag (called right before redirecting to /login). */
   clearSessionExpired: () => void
+  /**
+   * Status do vínculo Conexos do usuário (Fatia B). `'falha'` = tem vínculo mas a
+   * credencial não loga no ERP → está operando pelo robô (o banner avisa). `null`
+   * enquanto não resolvido / em dev-bypass.
+   */
+  conexosStatus: ConexosStatus | null
   signIn: (username: string, password: string) => Promise<void>
   signOut: () => void
 }
@@ -48,15 +55,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(!devBypass)
   const [sessionExpired, setSessionExpired] = useState(false)
   const [sessionExpiredAt, setSessionExpiredAt] = useState<number | null>(null)
+  const [conexosStatus, setConexosStatus] = useState<ConexosStatus | null>(null)
+
+  // Busca (best-effort, silencioso) o status do vínculo Conexos do usuário.
+  const refreshConexosStatus = useCallback(async () => {
+    if (devBypass) {
+      setConexosStatus(null)
+      return
+    }
+    try {
+      setConexosStatus(await fetchConexosStatus())
+    } catch {
+      // Não bloqueia o app — o banner só aparece quando o status resolve 'falha'.
+    }
+  }, [devBypass])
 
   useEffect(() => {
     if (devBypass) return
     if (typeof window !== 'undefined') {
-      setToken(window.localStorage.getItem(TOKEN_STORAGE_KEY))
+      const stored = window.localStorage.getItem(TOKEN_STORAGE_KEY)
+      setToken(stored)
       setUsername(window.localStorage.getItem(USERNAME_STORAGE_KEY))
+      if (stored) void refreshConexosStatus()
     }
     setLoading(false)
-  }, [devBypass])
+  }, [devBypass, refreshConexosStatus])
 
   const notifySessionExpired = useCallback(() => {
     if (devBypass) return
@@ -115,8 +138,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       setToken(body.token)
       setUsername(body.username)
+      // Verifica o vínculo Conexos logo após o login (avisa se cai no robô).
+      void refreshConexosStatus()
     },
-    [devBypass],
+    [devBypass, refreshConexosStatus],
   )
 
   const signOut = useCallback(() => {
@@ -128,6 +153,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUsername(null)
     setSessionExpired(false)
     setSessionExpiredAt(null)
+    setConexosStatus(null)
   }, [])
 
   const value = useMemo<AuthContextValue>(
@@ -140,6 +166,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       sessionExpiredAt,
       notifySessionExpired,
       clearSessionExpired,
+      conexosStatus,
       signIn,
       signOut,
     }),
@@ -152,6 +179,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       sessionExpiredAt,
       notifySessionExpired,
       clearSessionExpired,
+      conexosStatus,
       signIn,
       signOut,
     ],
@@ -177,4 +205,20 @@ export function useIsAuthenticated(): { authenticated: boolean; loading: boolean
   const { token, loading, devBypass } = useAuth()
   if (devBypass) return { authenticated: true, loading: false }
   return { authenticated: token != null, loading }
+}
+
+/**
+ * The current user's role, read from the JWT (`null` when unknown). In
+ * dev-bypass there is no token, so it reports `'admin'` so local dev can see
+ * the admin-only UI. This is a UI hint only — the real gate is server-side.
+ */
+export function useRole(): string | null {
+  const { token, devBypass } = useAuth()
+  if (devBypass) return 'admin'
+  return token ? decodeJwtRole(token) : null
+}
+
+/** True when the signed-in user may manage other users (role `admin`). */
+export function useIsAdmin(): boolean {
+  return useRole() === 'admin'
 }

@@ -25,7 +25,8 @@ import type { Filial } from './conexos.js';
  * `services/conexos.ts`.
  */
 
-/** Chave lógica — uma sessão compartilhada por conta Conexos. */
+/** Chave lógica padrão — a sessão do ROBÔ (acesso compartilhado). Cada usuário
+ * com vínculo Conexos usa a sua própria chave (`columbia:user:<login>`). */
 const SESSION_KEY = 'columbia-default';
 const TABLE = 'conexos_sessions';
 
@@ -85,14 +86,26 @@ const toRecord = (row: Record<string, unknown> | undefined): ConexosSessionRecor
 export class ConexosSessionStore {
     private db: SessionStoreDb | null;
     private holder: string;
+    /** Chave lógica desta instância (uma linha por conta/usuário Conexos). */
+    private key: string;
 
-    constructor(deps: { db?: SessionStoreDb | null; holder?: string } = {}) {
+    constructor(deps: { db?: SessionStoreDb | null; holder?: string; key?: string } = {}) {
         this.db = deps.db ?? null;
         this.holder = deps.holder ?? `pid:${process.pid}`;
+        this.key = deps.key ?? SESSION_KEY;
     }
 
     get enabled(): boolean {
         return this.db !== null;
+    }
+
+    /**
+     * Deriva um store para OUTRA chave lógica compartilhando o MESMO pool de
+     * banco (sem abrir um novo Pool por usuário). Usado pelo registry de sessões
+     * para dar a cada usuário Conexos vinculado a sua própria linha de sessão.
+     */
+    withKey(key: string): ConexosSessionStore {
+        return new ConexosSessionStore({ db: this.db, holder: this.holder, key });
     }
 
     /**
@@ -104,7 +117,7 @@ export class ConexosSessionStore {
         try {
             const { rows } = await this.db.query(
                 `SELECT ${SELECT_COLUMNS} FROM ${TABLE} WHERE key = $1`,
-                [SESSION_KEY],
+                [this.key],
             );
             return toRecord(rows[0]);
         } catch (cause) {
@@ -136,7 +149,7 @@ export class ConexosSessionStore {
                      ON CONFLICT (key) DO NOTHING
                      RETURNING version`,
                     [
-                        SESSION_KEY,
+                        this.key,
                         input.sid,
                         input.usnCod,
                         expiresAtIso,
@@ -158,7 +171,7 @@ export class ConexosSessionStore {
                      version = $6, holder = $7, updated_at = $8
                  WHERE key = $1 AND version = $9`,
                 [
-                    SESSION_KEY,
+                    this.key,
                     input.sid,
                     input.usnCod,
                     expiresAtIso,
@@ -189,7 +202,7 @@ export class ConexosSessionStore {
         if (!this.db) return;
         try {
             await this.db.query(`DELETE FROM ${TABLE} WHERE key = $1 AND sid = $2`, [
-                SESSION_KEY,
+                this.key,
                 deadSid,
             ]);
         } catch (cause) {

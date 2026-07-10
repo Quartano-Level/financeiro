@@ -2,7 +2,11 @@ import axios, { type AxiosInstance } from 'axios';
 import { boxLog, DEBUG_VERBOSE } from '../utils/index.js';
 import { config } from '../config.js';
 import MissingFilCodError from '../domain/errors/MissingFilCodError.js';
-import { conexosSessionStore, type ConexosSessionRecord } from './conexosSessionStore.js';
+import {
+    type ConexosSessionStore,
+    conexosSessionStore,
+    type ConexosSessionRecord,
+} from './conexosSessionStore.js';
 
 export interface Filial {
     filCod: number;
@@ -70,7 +74,21 @@ export const redactSensitive = (body: unknown): string => {
     return JSON.stringify(redactValue(body));
 };
 
-class ConexosService {
+/**
+ * Credenciais + store de uma sessão Conexos. Sem `opts`, usa o ROBÔ
+ * (`CONEXOS_USERNAME/PASSWORD` do env + o store compartilhado default) — o
+ * comportamento histórico. O registry de sessões (Fatia B) instancia uma
+ * ConexosService POR usuário vinculado, passando as credenciais dele + um store
+ * derivado com a chave `columbia:user:<login>`.
+ */
+export interface ConexosServiceOptions {
+    username?: string;
+    password?: string;
+    baseUrl?: string;
+    sessionStore?: ConexosSessionStore;
+}
+
+export class ConexosService {
     private sid: string | null = null;
     private sidExpiresAt: number | null = null;
     private client: AxiosInstance;
@@ -85,10 +103,21 @@ class ConexosService {
     /** Version da linha do store compartilhado lida no último acquire (CC-3) —
      * base do update-if-unchanged em `persistSessionToStore`. */
     private storeVersion: number | null = null;
+    /** Credenciais desta sessão (robô por default; usuário vinculado no registry). */
+    private username: string | undefined;
+    private password: string | undefined;
+    /** Store desta sessão (linha própria por chave). Default = store do robô. */
+    private sessionStore: ConexosSessionStore;
 
-    constructor() {
+    constructor(opts: ConexosServiceOptions = {}) {
+        this.username = opts.username ?? process.env.CONEXOS_USERNAME;
+        this.password = opts.password ?? process.env.CONEXOS_PASSWORD;
+        this.sessionStore = opts.sessionStore ?? conexosSessionStore;
         this.client = axios.create({
-            baseURL: process.env.CONEXOS_BASE_URL || 'https://columbiatrading.conexos.cloud/api',
+            baseURL:
+                opts.baseUrl ||
+                process.env.CONEXOS_BASE_URL ||
+                'https://columbiatrading.conexos.cloud/api',
             timeout: 40000,
         });
 
@@ -159,7 +188,7 @@ class ConexosService {
         // no retry por sessionToKill (já decidimos por um login fresco).
         if (!sessionToKill) {
             const deadSid = this.sid;
-            const stored = await conexosSessionStore.acquire();
+            const stored = await this.sessionStore.acquire();
             this.storeVersion = stored?.version ?? null;
             if (
                 stored &&
@@ -169,22 +198,22 @@ class ConexosService {
             ) {
                 this.adoptSession(stored);
                 if (DEBUG_VERBOSE) {
-                    console.log('[Conexos] sid compartilhado adotado do store (sem POST /login)');
+                    console.log('[Conexos] shared sid adopted from store (no POST /login)');
                 }
                 return;
             }
             if (deadSid && stored?.sid === deadSid) {
                 // Nosso sid (agora inválido/expirado) ainda é o compartilhado —
                 // remove para nenhum outro processo adotar uma sessão morta.
-                await conexosSessionStore.invalidate(deadSid);
+                await this.sessionStore.invalidate(deadSid);
                 this.storeVersion = null;
             }
         }
 
-        const username = process.env.CONEXOS_USERNAME;
-        const password = process.env.CONEXOS_PASSWORD;
+        const username = this.username;
+        const password = this.password;
         if (!username || !password)
-            throw new Error('CONEXOS_USERNAME e CONEXOS_PASSWORD sao obrigatorios');
+            throw new Error('CONEXOS_USERNAME and CONEXOS_PASSWORD are required');
 
         const body: { username: string; password: string; sessionToKill?: string } = {
             username,
@@ -195,7 +224,7 @@ class ConexosService {
         try {
             const resp = await this.client.post('/login', body);
             const sid = this.extractSidFromSetCookie(resp.headers['set-cookie']);
-            if (!sid) throw new Error('Falha ao obter sid do login Conexos');
+            if (!sid) throw new Error('Failed to extract sid from Conexos login response');
             this.sid = sid;
             this.sidExpiresAt = Date.now() + 25 * 60 * 1000;
             if (Array.isArray(resp.data?.filiais)) {
@@ -212,7 +241,7 @@ class ConexosService {
             // CC-3: publica o sid fresco no store compartilhado (concorrência
             // otimista; numa corrida perdida adotamos o vencedor).
             await this.persistSessionToStore();
-            if (DEBUG_VERBOSE) console.log('[Conexos] Login bem sucedido');
+            if (DEBUG_VERBOSE) console.log('[Conexos] Login successful');
         } catch (err: any) {
             const errorData = err.response?.data;
             if (
@@ -231,7 +260,7 @@ class ConexosService {
                 );
                 if (DEBUG_VERBOSE)
                     console.log(
-                        `[Conexos] Limite de sessões atingido — encerrando ${oldestSession.sessionId.substring(0, 8)}...`,
+                        `[Conexos] Session limit reached — killing oldest ${oldestSession.sessionId.substring(0, 8)}...`,
                     );
                 return this.login(oldestSession.sessionId);
             }
@@ -270,8 +299,8 @@ class ConexosService {
      * processo, comportamento antigo).
      */
     private async persistSessionToStore(): Promise<void> {
-        if (!conexosSessionStore.enabled || !this.sid || !this.sidExpiresAt) return;
-        const result = await conexosSessionStore.persist({
+        if (!this.sessionStore.enabled || !this.sid || !this.sidExpiresAt) return;
+        const result = await this.sessionStore.persist({
             sid: this.sid,
             usnCod: this.usnCod,
             expiresAt: this.sidExpiresAt,
@@ -291,7 +320,7 @@ class ConexosService {
                 winner.expiresAt > Date.now() + STORE_SID_MIN_TTL_MS
             ) {
                 if (DEBUG_VERBOSE) {
-                    console.log('[Conexos] corrida de login perdida — adotando sid do vencedor');
+                    console.log('[Conexos] lost login race — adopting winner sid');
                 }
                 this.adoptSession(winner);
             }

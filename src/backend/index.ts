@@ -4,6 +4,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import cors from 'cors';
 import { buildAuthMiddleware } from './http/auth.js';
 import { loadAuthEnv } from './http/authEnv.js';
+import { conexosIdentityMiddleware } from './http/conexosIdentity.js';
 import { buildCorsOptions } from './http/cors.js';
 import { errorMiddleware } from './http/errorMiddleware.js';
 import { globalLimiter, heavyRouteLimiter } from './http/rateLimit.js';
@@ -12,7 +13,9 @@ import { requestIdMiddleware } from './middleware/requestId.js';
 import authRouter from './routes/auth.js';
 import conexosRouter from './routes/conexos.js';
 import permutasRouter from './routes/permutas.js';
+import meRouter from './routes/me.js';
 import sispagRouter from './routes/sispag.js';
+import usuariosRouter from './routes/usuarios.js';
 
 const app = express();
 
@@ -77,6 +80,11 @@ app.use('/auth', authRouter);
 // Arch-review cards security-1 / security-7.
 app.use(buildAuthMiddleware(loadAuthEnv()));
 
+// Identidade Conexos (Fatia B): coloca o usuário logado no contexto da request
+// (AsyncLocalStorage) para que as chamadas ao ERP usem a sessão dele (a baixa sai
+// no nome do usuário); sem vínculo válido, cai no robô. Depois do auth, antes das rotas.
+app.use(conexosIdentityMiddleware);
+
 // Stricter limiter on the Conexos-backed routes — their fan-out to the
 // Conexos ERP can exhaust its session pool (security-6 / F-security-9).
 // Domain feature routers (financeiro) mount here and inherit the limiter.
@@ -96,6 +104,13 @@ app.use('/permutas', permutasRouter);
 // de pagamentos); nenhuma escrita/execução. Fica no `globalLimiter` como as
 // leituras de Permutas. Ver ontology/_inbox/sispag-*.md.
 app.use('/sispag', sispagRouter);
+
+// Gestão de usuários da plataforma — só `admin` (guard no próprio router). Fica
+// no `globalLimiter`; substitui o cadastro manual de usuários @kavex no banco.
+app.use('/usuarios', usuariosRouter);
+
+// Rotas do próprio usuário (status do vínculo Conexos p/ o aviso no login).
+app.use('/me', meRouter);
 
 // Central error-handling middleware — logs full detail server-side, returns
 // a generic payload to the client (arch-review cards security-3 /

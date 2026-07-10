@@ -27,6 +27,15 @@ export default class EnvironmentVars {
     public awsRegion: string;
 
     /**
+     * Chave-mestra (base64, 32 bytes) para cifrar/decifrar a senha Conexos de
+     * cada usuário (AES-256-GCM) — vínculo por-usuário (Fatia B). É um segredo
+     * REVERSÍVEL (a senha precisa ser reusada no login do ERP), então não é hash.
+     * Opcional: ausente ⇒ o cadastro de credencial Conexos fica indisponível e
+     * todos operam via robô (o vínculo por-usuário exige a chave).
+     */
+    public conexosCredEncKey?: string;
+
+    /**
      * Fase 3 (ADR-0013) — guard-rails da ESCRITA no `fin010`. `conexosWriteEnabled`
      * liga o caminho de escrita (default false); `conexosDryRun` (default true) faz o
      * serviço montar/logar o payload SEM POST. Escrita real exige write=true E dry=false.
@@ -50,6 +59,7 @@ export default class EnvironmentVars {
         awsRegion,
         conexosWriteEnabled,
         conexosDryRun,
+        conexosCredEncKey,
     }: {
         databaseConnectionString: string;
         conexosLogin: string;
@@ -65,6 +75,7 @@ export default class EnvironmentVars {
         awsRegion: string;
         conexosWriteEnabled: boolean;
         conexosDryRun: boolean;
+        conexosCredEncKey?: string;
     }) {
         this.databaseConnectionString = databaseConnectionString;
         this.conexosLogin = conexosLogin;
@@ -80,5 +91,6 @@ export default class EnvironmentVars {
         this.awsRegion = awsRegion;
         this.conexosWriteEnabled = conexosWriteEnabled;
         this.conexosDryRun = conexosDryRun;
+        this.conexosCredEncKey = conexosCredEncKey;
     }
 }

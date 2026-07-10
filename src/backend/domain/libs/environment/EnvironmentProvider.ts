@@ -68,6 +68,7 @@ export default class EnvironmentProvider {
             // Fase 3 (ADR-0013): escrita fin010 desligada por padrão; dry-run ligado por padrão.
             conexosWriteEnabled: this.readEnv('CONEXOS_WRITE_ENABLED') === 'true',
             conexosDryRun: this.readEnv('CONEXOS_DRY_RUN') !== 'false',
+            conexosCredEncKey: this.readEnv('CONEXOS_CRED_ENC_KEY') || undefined,
         });
     };
 
@@ -95,6 +96,10 @@ export default class EnvironmentProvider {
             // Fase 3 (ADR-0013): toggles de deploy (env), não segredos por-tenant.
             conexosWriteEnabled: this.readEnv('CONEXOS_WRITE_ENABLED') === 'true',
             conexosDryRun: this.readEnv('CONEXOS_DRY_RUN') !== 'false',
+            conexosCredEncKey:
+                this.readCred(conexos, 'credEncKey') ||
+                this.readEnv('CONEXOS_CRED_ENC_KEY') ||
+                undefined,
         });
     };
 
