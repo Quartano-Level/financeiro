@@ -2,6 +2,13 @@
 
 ## v0.17.0 (2026-07-10) — Identidade por usuário @kavex + fix do painel de borderôs
 
+- **refactor(usuarios):** o gerenciamento de usuários passa a ser um recurso de **root da
+  plataforma** — card "Usuários" na home (só admin), no lugar do link no header (que aparecia em
+  todos os produtos). Desacopla a administração de qualquer produto específico.
+- **ci(sispag):** agenda a **ingestão diária + formação de lotes** do SISPAG (GitHub Actions,
+  `ingest-sispag.yml`): 1x/dia às 10:00 UTC (07:00 BRT), +1h após a ingestão matinal de Permutas
+  para não conflitar na sessão Conexos. Os jobs usam o robô e não são afetados pelo bloqueio de
+  acesso do SISPAG.
 - **feat(sispag):** **bloqueio do SISPAG em produção**. Flag `SISPAG_ENABLED` (backend) /
   `NEXT_PUBLIC_SISPAG_ENABLED` (frontend): quando desligada, as rotas `/sispag/*` respondem 403
   (bloqueio via URL, não só no front) e a UI mostra o card "Indisponível" (inclicável) + tela de

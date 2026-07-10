@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { PageHeader } from '@/components/ui/page-header'
+import { AdminHomeCard } from '@/components/home/AdminHomeCard'
 import { isSispagEnabled } from '@/lib/features'
 
 /**
@@ -61,6 +62,7 @@ export default function HomePage() {
             )}
           </CardContent>
         </Card>
+        <AdminHomeCard />
       </div>
     </div>
   )

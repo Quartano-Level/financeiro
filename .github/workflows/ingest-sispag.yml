@@ -1,0 +1,54 @@
+name: Ingestão diária de SISPAG
+
+# Cron GRATUITO via GitHub Actions (Render Cron Job é pago). Roda a ingestão da
+# carteira de pagamentos e, EM SEGUIDA, a formação automática de lotes (a ordem
+# importa: formar-lotes consome o que a ingestão gravou).
+#
+# Agendado 1x/dia PELA MANHÃ, +1h depois da ingestão matinal de Permutas
+# (09:00 UTC) para NÃO CONFLITAR na sessão Conexos: 10:00 UTC = 07:00 BRT.
+# Os jobs usam o robô (rodam fora de request) — o bloqueio de acesso do SISPAG
+# (SISPAG_ENABLED) é só das rotas HTTP e NÃO afeta estes crons.
+#
+# ⚠️ Schedules do GitHub Actions só disparam a partir do BRANCH PADRÃO (main).
+# Enquanto este arquivo não estiver em `main`, use o "Run workflow" manual
+# (workflow_dispatch) na aba Actions.
+on:
+  schedule:
+    # 1x/dia: 07:00 BRT (= 10:00 UTC) — 1h após a ingestão matinal de Permutas.
+    - cron: '0 10 * * *'
+  workflow_dispatch: {} # permite rodar manualmente pela aba Actions
+
+# Evita duas execuções simultâneas do pipeline SISPAG.
+concurrency:
+  group: ingest-sispag
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: src/backend
+    env:
+      # Nomes EXATOS lidos pelo EnvironmentProvider/Conexos (iguais ao de Permutas).
+      databaseConnectionString: ${{ secrets.DATABASE_CONNECTION_STRING }}
+      CONEXOS_BASE_URL: ${{ secrets.CONEXOS_BASE_URL }}
+      CONEXOS_USERNAME: ${{ secrets.CONEXOS_USERNAME }}
+      CONEXOS_PASSWORD: ${{ secrets.CONEXOS_PASSWORD }}
+      CONEXOS_FIL_COD: ${{ vars.CONEXOS_FIL_COD }}
+      environment: production
+      client_name: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Instalar dependências (com devDeps p/ tsx)
+        run: npm ci --include=dev
+      - name: Aplicar migrations pendentes (idempotente)
+        run: npm run migrate
+      - name: Ingestão de pagamentos (carteira titulo_a_pagar)
+        run: npm run job:ingest-pagamentos
+      - name: Formação automática de lotes (após a ingestão)
+        run: npm run job:formar-lotes

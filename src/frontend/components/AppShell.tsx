@@ -1,7 +1,6 @@
 'use client'
 
 import { usePathname } from 'next/navigation'
-import { AdminNav } from '@/components/auth/AdminNav'
 import { ConexosStatusBanner } from '@/components/auth/ConexosStatusBanner'
 import { RouteGate } from '@/components/auth/RouteGate'
 import { UserMenu } from '@/components/auth/UserMenu'
@@ -27,7 +26,6 @@ export function AppShell({ version, children }: { version: string; children: Rea
           <span className="text-sm text-muted-foreground">/</span>
           <span className="text-sm text-muted-foreground">Financeiro</span>
           <div className="ml-auto flex items-center gap-3">
-            <AdminNav />
             <span
               className="text-xs font-mono text-muted-foreground border rounded-md px-2 py-0.5"
               data-testid="app-version"
