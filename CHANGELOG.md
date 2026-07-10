@@ -1,5 +1,24 @@
 # Columbia Financeiro — Changelog
 
+## v0.17.0 (2026-07-10) — Identidade por usuário @kavex + fix do painel de borderôs
+
+- **feat(auth):** identidade por usuário @kavex. Nova tela **Usuários** (só admin) que substitui o
+  cadastro manual no banco: criar/desativar usuários, redefinir senha e **atrelar o acesso Conexos**
+  de cada um (login + senha do ERP). A senha do Conexos é guardada **cifrada** (AES-256-GCM,
+  `SecretCipher` + env `CONEXOS_CRED_ENC_KEY`) — nunca em claro. Migrations `0028` (`ativo`,
+  `created_by`) e `0029` (`conexos_username`, `conexos_password_enc`).
+- **feat(auth):** **sessão Conexos por usuário**. Quando um usuário logado tem vínculo válido, as
+  chamadas ao ERP naquela request usam a sessão dele (a baixa sai no nome dele); jobs/crons e o
+  fallback usam o robô. `ConexosService` virou instanciável (credenciais + store por instância),
+  `conexos_sessions` virou multi-chave (`columbia:user:<login>`), e um `AsyncLocalStorage` +
+  `ConexosSessionResolver` decidem a sessão por request no adapter — sub-clients não mudaram.
+  Fallback seguro: sem vínculo / senha não decifra / login falha → robô. Aviso persistente no
+  login (`GET /me/conexos-status` + banner) quando a credencial falha e o usuário opera via robô.
+- **fix(permutas):** borderôs criados pela plataforma sumiam do painel ao envelhecerem para fora
+  dos 500 mais recentes (a busca e o filtro de usuário eram client-side sobre essa janela).
+  `listBorderoCache` agora faz **UNION** dos recentes com **todos os borderôs da trilha**, que
+  passam a ser sempre visíveis (com o email do operador).
+
 ## v0.16.4 (2026-07-09) — SISPAG: remove a aba Borderôs
 
 - **refactor(sispag):** removida a aba **Borderôs** do painel (era diagnóstico e mostrava o pool
