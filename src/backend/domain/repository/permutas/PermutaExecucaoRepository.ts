@@ -336,14 +336,31 @@ export default class PermutaExecucaoRepository {
 
     public listBorderoCache = async (limit?: number): Promise<BorderoCacheRow[]> => {
         // LIMIT é inteiro interno (não vem do cliente) → seguro inline. Pega os MAIS RECENTES
-        // (por data de movimento) p/ a tela carregar rápido mesmo com milhares de borderôs.
+        // (por data de movimento) p/ a tela carregar rápido mesmo com milhares de borderôs. PORÉM
+        // os borderôs criados por ESTE sistema (presentes na trilha `permuta_alocacao_execucao`)
+        // são SEMPRE incluídos, mesmo que caiam fora dos N mais recentes — senão um borderô da
+        // plataforma "envelhece para fora da tela" e some da busca/dropdown (o operador não acha
+        // mais o que ele mesmo lançou). A trilha é pequena, então o UNION é barato.
         const lim = limit && Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 20000) : null;
         const rows = await this.databaseClient.selectMany(
-            `SELECT bor_cod, fil_cod, bor_vld_finalizado, bor_cod_estornado, vlr_total_liquido,
-                    bor_dta_mvto, usn_des_nome_cad
-             FROM permuta_bordero
-             ORDER BY bor_dta_mvto DESC NULLS LAST, bor_cod DESC
-             ${lim != null ? `LIMIT ${lim}` : ''}`,
+            `WITH recentes AS (
+                 SELECT bor_cod, fil_cod, bor_vld_finalizado, bor_cod_estornado, vlr_total_liquido,
+                        bor_dta_mvto, usn_des_nome_cad
+                 FROM permuta_bordero
+                 ORDER BY bor_dta_mvto DESC NULLS LAST, bor_cod DESC
+                 ${lim != null ? `LIMIT ${lim}` : ''}
+             ),
+             da_trilha AS (
+                 SELECT DISTINCT pb.bor_cod, pb.fil_cod, pb.bor_vld_finalizado, pb.bor_cod_estornado,
+                        pb.vlr_total_liquido, pb.bor_dta_mvto, pb.usn_des_nome_cad
+                 FROM permuta_bordero pb
+                 JOIN permuta_alocacao_execucao pae
+                   ON pae.bor_cod = pb.bor_cod AND pae.fil_cod = pb.fil_cod
+             )
+             SELECT * FROM recentes
+             UNION
+             SELECT * FROM da_trilha
+             ORDER BY bor_dta_mvto DESC NULLS LAST, bor_cod DESC`,
         );
         return rows.map((r) => ({
             borCod: Number(r.bor_cod),

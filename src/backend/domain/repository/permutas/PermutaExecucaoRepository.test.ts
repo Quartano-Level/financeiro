@@ -274,6 +274,18 @@ describe('PermutaExecucaoRepository — métodos restantes (testability-2)', () 
         expect(out[0]).toMatchObject({ borCod: 9, filCod: 4, borVldFinalizado: 2 });
     });
 
+    it('listBorderoCache: borderôs da trilha entram por UNION (imunes ao LIMIT)', async () => {
+        const db = buildDb();
+        (db.selectMany as jest.Mock).mockResolvedValue([]);
+        await new PermutaExecucaoRepository(db).listBorderoCache(500);
+        const sql = sqlOf(db.selectMany as jest.Mock);
+        // Os recentes (top-N) são unidos aos borderôs referenciados pela trilha de execução,
+        // casando por PAR (fil_cod, bor_cod) — senão um borderô da plataforma some ao envelhecer.
+        expect(sql).toContain('UNION');
+        expect(sql).toContain('JOIN permuta_alocacao_execucao');
+        expect(sql).toContain('pae.bor_cod = pb.bor_cod AND pae.fil_cod = pb.fil_cod');
+    });
+
     it('replaceBorderoCache: no-op com lista vazia; upsert + delete-dos-ausentes com itens', async () => {
         const db = buildDb();
         const repo = new PermutaExecucaoRepository(db);
