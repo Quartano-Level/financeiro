@@ -1,5 +1,11 @@
 # Columbia Financeiro — Changelog
 
+## v0.17.1 (2026-07-11) — Filtro de período nos borderôs de permuta
+
+- **feat(permutas):** o filtro de **Data** do painel de borderôs vira um **intervalo** (Data inicial
+  / Data final) para filtrar um período. O intervalo é inclusivo e cada ponta é opcional (só início =
+  "a partir de", só fim = "até"). Puramente client-side — sem mudança de backend/migration.
+
 ## v0.17.0 (2026-07-10) — Identidade por usuário @kavex + fix do painel de borderôs
 
 - **refactor(usuarios):** o gerenciamento de usuários passa a ser um recurso de **root da

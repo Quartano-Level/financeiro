@@ -92,7 +92,8 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
   const [borderoBusca, setBorderoBusca] = React.useState('')
   const [usuarioFiltro, setUsuarioFiltro] = React.useState('todos')
   const [filialFiltro, setFilialFiltro] = React.useState('todos')
-  const [dataFiltro, setDataFiltro] = React.useState('')
+  const [dataInicio, setDataInicio] = React.useState('')
+  const [dataFim, setDataFim] = React.useState('')
   const [expandido, setExpandido] = React.useState<number | null>(null)
   const [pagina, setPagina] = React.useState(1)
   // Revalidação ao vivo em background (stale-while-revalidate): true enquanto o refresh do ERP roda
@@ -181,7 +182,15 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
       .filter((b) => borderoNorm === '' || String(b.borCod).includes(borderoNorm))
       .filter((b) => usuarioFiltro === 'todos' || b.criadoPor === usuarioFiltro)
       .filter((b) => filialFiltro === 'todos' || String(b.filCod) === filialFiltro)
-      .filter((b) => dataFiltro === '' || (b.criadoEm ?? '').slice(0, 10) === dataFiltro),
+      .filter((b) => {
+        // Filtro por intervalo (inclusivo). Compara só a parte YYYY-MM-DD.
+        if (dataInicio === '' && dataFim === '') return true
+        const dia = (b.criadoEm ?? '').slice(0, 10)
+        if (dia === '') return false
+        if (dataInicio !== '' && dia < dataInicio) return false
+        if (dataFim !== '' && dia > dataFim) return false
+        return true
+      }),
   )
 
   // Paginação (50/página) sobre a lista filtrada.
@@ -192,20 +201,22 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
   // Volta pra página 1 sempre que os filtros mudam (evita página vazia).
   React.useEffect(() => {
     setPagina(1)
-  }, [filtro, borderoBusca, usuarioFiltro, filialFiltro, dataFiltro])
+  }, [filtro, borderoBusca, usuarioFiltro, filialFiltro, dataInicio, dataFim])
 
   const filtroAtivo =
     filtro !== 'todos' ||
     borderoBusca !== '' ||
     usuarioFiltro !== 'todos' ||
     filialFiltro !== 'todos' ||
-    dataFiltro !== ''
+    dataInicio !== '' ||
+    dataFim !== ''
   const limparFiltros = () => {
     setFiltro('todos')
     setBorderoBusca('')
     setUsuarioFiltro('todos')
     setFilialFiltro('todos')
-    setDataFiltro('')
+    setDataInicio('')
+    setDataFim('')
   }
 
   const totais = {
@@ -359,12 +370,25 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
         </label>
 
         <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Data
+          Data inicial
           <Input
             type="date"
-            value={dataFiltro}
-            onChange={(e) => setDataFiltro(e.target.value)}
-            aria-label="Filtrar por data"
+            value={dataInicio}
+            max={dataFim || undefined}
+            onChange={(e) => setDataInicio(e.target.value)}
+            aria-label="Filtrar a partir da data"
+            className="w-44"
+          />
+        </label>
+
+        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+          Data final
+          <Input
+            type="date"
+            value={dataFim}
+            min={dataInicio || undefined}
+            onChange={(e) => setDataFim(e.target.value)}
+            aria-label="Filtrar até a data"
             className="w-44"
           />
         </label>
