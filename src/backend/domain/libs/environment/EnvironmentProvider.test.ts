@@ -86,6 +86,28 @@ describe('EnvironmentProvider', () => {
             expect(ssmSendMock).not.toHaveBeenCalled();
         });
 
+        it('sispagEnabled: SISPAG_ENABLED força; sem env, bloqueia só em produção (fail-safe)', async () => {
+            const resolve = async () => {
+                const p = new EnvironmentProvider();
+                return (await p.getEnvironmentVars()).sispagEnabled;
+            };
+            // força explícita
+            process.env.SISPAG_ENABLED = 'false';
+            expect(await resolve()).toBe(false);
+            // sem env + ambiente de produção → bloqueado
+            process.env.SISPAG_ENABLED = '';
+            process.env.environment = 'production';
+            expect(await resolve()).toBe(false);
+            // sem env + fora de produção → habilitado
+            process.env.environment = 'local';
+            expect(await resolve()).toBe(true);
+            // força true mesmo em produção
+            process.env.SISPAG_ENABLED = 'true';
+            process.env.environment = 'production';
+            expect(await resolve()).toBe(true);
+            delete process.env.SISPAG_ENABLED;
+        });
+
         it('does not call SSM in local mode', async () => {
             const provider = new EnvironmentProvider();
             await provider.getEnvironmentVars();

@@ -36,6 +36,14 @@ export default class EnvironmentVars {
     public conexosCredEncKey?: string;
 
     /**
+     * Feature flag do SISPAG (Frente II). Quando `false`, as rotas `/sispag/*`
+     * respondem 403 (bloqueio via URL). `SISPAG_ENABLED=true|false` força; sem a
+     * env, fica habilitado FORA de produção e bloqueado EM produção (fail-safe —
+     * um deploy que esqueça de setar não expõe o SISPAG).
+     */
+    public sispagEnabled: boolean;
+
+    /**
      * Fase 3 (ADR-0013) — guard-rails da ESCRITA no `fin010`. `conexosWriteEnabled`
      * liga o caminho de escrita (default false); `conexosDryRun` (default true) faz o
      * serviço montar/logar o payload SEM POST. Escrita real exige write=true E dry=false.
@@ -60,6 +68,7 @@ export default class EnvironmentVars {
         conexosWriteEnabled,
         conexosDryRun,
         conexosCredEncKey,
+        sispagEnabled,
     }: {
         databaseConnectionString: string;
         conexosLogin: string;
@@ -76,6 +85,7 @@ export default class EnvironmentVars {
         conexosWriteEnabled: boolean;
         conexosDryRun: boolean;
         conexosCredEncKey?: string;
+        sispagEnabled: boolean;
     }) {
         this.databaseConnectionString = databaseConnectionString;
         this.conexosLogin = conexosLogin;
@@ -92,5 +102,6 @@ export default class EnvironmentVars {
         this.conexosWriteEnabled = conexosWriteEnabled;
         this.conexosDryRun = conexosDryRun;
         this.conexosCredEncKey = conexosCredEncKey;
+        this.sispagEnabled = sispagEnabled;
     }
 }

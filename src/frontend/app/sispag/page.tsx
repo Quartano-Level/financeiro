@@ -28,6 +28,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Spinner } from '@/components/ui/spinner'
 import { EmptyState } from '@/components/ui/empty-state'
+import { isSispagEnabled } from '@/lib/features'
 import { formatBRL } from '@/lib/utils'
 import {
   cancelarLote,
@@ -84,7 +85,28 @@ function VencimentoBadge({ dias }: { dias?: number }) {
 }
 
 
+/**
+ * Guard de acesso (bloqueio via URL): quando o SISPAG está desligado (produção,
+ * por padrão), a rota `/sispag` mostra a tela de bloqueio em vez do painel. A
+ * API também nega (`sispagGate` → 403), então esconder aqui é UX, não a barreira.
+ */
 export default function SispagPage() {
+  if (!isSispagEnabled()) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="SISPAG — Pagamentos" subtitle="Frente II — Automação de Pagamentos." />
+        <EmptyState
+          icon={<Lock className="size-8" aria-hidden />}
+          title="SISPAG indisponível"
+          description="Esta frente ainda não está liberada em produção. Fale com o time se precisar de acesso."
+        />
+      </div>
+    )
+  }
+  return <SispagPanel />
+}
+
+function SispagPanel() {
   const [painel, setPainel] = React.useState<SispagPainel | null>(null)
   const [lotes, setLotes] = React.useState<LotePagamento[]>([])
   const [loading, setLoading] = React.useState(true)

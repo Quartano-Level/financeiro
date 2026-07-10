@@ -5,6 +5,7 @@ import cors from 'cors';
 import { buildAuthMiddleware } from './http/auth.js';
 import { loadAuthEnv } from './http/authEnv.js';
 import { conexosIdentityMiddleware } from './http/conexosIdentity.js';
+import { sispagGate } from './http/sispagGate.js';
 import { buildCorsOptions } from './http/cors.js';
 import { errorMiddleware } from './http/errorMiddleware.js';
 import { globalLimiter, heavyRouteLimiter } from './http/rateLimit.js';
@@ -103,7 +104,7 @@ app.use('/permutas', permutasRouter);
 // SISPAG Frente II — SPIKE READ-ONLY (semente da Fatia 1). Só leituras (painel
 // de pagamentos); nenhuma escrita/execução. Fica no `globalLimiter` como as
 // leituras de Permutas. Ver ontology/_inbox/sispag-*.md.
-app.use('/sispag', sispagRouter);
+app.use('/sispag', sispagGate, sispagRouter);
 
 // Gestão de usuários da plataforma — só `admin` (guard no próprio router). Fica
 // no `globalLimiter`; substitui o cadastro manual de usuários @kavex no banco.

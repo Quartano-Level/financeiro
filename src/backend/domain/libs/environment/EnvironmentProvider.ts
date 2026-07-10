@@ -27,6 +27,18 @@ export default class EnvironmentProvider {
 
     private readEnv = (key: string, fallback = ''): string => process.env[key] || fallback;
 
+    /**
+     * Resolve a flag do SISPAG: `SISPAG_ENABLED=true|false` força; sem a env, fica
+     * habilitado FORA de produção e bloqueado EM produção (fail-safe — esquecer de
+     * setar em prod NÃO expõe o SISPAG).
+     */
+    private resolveSispagEnabled = (environment: string): boolean => {
+        const flag = this.readEnv('SISPAG_ENABLED');
+        if (flag === 'true') return true;
+        if (flag === 'false') return false;
+        return environment !== 'production';
+    };
+
     private parseSSMCredentials = async (
         envVar: string | undefined,
     ): Promise<Record<string, any>> => {
@@ -69,6 +81,7 @@ export default class EnvironmentProvider {
             conexosWriteEnabled: this.readEnv('CONEXOS_WRITE_ENABLED') === 'true',
             conexosDryRun: this.readEnv('CONEXOS_DRY_RUN') !== 'false',
             conexosCredEncKey: this.readEnv('CONEXOS_CRED_ENC_KEY') || undefined,
+            sispagEnabled: this.resolveSispagEnabled(this.readEnv('environment', 'local')),
         });
     };
 
@@ -100,6 +113,7 @@ export default class EnvironmentProvider {
                 this.readCred(conexos, 'credEncKey') ||
                 this.readEnv('CONEXOS_CRED_ENC_KEY') ||
                 undefined,
+            sispagEnabled: this.resolveSispagEnabled(this.readEnv('environment')),
         });
     };
 

@@ -2,6 +2,12 @@
 
 ## v0.17.0 (2026-07-10) — Identidade por usuário @kavex + fix do painel de borderôs
 
+- **feat(sispag):** **bloqueio do SISPAG em produção**. Flag `SISPAG_ENABLED` (backend) /
+  `NEXT_PUBLIC_SISPAG_ENABLED` (frontend): quando desligada, as rotas `/sispag/*` respondem 403
+  (bloqueio via URL, não só no front) e a UI mostra o card "Indisponível" (inclicável) + tela de
+  bloqueio na rota. Sem a env, fica habilitado só em dev local e **bloqueado em qualquer build
+  deployado** (fail-safe). Não afeta Permutas.
+
 - **feat(auth):** identidade por usuário @kavex. Nova tela **Usuários** (só admin) que substitui o
   cadastro manual no banco: criar/desativar usuários, redefinir senha e **atrelar o acesso Conexos**
   de cada um (login + senha do ERP). A senha do Conexos é guardada **cifrada** (AES-256-GCM,
