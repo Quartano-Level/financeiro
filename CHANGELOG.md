@@ -1,5 +1,17 @@
 # Columbia Financeiro — Changelog
 
+## v0.17.2 (2026-07-11) — Read-path do SISPAG endurecido (retry + fallback só em 400)
+
+- **fix(sispag):** endurece o `ConexosSispagClient` (read-only), fechando dois follow-ups do
+  Regis da Fatia 1+2:
+  - **integrability-1:** o `catch` cru de `listTitulosAPagar` engolia **qualquer** erro
+    (5xx/timeout/rede) e caía para uma leitura **sem filtro de vencimento** (milhares de linhas).
+    Agora o fallback só ocorre quando o Conexos **recusa o filtro (HTTP 400)**; erro transitório
+    é **propagado** em vez de mascarado, e o braço de fallback emite um `warn` (não-silencioso).
+  - **availability-sispag-1:** os 6 reads SISPAG passam a usar `runWithRetry` (2 tentativas/500ms/
+    jitter), recuperando a paridade de retry com os demais `Conexos*Client`.
+  - Invariante I1 (SISPAG read-only ao ERP) preservada; sem mudança de frontend/migration.
+
 ## v0.17.1 (2026-07-11) — Filtro de período nos borderôs de permuta
 
 - **feat(permutas):** o filtro de **Data** do painel de borderôs vira um **intervalo** (Data inicial
