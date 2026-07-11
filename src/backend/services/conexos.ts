@@ -402,6 +402,35 @@ export class ConexosService {
     }
 
     /**
+     * Authenticated MULTIPART upload (`multipart/form-data`) — para o `carregar`
+     * de arquivo de retorno do SISPAG (`fin052/arquivosRetorno/carregar`, o `.RET`).
+     * O stack é JSON-only; este é o único caminho de upload de arquivo.
+     *
+     * Preserva a auth (cookie `sid` + `cnx-filcod` + `cnx-usncod`) mas REMOVE o
+     * `content-type: application/json` do `defaultHeaders` — o axios seta o
+     * `multipart/form-data; boundary=…` a partir do `FormData` nativo.
+     *
+     * TENTATIVA ÚNICA (sem 401-retry cego), espelhando `authenticatedPostOnce`:
+     * um re-POST silencioso de upload cria um arquivo de retorno DUPLICADO no ERP.
+     * O 401 propaga para o caller tratar (fail-closed).
+     */
+    async authenticatedPostMultipart<T = unknown>(
+        path: string,
+        form: FormData,
+        opts: { filCod?: number } = {},
+    ): Promise<T> {
+        await this.ensureSid();
+        const url = path.startsWith('/') ? path : `/${path}`;
+        const headers: Record<string, string | undefined> = {
+            ...this.defaultHeaders(opts.filCod),
+        };
+        // Deixa o axios derivar o boundary do FormData (não force JSON).
+        delete headers['content-type'];
+        const resp = await this.client.post<T>(url, form, { headers });
+        return resp.data;
+    }
+
+    /**
      * Generic authenticated GET helper. Mirrors `authenticatedPost` but for
      * Conexos endpoints that expose data via GET — currently the NF Saída
      * `com311/list/<docCod>` and `com311/baixas/list/<docCod>/<titCod>/<vldCheck>`

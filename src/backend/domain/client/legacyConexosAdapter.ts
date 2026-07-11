@@ -85,6 +85,19 @@ export const buildLegacyConexosAdapter = (
         return svc.authenticatedPostOnce<T>(`/${path}`, body, opts);
     };
 
+    /**
+     * Single-attempt multipart upload passthrough (NO 401-retry) — para o
+     * `carregar` do `.RET` no `fin052`. Delegates to `authenticatedPostMultipart`.
+     */
+    const postMultipartOnce = async <T>(
+        path: string,
+        form: FormData,
+        opts?: { filCod?: number },
+    ): Promise<T> => {
+        const svc = await resolveService();
+        return svc.authenticatedPostMultipart<T>(`/${path}`, form, opts);
+    };
+
     /** DELETE passthrough — exclusão de baixa do borderô (`fin010/baixas/...`). */
     const deleteGeneric = async <T>(path: string, opts?: { filCod?: number }): Promise<T> => {
         const svc = await resolveService();
@@ -101,6 +114,7 @@ export const buildLegacyConexosAdapter = (
         getGeneric,
         postGeneric,
         postGenericOnce,
+        postMultipartOnce,
         deleteGeneric,
         getFiliais: async (): Promise<Filial[]> => {
             const svc = await resolveService();
