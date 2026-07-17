@@ -48,7 +48,9 @@ async function main(): Promise<void> {
     };
     let flp: number | undefined;
     try {
-        const res = await c.postGeneric<Record<string, unknown>>('fin015', novoLote, { filCod: FIL });
+        const res = await c.postGeneric<Record<string, unknown>>('fin015', novoLote, {
+            filCod: FIL,
+        });
         log('1) criar lote OK →', res);
         flp = Number(res.flpCod ?? (res.data as Record<string, unknown>)?.flpCod);
     } catch (e) {
