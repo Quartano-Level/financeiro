@@ -150,6 +150,33 @@ describe('BorderoGestaoService', () => {
         expect(execucaoRepository.replaceBorderoCache).toHaveBeenCalled();
     });
 
+    it('resgata borderô da trilha fora do top-1000 (borCod#IN) e o inclui no cache', async () => {
+        const { service, conexosClient, execucaoRepository } = build(jest.fn());
+        conexosClient.listFiliais.mockResolvedValue([{ filCod: 2 }]);
+        // Bulk (sem borCods) → só o recente 16884; o 15593 da trilha caiu fora da janela.
+        // Resgate (com borCods) → devolve o 15593.
+        conexosClient.listBorderos.mockImplementation((p: { borCods?: number[] }) =>
+            Promise.resolve(
+                p.borCods
+                    ? [{ borCod: 15593, filCod: 2, borVldFinalizado: 1, borCodEstornado: null }]
+                    : [{ borCod: 16884, filCod: 2, borVldFinalizado: 0, borCodEstornado: null }],
+            ),
+        );
+        execucaoRepository.listComBordero.mockResolvedValue([row({ borCod: 15593, filCod: 2 })]);
+
+        await service.listarBorderos({ live: true });
+
+        // Buscou os faltantes da trilha por borCod#IN.
+        expect(conexosClient.listBorderos).toHaveBeenCalledWith(
+            expect.objectContaining({ filCod: 2, borCods: [15593] }),
+        );
+        // Cache regravado com o recente + o resgatado.
+        const cacheArg = execucaoRepository.replaceBorderoCache.mock.calls[0][0] as Array<{
+            borCod: number;
+        }>;
+        expect(cacheArg.map((c) => c.borCod).sort((a, b) => a - b)).toEqual([15593, 16884]);
+    });
+
     it('listarBaixasErp mapeia as baixas do ERP (invoice + valor líquido)', async () => {
         const { service, conexosClient } = build(jest.fn());
         conexosClient.listBaixas.mockResolvedValue([

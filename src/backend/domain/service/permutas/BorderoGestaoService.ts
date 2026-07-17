@@ -37,6 +37,8 @@ export interface BaixaResumo {
     juros?: number;
     contaJuros?: number;
     bxaCodSeq?: number;
+    /** Mensagem de erro da baixa (só quando `status='error'`) — vinda da trilha. */
+    erroMensagem?: string;
     criadoEm: string;
 }
 
@@ -327,6 +329,7 @@ export default class BorderoGestaoService {
                 ...(r.juros !== undefined ? { juros: r.juros } : {}),
                 ...(r.contaJuros !== undefined ? { contaJuros: r.contaJuros } : {}),
                 ...(r.bxaCodSeq !== undefined ? { bxaCodSeq: r.bxaCodSeq } : {}),
+                ...(r.erroMensagem !== undefined ? { erroMensagem: r.erroMensagem } : {}),
                 criadoEm: r.criadoEm.toISOString(),
             }));
             const totalTrilha = baixas.reduce((acc, b) => acc + (b.valorBaixado ?? 0), 0);
@@ -403,6 +406,41 @@ export default class BorderoGestaoService {
         // o mesmo número (ex.: 1824 na filial 1 e na 4). Dedupar só por borCod perdia um deles.
         const byBor = new Map<string, (typeof itensPorFilial)[number][number]>();
         for (const it of itensPorFilial.flat()) byBor.set(`${it.filCod}:${it.borCod}`, it);
+
+        // Resgate dos borderôs DA NOSSA TRILHA que caíram fora do top-1000 recente da filial: filiais
+        // com muitos borderôs empurram os antigos pra fora da janela por borCod, e o UNION `da_trilha`
+        // do listBorderoCache NÃO os recupera (ele faz JOIN com este cache). Busca os faltantes por
+        // `borCod#IN` (preciso, sem janela de recência), por filial, e mescla — garante que todo
+        // borderô lançado pelo nosso painel apareça no histórico desde a primeira baixa.
+        const faltantesPorFilial = new Map<number, Set<number>>();
+        for (const r of await this.execucaoRepository.listComBordero()) {
+            if (r.borCod === undefined || byBor.has(`${r.filCod}:${r.borCod}`)) continue;
+            const set = faltantesPorFilial.get(r.filCod) ?? new Set<number>();
+            set.add(r.borCod);
+            faltantesPorFilial.set(r.filCod, set);
+        }
+        if (faltantesPorFilial.size > 0) {
+            const extrasPorFilial = await Promise.all(
+                [...faltantesPorFilial.entries()].map(([filCod, borCods]) =>
+                    this.conexosBaixaClient
+                        .listBorderos({ filCod, borCods: [...borCods] })
+                        .catch(async (err) => {
+                            await this.logService.warn({
+                                type: LOG_TYPE.BUSINESS_WARN,
+                                message:
+                                    'falha ao resgatar borderôs da trilha p/ o cache (filial segue)',
+                                data: {
+                                    filCod,
+                                    erro: err instanceof Error ? err.message : String(err),
+                                },
+                            });
+                            return [];
+                        }),
+                ),
+            );
+            for (const it of extrasPorFilial.flat()) byBor.set(`${it.filCod}:${it.borCod}`, it);
+        }
+
         await this.execucaoRepository.replaceBorderoCache(
             [...byBor.values()].map((it) => ({
                 borCod: it.borCod,
