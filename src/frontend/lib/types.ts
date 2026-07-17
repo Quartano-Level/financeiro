@@ -347,6 +347,8 @@ export interface BaixaResumo {
   juros?: number
   contaJuros?: number
   bxaCodSeq?: number
+  /** Mensagem de erro da baixa (só quando `status='error'`). */
+  erroMensagem?: string
   criadoEm: string
 }
 

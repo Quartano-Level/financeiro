@@ -547,7 +547,10 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
                             </TableHeader>
                             <TableBody>
                               {b.baixas.map((x) => (
-                                <TableRow key={`${b.borCod}-${x.invoiceDocCod}-${x.adiantamentoDocCod}`}>
+                                <React.Fragment
+                                  key={`${b.borCod}-${x.invoiceDocCod}-${x.adiantamentoDocCod}`}
+                                >
+                                <TableRow>
                                   <TableCell className="font-medium">{x.invoiceDocCod}</TableCell>
                                   <TableCell>{x.adiantamentoDocCod}</TableCell>
                                   <TableCell>
@@ -599,6 +602,18 @@ export function BorderosPanel({ embedded = false }: { embedded?: boolean }) {
                                     </Button>
                                   </TableCell>
                                 </TableRow>
+                                {x.status === 'error' && x.erroMensagem ? (
+                                  <TableRow className="hover:bg-transparent">
+                                    <TableCell />
+                                    <TableCell colSpan={7} className="pt-0">
+                                      <p className="text-xs text-destructive">
+                                        <span className="font-medium">Erro:</span>{' '}
+                                        {x.erroMensagem}
+                                      </p>
+                                    </TableCell>
+                                  </TableRow>
+                                ) : null}
+                                </React.Fragment>
                               ))}
                             </TableBody>
                           </Table>
