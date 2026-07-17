@@ -830,13 +830,22 @@ describe('POST /permutas/borderos/:borCod/finalizar (erro do ERP — observabili
         container.clearInstances();
     });
 
-    const erpError = (key: string) =>
+    const erpError = (key: string, vars?: Record<string, unknown>) =>
         Object.assign(new Error('conexos'), {
-            cause: { response: { status: 400, data: { messages: [{ message: key }] } } },
+            cause: {
+                response: {
+                    status: 400,
+                    data: { messages: [{ message: key, ...(vars ? { vars } : {}) }] },
+                },
+            },
         });
 
-    it('loga a resposta CRUA do ERP e responde 400 com requestId + mensagem amigável', async () => {
-        const finalizarBordero = jest.fn().mockRejectedValue(erpError('Generic.ERROR_MESSAGE'));
+    it('surface a razão REAL do ERP (vars.msg) no Generic.ERROR_MESSAGE + loga a resposta crua', async () => {
+        const finalizarBordero = jest
+            .fn()
+            .mockRejectedValue(
+                erpError('Generic.ERROR_MESSAGE', { msg: 'CONTA DE DESCONTO NÃO INFORMADA!!!' }),
+            );
         const logError = jest.fn().mockResolvedValue(undefined);
         container.registerInstance(BorderoGestaoService, { finalizarBordero } as never);
         container.registerInstance(LogService, { error: logError } as never);
@@ -850,9 +859,11 @@ describe('POST /permutas/borderos/:borCod/finalizar (erro do ERP — observabili
             });
             const body = await readJson(res);
             expect(res.status).toBe(400);
-            expect(body.error).toMatch(/ERP recusou/);
+            // A razão real (antes escondida no vars.msg) agora vai no corpo — não mais o genérico.
+            expect(body.error).toBe('CONTA DE DESCONTO NÃO INFORMADA!!!');
+            expect(body.erpDetail).toBe('CONTA DE DESCONTO NÃO INFORMADA!!!');
             expect(typeof body.requestId).toBe('string');
-            // A resposta crua do ERP (status + key + data) agora é logada — antes era descartada.
+            // A resposta crua do ERP (status + key + data) continua logada.
             expect(logError).toHaveBeenCalledTimes(1);
             const logArg = logError.mock.calls[0][0];
             expect(logArg.data).toMatchObject({
@@ -862,8 +873,36 @@ describe('POST /permutas/borderos/:borCod/finalizar (erro do ERP — observabili
                 erpKey: 'Generic.ERROR_MESSAGE',
             });
             expect(logArg.data.erpData).toMatchObject({
-                messages: [{ message: 'Generic.ERROR_MESSAGE' }],
+                messages: [
+                    {
+                        message: 'Generic.ERROR_MESSAGE',
+                        vars: { msg: 'CONTA DE DESCONTO NÃO INFORMADA!!!' },
+                    },
+                ],
             });
+        } finally {
+            await server.close();
+        }
+    });
+
+    it('Generic.ERROR_MESSAGE SEM vars → mensagem genérica de fallback', async () => {
+        container.registerInstance(BorderoGestaoService, {
+            finalizarBordero: jest.fn().mockRejectedValue(erpError('Generic.ERROR_MESSAGE')),
+        } as never);
+        container.registerInstance(LogService, {
+            error: jest.fn().mockResolvedValue(undefined),
+        } as never);
+
+        const server = await listen(buildApp({ authenticated: true, role: 'admin' }));
+        try {
+            const res = await fetch(`${server.url}/permutas/borderos/14918/finalizar`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: '{}',
+            });
+            const body = await readJson(res);
+            expect(res.status).toBe(400);
+            expect(body.error).toMatch(/ERP recusou/);
         } finally {
             await server.close();
         }

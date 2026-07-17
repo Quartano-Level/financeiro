@@ -1,5 +1,15 @@
 # Columbia Financeiro — Changelog
 
+## v0.17.3 (2026-07-17) — Fix: surface do motivo real dos erros do ERP (caixa-preta)
+
+- **fix(permutas):** os erros do `fin010` que voltam no envelope genérico `Generic.ERROR_MESSAGE` passam a
+  mostrar a **razão real** (escondida em `vars.msg`, ex.: "CONTA DE DESCONTO NÃO INFORMADA!!!") em vez do
+  texto genérico "estado incompatível com a ação". Novo `ErpErrorInterpreter` como fonte única de tradução
+  (unifica os dois mapas PT antes divergentes) usado nos 3 caminhos: ações do borderô
+  (Aprovar/Cancelar/Excluir), erro de baixa (`erroMensagem` no painel) e os passos de validação do
+  handshake. Toast das ações limpa o prefixo redundante "API 400 —". Puro surfacing/observabilidade — sem
+  mudança no comportamento de escrita no ERP. Ver `integrations/conexos.md` (contrato de leitura de erro).
+
 ## v0.17.2 (2026-07-17) — Fix: resíduo de centavos no adiantamento na baixa/permuta
 
 - **fix(permutas):** a baixa/permuta que consome o adiantamento por inteiro passa a fechar o líquido

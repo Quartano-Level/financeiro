@@ -392,12 +392,13 @@ async function acaoBordero(
     body: JSON.stringify(filCod !== undefined ? { filCod } : {}),
   })
   if (!res.ok) {
-    let detail = ''
+    // Prefere a mensagem do ERP (o backend já surface a razão real do `vars.msg`); sem ela, cai no status.
+    let erro = `API ${res.status}`
     try {
       const j = await res.json()
-      detail = j?.error ? ` — ${j.error}` : ''
+      if (j?.error) erro = String(j.error)
     } catch {}
-    throw new Error(`API ${res.status}${detail}`)
+    throw new Error(erro)
   }
 }
 

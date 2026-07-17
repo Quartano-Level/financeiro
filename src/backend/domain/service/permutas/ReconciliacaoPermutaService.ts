@@ -11,6 +11,7 @@ import PermutaExecucaoRepository, {
 } from '../../repository/permutas/PermutaExecucaoRepository.js';
 import PermutaRelationalRepository from '../../repository/permutas/PermutaRelationalRepository.js';
 import AlocacaoPermutasService from './AlocacaoPermutasService.js';
+import ErpErrorInterpreter, { type ErpMessage } from './ErpErrorInterpreter.js';
 import LogService from '../LogService.js';
 
 /** Conta gerencial do juros = VARIAÇÃO CAMBIAL PASSIVA REALIZADA (HAR + ontologia). */
@@ -85,6 +86,7 @@ export default class ReconciliacaoPermutaService {
         @inject(AlocacaoPermutasService)
         private alocacaoService: AlocacaoPermutasService,
         @inject(LogService) private logService: LogService,
+        @inject(ErpErrorInterpreter) private erpErrorInterpreter: ErpErrorInterpreter,
     ) {}
 
     public reconciliar = async (input: ReconciliarInput): Promise<ReconciliarResult> => {
@@ -728,13 +730,14 @@ export default class ReconciliacaoPermutaService {
      * `valid='ERRO'` chega com HTTP 200 e passaria despercebido. AVISO (ex.:
      * PESSOA_POSSUI_ADIANTAMENTO) é informativo e segue; ERRO aborta o handshake.
      */
-    private assertNoErpError = (
-        resp: { messages?: Array<{ valid?: string; message?: string }> },
-        passo: string,
-    ): void => {
-        const erro = resp.messages?.find((m) => m.valid === 'ERRO');
+    private assertNoErpError = (resp: { messages?: ErpMessage[] }, passo: string): void => {
+        const erro = Array.isArray(resp.messages)
+            ? resp.messages.find((m) => m?.valid === 'ERRO')
+            : undefined;
         if (erro) {
-            throw new Error(`fin010 ${passo} retornou ERRO: ${erro.message ?? 'sem detalhe'}`);
+            // Usa o interpretador → surface a razão real (`vars.msg`) do Generic.ERROR_MESSAGE.
+            const detalhe = this.erpErrorInterpreter.describeMessage(erro);
+            throw new Error(`fin010 ${passo} retornou ERRO: ${detalhe}`);
         }
     };
 
@@ -764,19 +767,10 @@ export default class ReconciliacaoPermutaService {
         return ax?.response?.data ?? ax?.cause?.response?.data ?? null;
     };
 
-    /** Mensagem amigável (PT) a partir do erro do ERP — traduz os códigos de validação do fin010. */
-    private friendlyErpMessage = (err: unknown): string => {
-        const data = this.extractErpData(err) as { messages?: Array<{ message?: string }> } | null;
-        const key = data?.messages?.[0]?.message;
-        const map: Record<string, string> = {
-            'FIN_010.DATA_BLOQUEADA_PELA_CONTABILIDADE':
-                'Data do borderô bloqueada pela contabilidade (período fechado). Use uma data em período aberto.',
-            'FIN_010.FIN_IMPOSSIVEL_ALTERAR_REGISTRO':
-                'Borderô finalizado — não é possível alterar.',
-            CnxValidatorMny: 'Valor monetário inválido (precisão > 2 casas).',
-            CnxValidatorDescr: 'Descrição/comentário inválido (precisa estar em MAIÚSCULAS).',
-        };
-        if (key) return map[key] ?? String(key);
-        return err instanceof Error ? err.message : String(err);
-    };
+    /**
+     * Mensagem amigável (PT) a partir do erro do ERP. Delega ao `ErpErrorInterpreter` (fonte única):
+     * surface a razão real (`vars.msg`) do `Generic.ERROR_MESSAGE` em vez da string genérica/key.
+     */
+    private friendlyErpMessage = (err: unknown): string =>
+        this.erpErrorInterpreter.interpret(err).friendly;
 }

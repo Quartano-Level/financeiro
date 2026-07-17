@@ -10,6 +10,7 @@ import { PROCESSAMENTO_STATUS } from '../domain/interface/permutas/Processamento
 import { LOG_TYPE } from '../domain/interface/log/LogInterface.js';
 import LogService from '../domain/service/LogService.js';
 import AlocacaoPermutasService from '../domain/service/permutas/AlocacaoPermutasService.js';
+import ErpErrorInterpreter from '../domain/service/permutas/ErpErrorInterpreter.js';
 import ClienteFiltroRepository from '../domain/repository/permutas/ClienteFiltroRepository.js';
 import PermutaProcessamentoRepository from '../domain/repository/permutas/PermutaProcessamentoRepository.js';
 import PermutaExecucaoRepository from '../domain/repository/permutas/PermutaExecucaoRepository.js';
@@ -48,51 +49,6 @@ const reconciliarLoteBodySchema = reconciliarBodySchema.extend({
     adiantamentoDocCods: z.array(z.string().trim().min(1)).optional(),
 });
 
-/**
- * Extrai uma mensagem AMIGÁVEL de um erro vindo do ERP (Conexos). As validações do `fin010`
- * voltam em `cause.response.data.messages[*].message` (ex.: FIN_IMPOSSIVEL_ALTERAR_REGISTRO
- * quando o borderô está finalizado). Fallback: a mensagem do próprio Error.
- */
-const ERP_MESSAGE_PT: Record<string, string> = {
-    'FIN_014.DELETAR_REGISTRO_ESTORNO':
-        'Não é possível excluir: este borderô tem um estorno vinculado no ERP.',
-    'FIN_014.FIN_IMPOSSIVEL_ALTERAR_REGISTRO':
-        'Não é possível alterar: borderô finalizado. Estorne antes de mexer.',
-    'FIN_010.FIN_IMPOSSIVEL_ALTERAR_REGISTRO': 'Borderô finalizado — não é possível alterar.',
-    'FIN_010.DATA_BLOQUEADA_PELA_CONTABILIDADE':
-        'Data do borderô bloqueada pela contabilidade (período fechado). Use uma data em período aberto.',
-    CnxValidatorMny: 'Valor monetário inválido (precisão > 2 casas).',
-    CnxValidatorDescr: 'Descrição/comentário inválido (precisa estar em MAIÚSCULAS).',
-    'Generic.ERROR_MESSAGE':
-        'O ERP recusou esta operação para o borderô (estado incompatível com a ação).',
-};
-
-/**
- * Extrai o detalhe CRU do erro do ERP (Conexos). As validações do `fin010` voltam em
- * `cause.response.data.messages[*].message` (a key) + um `status` HTTP. `friendly` é a tradução PT
- * (ou a própria key quando não mapeada). NOTA: o token/sid do Conexos vive no header `Cookie` da
- * request, NÃO em `response.data` — logar `data` é seguro (não vaza credencial).
- */
-const extractErpDetail = (
-    err: unknown,
-): { status?: number; data?: unknown; key?: string; friendly: string } => {
-    const cause = (err as { cause?: unknown })?.cause;
-    const resp = (cause as { response?: { status?: number; data?: unknown } })?.response;
-    const data = resp?.data as { messages?: Array<{ message?: string }> } | undefined;
-    const key = data?.messages?.[0]?.message;
-    const friendly = key
-        ? (ERP_MESSAGE_PT[key] ?? String(key))
-        : err instanceof Error
-          ? err.message
-          : 'erro ao executar a ação no Conexos';
-    return {
-        ...(resp?.status !== undefined ? { status: resp.status } : {}),
-        ...(data !== undefined ? { data } : {}),
-        ...(key !== undefined ? { key } : {}),
-        friendly,
-    };
-};
-
 /** Contexto de uma ação de borderô — alimenta o log estruturado da falha. */
 interface AcaoBorderoCtx {
     requestId: string;
@@ -120,7 +76,7 @@ const respondActionError = async (
         });
         return;
     }
-    const detail = extractErpDetail(err);
+    const detail = container.resolve(ErpErrorInterpreter).interpret(err);
     // Log estruturado da resposta crua do ERP (best-effort — nunca quebra a resposta ao usuário).
     try {
         const logService = container.resolve(LogService);
@@ -143,11 +99,11 @@ const respondActionError = async (
     } catch {
         // logging é best-effort: nunca deve impedir a resposta de erro.
     }
-    // Key não mapeada/genérica → inclui o texto cru do ERP no corpo, pra ser acionável sem ler log.
+    // Detalhe cru no corpo (acionável sem ler log): a razão real do ERP (`vars.msg`) quando houver;
+    // senão a key crua quando ela não tem tradução PT (`friendly === key`).
     const erpDetail =
-        detail.key !== undefined && ERP_MESSAGE_PT[detail.key] === undefined
-            ? detail.key
-            : undefined;
+        detail.reason ??
+        (detail.key !== undefined && detail.friendly === detail.key ? detail.key : undefined);
     res.status(400).json({
         error: detail.friendly,
         requestId: ctx.requestId,

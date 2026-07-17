@@ -150,6 +150,22 @@ A **primeira escrita** do sistema no Conexos. Contrato completo (endpoints, payl
 - Baixa **parcial** (invoice compartilhada N:M); finalização do borderô (`borVldFinalizado`); caminho
   `DESCONTO` (conta gerencial 94). O HAR cobriu 1 adto → 1 invoice cheia, classificação `JUROS`.
 
+### Contrato de leitura de ERRO — `Generic.ERROR_MESSAGE` / `vars.msg`
+Os erros do `fin010`/`fin014` voltam no envelope `{ messages: [{ valid?, message, vars? }] }`. **`message`
+é a KEY** (ex.: `FIN_010.DATA_BLOQUEADA_PELA_CONTABILIDADE`). Quando a key é o envelope genérico
+**`Generic.ERROR_MESSAGE`**, a **razão real fica em `vars.msg`** (ex.: `"CONTA DE DESCONTO NÃO
+INFORMADA!!!"` — ver `fin010-write-contract.md` §"Resolvido em campo (2026-06-25)", borderô 14918). Ler só
+`messages[0].message` deixa o usuário com um texto genérico (caixa-preta).
+
+**Fonte única de tradução:** `ErpErrorInterpreter`
+(`src/backend/domain/service/permutas/ErpErrorInterpreter.ts`, `@singleton`). Prioridade da mensagem:
+razão real (`vars.msg` do Generic) → tradução PT curada por key → key crua → `Error.message`. Guardas:
+`vars.msg` só conta se string não-vazia; prefere a mensagem `valid==='ERRO'`. É o ponto único usado pelos
+3 caminhos que traduziam erro do ERP (ações do borderô em `routes/permutas.ts`; `friendlyErpMessage` e
+`assertNoErpError` em `ReconciliacaoPermutaService`). A resposta HTTP das ações leva a razão real em
+`error`/`erpDetail`; o envelope cru continua logado (`erpData`). O `vars.msg` é texto operacional do ERP —
+sid/token vivem no header `Cookie`, não em `response.data`, então surface é seguro.
+
 ## Cache local de borderôs — `permuta_bordero` (ADR-0014, v0.7.0)
 
 Para a aba Borderôs não bater no ERP a cada abertura, os borderôs de permuta (`fin010` `borVldTipo=2`)
