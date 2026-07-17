@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import ErpErrorInterpreter from './ErpErrorInterpreter.js';
 import ReconciliacaoPermutaService from './ReconciliacaoPermutaService.js';
 
 // Guard-rails de escrita via EnvironmentProvider mockado (Rule #8). Mutável por teste.
@@ -90,6 +91,7 @@ const buildDeps = () => {
         relationalRepository as never,
         alocacaoService as never,
         logService as never,
+        new ErpErrorInterpreter(), // interpretador real (puro, sem deps)
     );
     return {
         service,
@@ -489,6 +491,41 @@ describe('ReconciliacaoPermutaService', () => {
             expect.objectContaining({ erroMensagem: 'ERP 500' }),
         );
         expect(out.resultados[0].status).toBe('error');
+    });
+
+    it('erro Generic.ERROR_MESSAGE → erroMensagem surface a razão real (vars.msg)', async () => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, conexosClient, execucaoRepository } = buildDeps();
+        // O ERP recusa a gravação com o envelope genérico; a razão real vem no vars.msg.
+        conexosClient.gravarBaixaPermuta.mockRejectedValue(
+            Object.assign(new Error('conexos'), {
+                response: {
+                    status: 400,
+                    data: {
+                        messages: [
+                            {
+                                valid: 'ERRO',
+                                message: 'Generic.ERROR_MESSAGE',
+                                vars: { msg: 'CONTA DE DESCONTO NÃO INFORMADA!!!' },
+                            },
+                        ],
+                    },
+                },
+            }),
+        );
+
+        const out = await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        expect(execucaoRepository.markError).toHaveBeenCalledWith(
+            KEY,
+            expect.objectContaining({ erroMensagem: 'CONTA DE DESCONTO NÃO INFORMADA!!!' }),
+        );
+        expect(out.resultados[0].erro).toBe('CONTA DE DESCONTO NÃO INFORMADA!!!');
     });
 
     it('throws when adiantamento has no alocacoes', async () => {
