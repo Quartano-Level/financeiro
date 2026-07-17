@@ -1,5 +1,15 @@
 # Columbia Financeiro — Changelog
 
+## v0.17.2 (2026-07-17) — Fix: resíduo de centavos no adiantamento na baixa/permuta
+
+- **fix(permutas):** a baixa/permuta que consome o adiantamento por inteiro passa a fechar o líquido
+  no valor REAL do adto no ERP (`bxaMnyValorPermuta`), eliminando o resíduo de centavos "à permutar"
+  que sobrava quando a variação cambial era reconstruída por `USD × taxa` (taxa arredondada a 3 casas).
+  A diferença é absorvida na conta de variação já em uso (131 juros / 130 desconto). Teto absoluto de
+  R$1,00 no resíduo absorvido (não escala com o valor) para nunca mascarar um saldo real; resíduo maior
+  fica para conferência manual (log). Só para invoice de título único em full-consume — perna parcial
+  (N:M) segue rateando por taxa. Novo invariante **I-Write-6** (ver ADR-0020).
+
 ## v0.17.1 (2026-07-11) — Filtro de período nos borderôs de permuta
 
 - **feat(permutas):** o filtro de **Data** do painel de borderôs vira um **intervalo** (Data inicial

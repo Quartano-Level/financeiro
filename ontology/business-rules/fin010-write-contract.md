@@ -88,6 +88,19 @@ valores ecoados, `borDtaMvto`, `vldPermuta:1`. **`bxaCodSeq` é a confirmação*
   NÃO cria novo borderô nem nova baixa (ver `idempotencia-reconciliacao.md`).
 - **I-Write-5 (homologação-first):** nenhuma escrita em produção antes de validada em
   `https://columbiatrading-hml.conexos.cloud` (mesmas credenciais/`filCod`). `CONEXOS_DRY_RUN` default ON.
+- **I-Write-6 (âncora no valor real do adto — anti-resíduo):** quando a baixa consome o adiantamento
+  **por inteiro** (`valorAlocado ≥ saldoAdtoNeg`, e a invoice é de **título único**), o líquido deve
+  fechar no valor REAL do adto no ERP (`bxaMnyValorPermuta`, passo 3), e **não** no reconstruído por
+  `USD × taxa`. A `taxa` é arredondada a 3 casas → `USD × taxa` não reproduz o BRL real do adto e sobra
+  um resíduo de centavos "à permutar" (ex.: borderô 15593, adto 17287: 0,05). A diferença
+  `bxaMnyValorPermuta − (bxaMnyValor + juros − desconto)` é absorvida na conta de variação cambial JÁ
+  em uso (131 juros / 130 desconto — a variação real É essa diferença). **Guarda:** teto ABSOLUTO
+  (`|resíduo| ≤ R$1,00`, não escala com o valor); resíduo maior **não** é ancorado (loga BUSINESS_WARN
+  → conferência manual). O teto é fixo de propósito: o resíduo de rate-rounding é `USD × |taxaReal −
+  taxaExibida|`, que escala com o USD e num adto grande fica numericamente indistinguível de um saldo
+  deliberado pequeno — um teto proporcional absorveria saldo real como variação fictícia. Perna
+  **parcial** (N:M) e multi-título full-consume seguem rateando por taxa (saldo remanescente legítimo).
+  Ver ADR-0020 e `ReconciliacaoPermutaService.ancorarVariacaoNoAdto`.
 
 ## Adendo v0.7.0 (2026-06-24) — auto-alocação ANTES de gravar
 
@@ -127,6 +140,7 @@ confundir entre si.
 | **+0,005** (moeda negociada) — saldo da **invoice** | `AlocacaoPermutasService.ts:239` | `valorAlocado > (saldoInvoiceNeg − jaInvoice) + 0.005` ⇒ `AlocacaoSaldoError` | idem, lado-crédito |
 | **dinâmica (anti-drift na baixa)** | `ReconciliacaoPermutaService.ts:269-270` | `tolerancia = Math.max(0.01, emAbertoErp * 0.005)`; se `valorBaixaDesejado > emAbertoErp + tolerancia` ⇒ **aborta** (I-Write-1) | a baixa NUNCA pode exceder o em-aberto VIVO do ERP; tolera só centavo/0,5% de arredondamento, depois capa em `bxaMnyValor = min(valorBaixaDesejado, emAbertoErp)` (`:277`) |
 | **+1 USD** (elegibilidade automática) | `GestaoPermutasService.ts:322-335` + `AlocacaoPermutasService.ts:337` | `saldoNeg + 1 ≥ Σ invoices do processo` ⇒ múltipla AUTOMÁTICA | já documentada em `business-rules/multipla-automatica.md` (I-Permuta-6) — só referência aqui |
+| **resíduo de âncora (I-Write-6)** — `R$1,00` fixo (absoluto) | `ReconciliacaoPermutaService.ancorarVariacaoNoAdto` | no full-consume de título único, absorve `bxaMnyValorPermuta − líquido` na conta de variação SE `|resíduo| ≤ R$1,00`; senão **não ancora** (BUSINESS_WARN) | zera o resíduo de centavos "à permutar" no adto sem mascarar saldo real (teto NÃO escala com o valor de propósito) |
 
 > **Tolerância dinâmica — fórmula EXATA do código (`ReconciliacaoPermutaService.ts:269`):**
 > `const tolerancia = Math.max(0.01, emAbertoErp * 0.005);` — ou seja, o maior entre **0,01 BRL**

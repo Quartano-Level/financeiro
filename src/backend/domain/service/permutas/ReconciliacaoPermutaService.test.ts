@@ -266,6 +266,148 @@ describe('ReconciliacaoPermutaService', () => {
         expect(out.resultados[0].status).toBe('settled');
     });
 
+    it('âncora I-Write-6: full-consume de título único fecha o líquido no valor real do adto (zero resíduo)', async () => {
+        // Regressão borderô 15593 (adto 17287 → invoice 18771): a variação por USD×taxa (taxa a 3 casas)
+        // deixava 0,05 "à permutar" no adto. Com o adto consumido por inteiro, o líquido fecha no
+        // bxaMnyValorPermuta do ERP e o resíduo é absorvido na conta de juros (131).
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const {
+            service,
+            conexosClient,
+            execucaoRepository,
+            relationalRepository,
+            alocacaoRepository,
+        } = buildDeps();
+        relationalRepository.findAdiantamento = jest.fn().mockResolvedValue({
+            docCod: '2767',
+            priCod: '1408',
+            filCod: 4,
+            valorPermutar: 421241.43, // BRL saldo a permutar (adto inteiro em aberto)
+            taxa: 5.158, // saldoNeg = 421241.43 / 5.158 ≈ 81667.59 USD ≈ valorAlocado → full-consume
+        });
+        conexosClient.validarTituloBaixa = jest
+            .fn()
+            .mockResolvedValue({ responseData: { bxaMnyValor: 408395.07 } });
+        conexosClient.validarTituloPermuta = jest.fn().mockResolvedValue({
+            responseData: {
+                gerNumPermuta: 198,
+                gerNum: 198,
+                pesCod: 3965,
+                dpeNomPessoa: 'VE STAAL EOOD',
+                bxaMnyValorPermuta: 421241.43, // valor REAL do adto no ERP
+            },
+        });
+        // ERP não devolve líquido → o código faz o fallback bxaMnyValor + juros − desconto.
+        conexosClient.atualizarValorLiquido = jest.fn().mockResolvedValue({ responseData: {} });
+        // Alocação com os números reais da permuta.
+        alocacaoRepository.listAtivas = jest.fn().mockResolvedValue([
+            buildAloc({
+                valorAlocado: 81667.58,
+                taxaAdiantamento: 5.158,
+                taxaInvoice: 5.0007,
+                variacaoClassificacao: 'JUROS',
+                variacaoResultado: 12846.31,
+                variacaoDelta: 12846.31,
+            }),
+        ]);
+
+        const out = await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'marilyn.mutafci@kavex.com',
+            dataMovto: 1,
+        });
+
+        const payload = conexosClient.gravarBaixaPermuta.mock.calls[0][0].payload;
+        expect(payload.bxaMnyValor).toBe(408395.07);
+        // juros ancorado: 12846.31 + 0.05 (resíduo) = 12846.36.
+        expect(payload.bxaMnyJuros).toBe(12846.36);
+        // líquido == valor real do adto → ZERO resíduo "à permutar".
+        expect(payload.bxaMnyLiquido).toBe(421241.43);
+        expect(payload.bxaMnyLiquido).toBe(payload.bxaMnyValorPermuta);
+        // passo 4 recebe o juros JÁ ancorado.
+        expect(conexosClient.atualizarValorLiquido).toHaveBeenCalledWith(
+            expect.objectContaining({ juros: 12846.36, desconto: 0 }),
+        );
+        expect(execucaoRepository.markSettled).toHaveBeenCalledWith(
+            KEY,
+            expect.objectContaining({ valorBaixado: 408395.07, juros: 12846.36 }),
+        );
+        expect(out.resultados[0].status).toBe('settled');
+    });
+
+    it('âncora I-Write-6 NÃO dispara em permuta PARCIAL (adto não é consumido por inteiro)', async () => {
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, conexosClient, relationalRepository } = buildDeps();
+        // Adto grande (saldoNeg = 500000/5 = 100000 USD) vs alocado 1000 USD → parcial → sem âncora.
+        relationalRepository.findAdiantamento = jest.fn().mockResolvedValue({
+            docCod: '2767',
+            priCod: '1408',
+            filCod: 4,
+            valorPermutar: 500000,
+            taxa: 5.0,
+        });
+
+        await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        // juros permanece o rateado por taxa (220), sem absorção de resíduo.
+        const payload = conexosClient.gravarBaixaPermuta.mock.calls[0][0].payload;
+        expect(payload.bxaMnyJuros).toBe(220);
+    });
+
+    it('âncora I-Write-6: resíduo acima do teto absoluto (R$1) NÃO é ancorado (anti-mascaramento)', async () => {
+        // Full-consume, mas o valor do adto no ERP está R$5,05 acima do líquido → resíduo > R$1 →
+        // pode ser saldo real, não arredondamento → NÃO ancora (mantém o rateio por taxa; loga warn).
+        envFlags.conexosWriteEnabled = true;
+        envFlags.conexosDryRun = false;
+        const { service, conexosClient, relationalRepository, alocacaoRepository } = buildDeps();
+        relationalRepository.findAdiantamento = jest.fn().mockResolvedValue({
+            docCod: '2767',
+            priCod: '1408',
+            filCod: 4,
+            valorPermutar: 421241.43,
+            taxa: 5.158,
+        });
+        conexosClient.validarTituloBaixa = jest
+            .fn()
+            .mockResolvedValue({ responseData: { bxaMnyValor: 408395.07 } });
+        conexosClient.validarTituloPermuta = jest.fn().mockResolvedValue({
+            responseData: {
+                gerNumPermuta: 198,
+                gerNum: 198,
+                pesCod: 3965,
+                bxaMnyValorPermuta: 421246.43, // 5,05 acima do líquido 421241.38 → resíduo > R$1
+            },
+        });
+        conexosClient.atualizarValorLiquido = jest.fn().mockResolvedValue({ responseData: {} });
+        alocacaoRepository.listAtivas = jest.fn().mockResolvedValue([
+            buildAloc({
+                valorAlocado: 81667.58,
+                taxaAdiantamento: 5.158,
+                taxaInvoice: 5.0007,
+                variacaoClassificacao: 'JUROS',
+                variacaoResultado: 12846.31,
+                variacaoDelta: 12846.31,
+            }),
+        ]);
+
+        await service.reconciliar({
+            adiantamentoDocCod: '2767',
+            executadoPor: 'yuri',
+            dataMovto: 1,
+        });
+
+        const payload = conexosClient.gravarBaixaPermuta.mock.calls[0][0].payload;
+        // juros permanece o rateado por taxa (12846.31), líquido NÃO fecha no valor do adto.
+        expect(payload.bxaMnyJuros).toBe(12846.31);
+        expect(payload.bxaMnyLiquido).toBe(421241.38);
+    });
+
     it('aborts (no write) when ERP reports zero em-aberto — anti-super-pagamento', async () => {
         envFlags.conexosWriteEnabled = true;
         envFlags.conexosDryRun = false;
