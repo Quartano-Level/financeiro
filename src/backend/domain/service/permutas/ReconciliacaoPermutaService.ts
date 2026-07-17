@@ -97,6 +97,10 @@ export default class ReconciliacaoPermutaService {
         }
         const filCod = adto.filCod;
 
+        // Saldo A PERMUTAR do adiantamento em moeda negociada — gate da âncora I-Write-6 (ver
+        // `saldoNegDoAdto` e `ancorarVariacaoNoAdto`). `undefined` (adto sem saldo/taxa) ⇒ sem âncora.
+        const saldoAdtoNeg = this.saldoNegDoAdto(adto.valorPermutar, adto.taxa);
+
         let alocacoes = (await this.alocacaoRepository.listAtivas()).filter(
             (a) => a.adiantamentoDocCod === adiantamentoDocCod,
         );
@@ -236,7 +240,13 @@ export default class ReconciliacaoPermutaService {
                     });
                     borCod = bordero.borCod;
                 }
-                const resultado = await this.executarBaixa({ key, borCod, filCod, aloc });
+                const resultado = await this.executarBaixa({
+                    key,
+                    borCod,
+                    filCod,
+                    aloc,
+                    ...(saldoAdtoNeg !== undefined ? { saldoAdtoNeg } : {}),
+                });
                 resultados.push(resultado);
             } catch (err) {
                 const mensagem = this.friendlyErpMessage(err);
@@ -281,6 +291,8 @@ export default class ReconciliacaoPermutaService {
         borCod: number;
         filCod: number;
         aloc: AlocacaoRow;
+        /** Saldo a permutar do adto (moeda negociada) — gate da âncora I-Write-6. */
+        saldoAdtoNeg?: number;
     }): Promise<ResultadoAlocacao> => {
         const { key, borCod, filCod, aloc } = params;
         const invoiceDocCod = Number(aloc.invoiceDocCod);
@@ -322,6 +334,16 @@ export default class ReconciliacaoPermutaService {
             titulos = [{ titCod: 1, usd: aloc.valorAlocado, taxa: aloc.taxaInvoice }];
         }
 
+        // ÂNCORA NO ADIANTAMENTO (I-Write-6): só quando ESTA baixa consome o adto por inteiro (o alocado
+        // cobre o saldo a permutar do adto) E a invoice é de título único. Nesse caso o líquido fecha no
+        // valor REAL do adto no ERP (`bxaMnyValorPermuta`) — evita o resíduo de centavos "à permutar" que
+        // sobra quando a variação é reconstruída por taxa arredondada a 3 casas. Perna parcial (N:M) segue
+        // rateando por taxa (o saldo remanescente é legítimo). Multi-título full-consume → follow-up.
+        const fullConsumeAdto =
+            params.saldoAdtoNeg !== undefined &&
+            aloc.valorAlocado >= params.saldoAdtoNeg - Math.max(0.01, params.saldoAdtoNeg * 0.0001);
+        const ancorarNoAdto = titulos.length === 1 && fullConsumeAdto;
+
         // Distribui o valor alocado (moeda negociada) entre os títulos, na ordem (FIFO por titCod).
         let restanteUsd = aloc.valorAlocado;
         let totalBaixadoBrl = 0;
@@ -342,6 +364,7 @@ export default class ReconciliacaoPermutaService {
                 titCod: t.titCod,
                 usdTitulo,
                 taxaTitulo: t.taxa,
+                ancorarNoAdto,
             });
             bxaCodSeqs.push(r.bxaCodSeq);
             totalBaixadoBrl = round2(totalBaixadoBrl + r.bxaMnyValor);
@@ -396,6 +419,8 @@ export default class ReconciliacaoPermutaService {
         titCod: number;
         usdTitulo: number;
         taxaTitulo: number;
+        /** Fecha o líquido no valor real do adto do ERP (I-Write-6) — ver `executarBaixa`. */
+        ancorarNoAdto: boolean;
     }): Promise<{ bxaCodSeq: number; bxaMnyValor: number; juros: number; desconto: number }> => {
         const { key, borCod, filCod, invoiceDocCod, adiantamentoDocCod, aloc, titCod, usdTitulo } =
             p;
@@ -432,8 +457,8 @@ export default class ReconciliacaoPermutaService {
             aloc.valorAlocado > 0
                 ? round2((aloc.variacaoResultado ?? 0) * (usdTitulo / aloc.valorAlocado))
                 : round2(aloc.variacaoResultado ?? 0);
-        const juros = isDesconto ? 0 : valorVariacao;
-        const desconto = isDesconto ? valorVariacao : 0;
+        let juros = isDesconto ? 0 : valorVariacao;
+        let desconto = isDesconto ? valorVariacao : 0;
 
         // Passo 3 — valida a permuta (adiantamento); o ERP devolve os dados da permuta (estado atual).
         const val3 = await this.conexosBaixaClient.validarTituloPermuta({
@@ -446,6 +471,25 @@ export default class ReconciliacaoPermutaService {
         const perm = val3.responseData;
         if (!perm)
             throw new Error(`adiantamento ${adiantamentoDocCod} sem dados de permuta no ERP`);
+
+        // ÂNCORA NO VALOR REAL DO ADIANTAMENTO (I-Write-6) — quando esta baixa consome o adto por
+        // inteiro, fecha o líquido no `bxaMnyValorPermuta` do ERP (absorve o resíduo de arredondamento
+        // de taxa na conta de variação). Ver `ancorarVariacaoNoAdto`. Sem efeito quando não aplicável.
+        const ancorada = await this.ancorarVariacaoNoAdto({
+            ancorarNoAdto: p.ancorarNoAdto,
+            ...(perm.bxaMnyValorPermuta !== undefined
+                ? { bxaMnyValorPermuta: perm.bxaMnyValorPermuta }
+                : {}),
+            bxaMnyValor,
+            juros,
+            desconto,
+            isDesconto,
+            adiantamentoDocCod,
+            invoiceDocCod,
+            titCod,
+        });
+        juros = ancorada.juros;
+        desconto = ancorada.desconto;
 
         // Passo 4 — recalcula o líquido com o juros/desconto informado.
         const val4 = await this.conexosBaixaClient.atualizarValorLiquido({
@@ -462,8 +506,10 @@ export default class ReconciliacaoPermutaService {
             val4.responseData?.bxaMnyLiquido ?? bxaMnyValor + juros - desconto,
         );
 
-        // Passo 5 — payload consolidado (com ESTE titCod) e gravação.
-        const comentario = this.buildComentario(aloc, bxaMnyValor, valorVariacao);
+        // Passo 5 — payload consolidado (com ESTE titCod) e gravação. O comentário usa a variação
+        // EFETIVAMENTE lançada (já ancorada, se foi o caso) para bater com o payload.
+        const variacaoLancada = isDesconto ? desconto : juros;
+        const comentario = this.buildComentario(aloc, bxaMnyValor, variacaoLancada);
         const payload = this.buildFinalPayload({
             filCod,
             borCod,
@@ -480,6 +526,80 @@ export default class ReconciliacaoPermutaService {
         await this.execucaoRepository.setRequestPayload(key, payload);
         const baixa = await this.conexosBaixaClient.gravarBaixaPermuta({ filCod, payload });
         return { bxaCodSeq: baixa.bxaCodSeq, bxaMnyValor, juros, desconto };
+    };
+
+    /**
+     * Saldo A PERMUTAR do adiantamento em moeda negociada (BRL saldo / taxa do adto). Gate da âncora
+     * I-Write-6: se o alocado cobre este saldo, a baixa consome o adto por inteiro. `undefined` quando
+     * o adto não tem saldo/taxa conhecidos (sem âncora → mantém o rateio por taxa).
+     */
+    private saldoNegDoAdto = (valorPermutar?: number, taxa?: number): number | undefined =>
+        valorPermutar !== undefined && taxa !== undefined && taxa > 0
+            ? valorPermutar / taxa
+            : undefined;
+
+    /**
+     * ÂNCORA NO VALOR REAL DO ADIANTAMENTO (I-Write-6). Quando a baixa consome o adto por inteiro
+     * (`ancorarNoAdto`), o líquido deve fechar no valor REAL do adto no ERP (`bxaMnyValorPermuta`), e
+     * não no reconstruído por `USD × taxa` (taxa arredondada a 3 casas) — senão sobra o resíduo de
+     * centavos "à permutar" no adto. A diferença é absorvida na conta de variação cambial JÁ em uso
+     * (131 juros / 130 desconto). Guarda de sanidade: só absorve resíduo dentro do teto ABSOLUTO de
+     * R$1,00 (ver `limiteResiduo`); divergência maior indica outro problema → NÃO ancora, apenas avisa.
+     * Retorna o juros/desconto (ajustado ou original).
+     */
+    private ancorarVariacaoNoAdto = async (p: {
+        ancorarNoAdto: boolean;
+        bxaMnyValorPermuta?: number;
+        bxaMnyValor: number;
+        juros: number;
+        desconto: number;
+        isDesconto: boolean;
+        adiantamentoDocCod: number;
+        invoiceDocCod: number;
+        titCod: number;
+    }): Promise<{ juros: number; desconto: number }> => {
+        const { juros, desconto } = p;
+        if (!p.ancorarNoAdto || p.bxaMnyValorPermuta === undefined || !(p.bxaMnyValorPermuta > 0)) {
+            return { juros, desconto };
+        }
+        const residuo = round2(p.bxaMnyValorPermuta - round2(p.bxaMnyValor + juros - desconto));
+        if (residuo === 0) return { juros, desconto };
+
+        // Teto ABSOLUTO (não escala com o valor). O resíduo legítimo de arredondamento da taxa a 3
+        // casas é `USD × |taxaReal − taxaExibida|` — que escala com o USD e, num adto grande, fica
+        // NUMERICAMENTE indistinguível de um saldo deliberado pequeno. Um teto proporcional (ex.:
+        // USD × 0,001) reabriria essa brecha (absorveria um saldo real como variação fictícia). Com
+        // teto fixo, só resíduo de centavos é absorvido; resíduo maior (arredondamento grande raro OU
+        // saldo real) NÃO é ancorado — vira BUSINESS_WARN para conferência manual. Ver ADR-0020.
+        const limiteResiduo = 1;
+        const ctx = {
+            adiantamentoDocCod: p.adiantamentoDocCod,
+            invoiceDocCod: p.invoiceDocCod,
+            titCod: p.titCod,
+            residuo,
+            bxaMnyValorPermuta: p.bxaMnyValorPermuta,
+        };
+        if (Math.abs(residuo) > limiteResiduo) {
+            await this.logService.warn({
+                type: LOG_TYPE.BUSINESS_WARN,
+                message:
+                    'resíduo do adto acima da tolerância de arredondamento — NÃO ancorado (conferir)',
+                data: { ...ctx, limiteResiduo },
+            });
+            return { juros, desconto };
+        }
+
+        const jurosAncora = p.isDesconto ? juros : round2(juros + residuo);
+        const descontoAncora = p.isDesconto ? round2(desconto - residuo) : desconto;
+        // Não deixar a conta ficar negativa (resíduo perverso com variação ~0).
+        if (jurosAncora < 0 || descontoAncora < 0) return { juros, desconto };
+
+        await this.logService.info({
+            type: LOG_TYPE.BUSINESS_INFO,
+            message: 'permuta baixa ANCORADA no valor real do adto (resíduo absorvido na variação)',
+            data: ctx,
+        });
+        return { juros: jurosAncora, desconto: descontoAncora };
     };
 
     /** Payload do passo 5 — une o lado invoice + o lado permuta (dados do ERP no passo 3). */
