@@ -117,6 +117,16 @@ export async function fetchSispagPainel(): Promise<SispagPainel> {
 
 export type LotePagamentoStatus = 'RASCUNHO' | 'FINALIZADO' | 'CANCELADO' | 'RETORNADO'
 
+export type Modalidade = 'BOLETO' | 'TED' | 'PIX' | 'CREDITO_CONTA'
+
+/** Rótulos das formas de pagamento (A2) para o seletor da revisão. */
+export const MODALIDADES: { value: Modalidade; label: string }[] = [
+  { value: 'BOLETO', label: 'Boleto' },
+  { value: 'TED', label: 'TED' },
+  { value: 'PIX', label: 'PIX' },
+  { value: 'CREDITO_CONTA', label: 'Crédito em conta' },
+]
+
 export interface ItemLote {
   loteId: string
   filCod: number
@@ -125,6 +135,8 @@ export interface ItemLote {
   credor?: string
   valor?: number
   vencimento?: number
+  /** Forma de pagamento (A2). Ausente = "a definir" — bloqueia a finalização. */
+  modalidade?: Modalidade
   incluidoPor: string
   incluidoEm?: string
 }
@@ -242,6 +254,16 @@ export const atualizarContaPagadora = (
     method: 'POST',
     body: JSON.stringify(input),
   })
+
+/** A2 — define a forma de pagamento de um item (só RASCUNHO; optimistic lock por versao). */
+export const atualizarModalidadeItem = (
+  loteId: string,
+  input: { filCod: number; docCod: string; titCod: string; versao: number; modalidade: Modalidade },
+) =>
+  loteRequest(
+    `/sispag/lotes/${loteId}/itens/${input.filCod}/${encodeURIComponent(input.docCod)}/${encodeURIComponent(input.titCod)}/modalidade`,
+    { method: 'POST', body: JSON.stringify({ versao: input.versao, modalidade: input.modalidade }) },
+  )
 
 // ============================================================ Ingestão de pagamentos
 

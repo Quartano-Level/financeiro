@@ -4,6 +4,7 @@ import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteFilialError from '../../errors/LoteFilialError.js';
 import LoteVersaoConflitoError from '../../errors/LoteVersaoConflitoError.js';
+import ModalidadePendenteError from '../../errors/ModalidadePendenteError.js';
 import TituloEmOutroLoteError from '../../errors/TituloEmOutroLoteError.js';
 import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
@@ -15,6 +16,8 @@ import {
     type LotePagamento,
     type LotePagamentoStatus,
     LOTE_STATUS,
+    MODALIDADE,
+    type Modalidade,
 } from '../../interface/sispag/SispagInterface.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import LogService from '../LogService.js';
@@ -88,6 +91,56 @@ export default class LotePagamentoService {
         await this.audit('atualizarContaPagadora', input.loteId, input.ator, {
             banco: input.banco,
             conta: input.conta,
+        });
+        return this.exigirLote(input.loteId);
+    };
+
+    /**
+     * A2 — define/troca a forma de pagamento (modalidade) de um item (só RASCUNHO;
+     * optimistic lock por `versao` do lote). Atualiza o item e bumpa a versão do lote
+     * numa transação. Distingue conflito-de-versão vs. estado inválido (espelha transicionar).
+     */
+    public atualizarModalidadeItem = async (input: {
+        loteId: string;
+        filCod: number;
+        docCod: string;
+        titCod: string;
+        modalidade: Modalidade;
+        versao: number;
+        ator: string;
+    }): Promise<LotePagamento> => {
+        await this.db.withTransaction(async (tx) => {
+            const afetadas = await this.repo.atualizarModalidadeItem(
+                {
+                    loteId: input.loteId,
+                    filCod: input.filCod,
+                    docCod: input.docCod,
+                    titCod: input.titCod,
+                    modalidade: input.modalidade,
+                    versaoEsperada: input.versao,
+                },
+                tx,
+            );
+            if (afetadas === 0) {
+                const atual = await this.exigirLote(input.loteId);
+                if (atual.versao !== input.versao) {
+                    throw new LoteVersaoConflitoError({
+                        loteId: input.loteId,
+                        versaoEsperada: input.versao,
+                    });
+                }
+                throw new LoteEstadoInvalidoError({
+                    loteId: input.loteId,
+                    statusAtual: atual.status,
+                    acao: 'definir modalidade',
+                });
+            }
+            await this.repo.tocarLote(input.loteId, tx);
+        });
+        await this.audit('atualizarModalidadeItem', input.loteId, input.ator, {
+            docCod: input.docCod,
+            titCod: input.titCod,
+            modalidade: input.modalidade,
         });
         return this.exigirLote(input.loteId);
     };
@@ -169,6 +222,8 @@ export default class LotePagamentoService {
                             credor: titulo.credor,
                             valor: titulo.valor,
                             vencimento: titulo.vencimento,
+                            // A2: boleto auto-detectado (código de barras); senão "a definir".
+                            modalidade: titulo.temBoleto ? MODALIDADE.BOLETO : undefined,
                             incluidoPor: input.ator,
                         },
                         tx,
@@ -237,6 +292,11 @@ export default class LotePagamentoService {
                 acao: 'finalizar',
                 motivo: 'Não é possível finalizar um lote vazio. Inclua ao menos um título.',
             });
+        }
+        // A2: revisão obrigatória — todo item precisa de forma de pagamento definida.
+        const semModalidade = await this.repo.contarItensSemModalidade(input.loteId);
+        if (semModalidade > 0) {
+            throw new ModalidadePendenteError({ loteId: lote.id, pendentes: semModalidade });
         }
         return this.transicionar(input, {
             de: [LOTE_STATUS.RASCUNHO],

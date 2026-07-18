@@ -6,6 +6,7 @@ import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
     CONTA_PAGADORA_DEFAULT,
     type FormacaoLotesResult,
+    MODALIDADE,
     type TituloAPagar,
 } from '../../interface/sispag/SispagInterface.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
@@ -98,6 +99,8 @@ export default class FormacaoLotesService {
                     credor: t.credor,
                     valor: t.valor,
                     vencimento: t.vencimento,
+                    // A2: boleto auto-detectado (código de barras); senão "a definir".
+                    modalidade: t.temBoleto ? MODALIDADE.BOLETO : undefined,
                     incluidoPor: ator,
                 })),
                 tx,

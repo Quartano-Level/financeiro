@@ -9,6 +9,7 @@ import {
     type LotePagamentoStatus,
     LOTE_STATUS,
     type ListarLotesFiltro,
+    type Modalidade,
 } from '../../interface/sispag/SispagInterface.js';
 
 /** Superfície de query comum ao pool e ao cliente transacional (mesmos 4 métodos). */
@@ -36,6 +37,7 @@ interface ItemRow {
     credor: string | null;
     valor: string | null;
     vencimento: Date | null;
+    modalidade: string | null;
     incluido_por: string;
     incluido_em: Date | null;
 }
@@ -63,6 +65,7 @@ export default class LotePagamentoRepository {
         credor: r.credor ?? undefined,
         valor: r.valor != null ? Number(r.valor) : undefined,
         vencimento: r.vencimento ? r.vencimento.getTime() : undefined,
+        modalidade: (r.modalidade as Modalidade | null) ?? undefined,
         incluidoPor: r.incluido_por,
         incluidoEm: r.incluido_em ? r.incluido_em.toISOString() : undefined,
     });
@@ -161,7 +164,7 @@ export default class LotePagamentoRepository {
         if (!header) return null;
         const itens = await this.db(tx).selectMany(
             `SELECT lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento,
-                    incluido_por, incluido_em
+                    modalidade, incluido_por, incluido_em
              FROM lote_pagamento_item WHERE lote_id = $id ORDER BY incluido_em ASC, id ASC`,
             { id },
         );
@@ -182,7 +185,7 @@ export default class LotePagamentoRepository {
         const ids = headers.map((h) => h.id);
         const itens = (await this.databaseClient.selectMany(
             `SELECT lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento,
-                    incluido_por, incluido_em
+                    modalidade, incluido_por, incluido_em
              FROM lote_pagamento_item WHERE lote_id = ANY($ids) ORDER BY incluido_em ASC, id ASC`,
             { ids },
         )) as ItemRow[];
@@ -221,14 +224,15 @@ export default class LotePagamentoRepository {
             credor?: string;
             valor?: number;
             vencimento?: number;
+            modalidade?: Modalidade;
             incluidoPor: string;
         },
         tx?: TransactionClient,
     ): Promise<void> => {
         await this.db(tx).insert(
             `INSERT INTO lote_pagamento_item
-                (lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento, incluido_por)
-             VALUES ($loteId, $filCod, $docCod, $titCod, $credor, $valor, $vencimento, $incluidoPor)
+                (lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento, modalidade, incluido_por)
+             VALUES ($loteId, $filCod, $docCod, $titCod, $credor, $valor, $vencimento, $modalidade, $incluidoPor)
              ON CONFLICT (lote_id, fil_cod, doc_cod, tit_cod) DO NOTHING`,
             {
                 loteId: item.loteId,
@@ -238,6 +242,7 @@ export default class LotePagamentoRepository {
                 credor: item.credor ?? null,
                 valor: item.valor ?? null,
                 vencimento: item.vencimento != null ? new Date(item.vencimento) : null,
+                modalidade: item.modalidade ?? null,
                 incluidoPor: item.incluidoPor,
             },
         );
@@ -253,6 +258,7 @@ export default class LotePagamentoRepository {
             credor?: string;
             valor?: number;
             vencimento?: number;
+            modalidade?: Modalidade;
             incluidoPor: string;
         }>,
         tx?: TransactionClient,
@@ -261,18 +267,21 @@ export default class LotePagamentoRepository {
         const tuples: string[] = [];
         const params: Record<string, unknown> = { loteId };
         itens.forEach((it, i) => {
-            tuples.push(`($loteId, $f${i}, $d${i}, $t${i}, $cr${i}, $v${i}, $ve${i}, $ip${i})`);
+            tuples.push(
+                `($loteId, $f${i}, $d${i}, $t${i}, $cr${i}, $v${i}, $ve${i}, $md${i}, $ip${i})`,
+            );
             params[`f${i}`] = it.filCod;
             params[`d${i}`] = it.docCod;
             params[`t${i}`] = it.titCod;
             params[`cr${i}`] = it.credor ?? null;
             params[`v${i}`] = it.valor ?? null;
             params[`ve${i}`] = it.vencimento != null ? new Date(it.vencimento) : null;
+            params[`md${i}`] = it.modalidade ?? null;
             params[`ip${i}`] = it.incluidoPor;
         });
         await this.db(tx).insert(
             `INSERT INTO lote_pagamento_item
-                (lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento, incluido_por)
+                (lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento, modalidade, incluido_por)
              VALUES ${tuples.join(', ')}
              ON CONFLICT (lote_id, fil_cod, doc_cod, tit_cod) DO NOTHING`,
             params,
@@ -295,6 +304,53 @@ export default class LotePagamentoRepository {
             { loteId },
         );
         return row ? Number(row.n) : 0;
+    };
+
+    /** A2 — conta itens SEM modalidade ("a definir"); >0 bloqueia a finalização. */
+    public contarItensSemModalidade = async (
+        loteId: string,
+        tx?: TransactionClient,
+    ): Promise<number> => {
+        const row = await this.db(tx).selectFirst<{ n: string }>(
+            `SELECT COUNT(*)::text AS n FROM lote_pagamento_item
+             WHERE lote_id = $loteId AND modalidade IS NULL`,
+            { loteId },
+        );
+        return row ? Number(row.n) : 0;
+    };
+
+    /**
+     * A2 — troca a modalidade de UM item, só em lote RASCUNHO e com optimistic lock (I6):
+     * a `versaoEsperada` casa a versão do lote pai. Retorna rowCount (0 = conflito de
+     * versão / estado ≠ RASCUNHO / item inexistente; o serviço distingue relendo).
+     */
+    public atualizarModalidadeItem = async (
+        params: {
+            loteId: string;
+            filCod: number;
+            docCod: string;
+            titCod: string;
+            modalidade: Modalidade;
+            versaoEsperada: number;
+        },
+        tx?: TransactionClient,
+    ): Promise<number> => {
+        return this.db(tx).update(
+            `UPDATE lote_pagamento_item i
+             SET modalidade = $modalidade
+             FROM lote_pagamento l
+             WHERE i.lote_id = l.id
+               AND l.id = $loteId AND l.status = 'RASCUNHO' AND l.versao = $versaoEsperada
+               AND i.fil_cod = $filCod AND i.doc_cod = $docCod AND i.tit_cod = $titCod`,
+            {
+                loteId: params.loteId,
+                filCod: params.filCod,
+                docCod: params.docCod,
+                titCod: params.titCod,
+                modalidade: params.modalidade,
+                versaoEsperada: params.versaoEsperada,
+            },
+        );
     };
 
     /** Marca o lote como "tocado" (bump de versão) — usado em incluir/remover item. */

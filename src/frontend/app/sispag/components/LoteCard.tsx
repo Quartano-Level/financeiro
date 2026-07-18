@@ -22,11 +22,13 @@ import {
 } from '@/components/ui/table'
 import {
   atualizarContaPagadora,
+  atualizarModalidadeItem,
   cancelarLote,
   CONTAS_PAGADORAS,
   finalizarLote,
   type LotePagamento,
   marcarRetorno,
+  MODALIDADES,
   reabrirLote,
   removerItem,
 } from '@/lib/sispag'
@@ -79,6 +81,8 @@ export function LoteCard({
   const total = l.itens.reduce((acc, i) => acc + (i.valor ?? 0), 0)
   const isRascunho = l.status === 'RASCUNHO'
   const isFinalizado = l.status === 'FINALIZADO'
+  // A2: revisão obrigatória — não finaliza enquanto houver item "a definir".
+  const faltaModalidade = l.itens.some((i) => !i.modalidade)
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2 py-3">
@@ -124,7 +128,12 @@ export function LoteCard({
               ) : null}
               <Button
                 size="sm"
-                disabled={busy || l.itens.length === 0}
+                disabled={busy || l.itens.length === 0 || faltaModalidade}
+                title={
+                  faltaModalidade
+                    ? 'Defina a forma de pagamento de todos os títulos antes de finalizar.'
+                    : undefined
+                }
                 onClick={() => acao(() => finalizarLote(l.id, l.versao), 'Lote finalizado')}
               >
                 <CheckCircle2 className="size-4" /> Finalizar
@@ -207,6 +216,7 @@ export function LoteCard({
                     <TableHead>Documento</TableHead>
                     <TableHead className="text-right">Valor</TableHead>
                     <TableHead>Vencimento</TableHead>
+                    <TableHead>Forma de pgto.</TableHead>
                     {isRascunho ? <TableHead className="w-10" /> : null}
                   </TableRow>
                 </TableHeader>
@@ -222,6 +232,45 @@ export function LoteCard({
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {fmtData(i.vencimento)}
+                      </TableCell>
+                      <TableCell>
+                        {isRascunho ? (
+                          <Select
+                            value={i.modalidade ?? undefined}
+                            disabled={busy}
+                            onValueChange={(m) =>
+                              acao(
+                                () =>
+                                  atualizarModalidadeItem(l.id, {
+                                    filCod: i.filCod,
+                                    docCod: i.docCod,
+                                    titCod: i.titCod,
+                                    versao: l.versao,
+                                    modalidade: m as (typeof MODALIDADES)[number]['value'],
+                                  }),
+                                'Forma de pagamento atualizada',
+                              )
+                            }
+                          >
+                            <SelectTrigger
+                              className={`h-8 w-40 ${i.modalidade ? '' : 'border-warning/60 text-warning'}`}
+                              aria-label="Forma de pagamento do título"
+                            >
+                              <SelectValue placeholder="A definir" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {MODALIDADES.map((m) => (
+                                <SelectItem key={m.value} value={m.value}>
+                                  {m.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            {MODALIDADES.find((m) => m.value === i.modalidade)?.label ?? '—'}
+                          </span>
+                        )}
                       </TableCell>
                       {isRascunho ? (
                         <TableCell>

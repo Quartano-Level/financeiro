@@ -144,6 +144,8 @@ export default class ConexosSispagClient {
             pesCod: r.pesCod,
             tpdCod: r.tpdCod,
             prontoParaRemessa: temDestino || temModalidade,
+            // A2: código de barras presente = candidato a BOLETO (auto-detecção na revisão).
+            temBoleto: Boolean(r.titEspCodbar),
         };
     };
 

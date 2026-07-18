@@ -4,6 +4,7 @@ import type PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseC
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteFilialError from '../../errors/LoteFilialError.js';
 import LoteVersaoConflitoError from '../../errors/LoteVersaoConflitoError.js';
+import ModalidadePendenteError from '../../errors/ModalidadePendenteError.js';
 import TituloEmOutroLoteError from '../../errors/TituloEmOutroLoteError.js';
 import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
 import type { LotePagamento, TituloAPagar } from '../../interface/sispag/SispagInterface.js';
@@ -57,6 +58,8 @@ interface RepoMock {
     transicionarStatus: jest.Mock;
     marcarManual: jest.Mock;
     atualizarContaPagadora: jest.Mock;
+    contarItensSemModalidade: jest.Mock;
+    atualizarModalidadeItem: jest.Mock;
 }
 
 const buildRepo = (): RepoMock => ({
@@ -71,6 +74,8 @@ const buildRepo = (): RepoMock => ({
     transicionarStatus: jest.fn().mockResolvedValue(1),
     marcarManual: jest.fn().mockResolvedValue(undefined),
     atualizarContaPagadora: jest.fn().mockResolvedValue(1),
+    contarItensSemModalidade: jest.fn().mockResolvedValue(0),
+    atualizarModalidadeItem: jest.fn().mockResolvedValue(1),
 });
 
 const make = (repo: RepoMock, conexosTitulo: TituloAPagar | null = titulo()) => {
@@ -379,7 +384,13 @@ describe('LotePagamentoService — invariantes', () => {
     });
 
     describe('atualizarContaPagadora (A3)', () => {
-        const input = { loteId: 'L1', versao: 1, banco: 'SANTANDER', conta: '13001274-8', ator: 'u1' };
+        const input = {
+            loteId: 'L1',
+            versao: 1,
+            banco: 'SANTANDER',
+            conta: '13001274-8',
+            ator: 'u1',
+        };
 
         it('troca a conta pagadora (RASCUNHO) e persiste banco/conta/versao', async () => {
             const repo = buildRepo();
@@ -411,6 +422,85 @@ describe('LotePagamentoService — invariantes', () => {
             await expect(service.atualizarContaPagadora(input)).rejects.toBeInstanceOf(
                 LoteEstadoInvalidoError,
             );
+        });
+    });
+
+    describe('modalidade (A2)', () => {
+        const incluir = { loteId: 'L1', filCod: 2, docCod: '100', titCod: '1', ator: 'u1' };
+
+        it('incluir default BOLETO quando o título tem código de barras (temBoleto)', async () => {
+            const repo = buildRepo();
+            const { service } = make(repo, titulo({ temBoleto: true }));
+            await service.incluirTitulo(incluir);
+            expect(repo.adicionarItem).toHaveBeenCalledWith(
+                expect.objectContaining({ modalidade: 'BOLETO' }),
+                expect.anything(),
+            );
+        });
+
+        it('incluir sem código de barras → modalidade "a definir" (undefined)', async () => {
+            const repo = buildRepo();
+            const { service } = make(repo, titulo({ temBoleto: false }));
+            await service.incluirTitulo(incluir);
+            expect(repo.adicionarItem).toHaveBeenCalledWith(
+                expect.objectContaining({ modalidade: undefined }),
+                expect.anything(),
+            );
+        });
+
+        it('finalizar BLOQUEIA se houver item sem modalidade ("a definir")', async () => {
+            const repo = buildRepo();
+            repo.contarItensSemModalidade.mockResolvedValue(2);
+            const { service } = make(repo);
+            await expect(
+                service.finalizarLote({ loteId: 'L1', versao: 1, ator: 'u1' }),
+            ).rejects.toBeInstanceOf(ModalidadePendenteError);
+            expect(repo.transicionarStatus).not.toHaveBeenCalled();
+        });
+
+        it('finalizar OK quando toda modalidade está definida', async () => {
+            const repo = buildRepo();
+            repo.contarItensSemModalidade.mockResolvedValue(0);
+            const { service } = make(repo);
+            await service.finalizarLote({ loteId: 'L1', versao: 1, ator: 'u1' });
+            expect(repo.transicionarStatus).toHaveBeenCalled();
+        });
+
+        it('atualizarModalidadeItem troca a forma e toca o lote', async () => {
+            const repo = buildRepo();
+            const { service } = make(repo);
+            await service.atualizarModalidadeItem({
+                loteId: 'L1',
+                filCod: 2,
+                docCod: '100',
+                titCod: '1',
+                modalidade: 'PIX',
+                versao: 1,
+                ator: 'u1',
+            });
+            expect(repo.atualizarModalidadeItem).toHaveBeenCalledWith(
+                expect.objectContaining({ modalidade: 'PIX', versaoEsperada: 1 }),
+                expect.anything(),
+            );
+            expect(repo.tocarLote).toHaveBeenCalled();
+        });
+
+        it('atualizarModalidadeItem — rowCount 0 + versão divergente → conflito', async () => {
+            const repo = buildRepo();
+            repo.atualizarModalidadeItem.mockResolvedValue(0);
+            repo.getLoteComItens.mockResolvedValue(lote({ versao: 2 }));
+            const { service } = make(repo);
+            await expect(
+                service.atualizarModalidadeItem({
+                    loteId: 'L1',
+                    filCod: 2,
+                    docCod: '100',
+                    titCod: '1',
+                    modalidade: 'PIX',
+                    versao: 1,
+                    ator: 'u1',
+                }),
+            ).rejects.toBeInstanceOf(LoteVersaoConflitoError);
         });
     });
 });

@@ -74,6 +74,10 @@ const contaPagadoraSchema = z.object({
     banco: z.string().trim().min(1),
     conta: z.string().trim().min(1),
 });
+const modalidadeSchema = z.object({
+    versao: z.coerce.number().int().min(1),
+    modalidade: z.enum(['BOLETO', 'TED', 'PIX', 'CREDITO_CONTA']),
+});
 
 // GET /sispag/lotes — lista lotes candidatos (?status=&filCod=). Leitura.
 router.get(
@@ -211,6 +215,44 @@ for (const acao of ['finalizar', 'reabrir', 'cancelar', 'retorno'] as const) {
         }),
     );
 }
+
+// POST /sispag/lotes/:id/itens/:filCod/:docCod/:titCod/modalidade — define a forma de
+// pagamento de um item (A2, só RASCUNHO; optimistic lock). admin.
+router.post(
+    '/lotes/:id/itens/:filCod/:docCod/:titCod/modalidade',
+    requireRole('admin'),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const filCod = Number(req.params.filCod);
+        if (!Number.isInteger(filCod) || filCod <= 0) {
+            res.status(400).json({ error: 'invalid filCod' });
+            return;
+        }
+        const parsed = modalidadeSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: 'invalid body (versao, modalidade)',
+                details: parsed.error.flatten(),
+            });
+            return;
+        }
+        const service = container.resolve(LotePagamentoService);
+        try {
+            const lote = await service.atualizarModalidadeItem({
+                loteId: String(req.params.id),
+                filCod,
+                docCod: String(req.params.docCod),
+                titCod: String(req.params.titCod),
+                modalidade: parsed.data.modalidade,
+                versao: parsed.data.versao,
+                ator: ator(req),
+            });
+            res.json({ lote });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
 
 // POST /sispag/lotes/:id/conta — troca a conta pagadora do lote (A3, só RASCUNHO). admin.
 router.post(
