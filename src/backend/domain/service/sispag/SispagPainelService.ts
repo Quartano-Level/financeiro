@@ -1,10 +1,13 @@
 import { inject, injectable } from 'tsyringe';
 import ConexosBaseClient from '../../client/ConexosBaseClient.js';
 import ConexosSispagClient from '../../client/ConexosSispagClient.js';
+import ConexosSispagRetornoClient from '../../client/ConexosSispagRetornoClient.js';
 import BoundedConcurrency from '../../libs/concurrency/BoundedConcurrency.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
+import type { ArquivoRetorno } from '../../interface/sispag/Fin052Retorno.js';
 import type {
     LoteSispag,
+    Modalidade,
     SispagKpis,
     SispagPainelResponse,
     TituloAPagar,
@@ -36,6 +39,8 @@ const CONEXOS_FANOUT_LIMIT = 4;
 export default class SispagPainelService {
     public constructor(
         @inject(ConexosSispagClient) private readonly sispag: ConexosSispagClient,
+        @inject(ConexosSispagRetornoClient)
+        private readonly retorno: ConexosSispagRetornoClient,
         @inject(ConexosBaseClient) private readonly base: ConexosBaseClient,
         @inject(BoundedConcurrency) private readonly bounded: BoundedConcurrency,
         @inject(TituloAPagarRepository) private readonly tituloRepo: TituloAPagarRepository,
@@ -124,6 +129,88 @@ export default class SispagPainelService {
             titulos,
             lotes: this.ordenarLotes(lotesRaw),
         };
+    };
+
+    /**
+     * Arquivos de RETORNO (`.RET`) do Conexos (fin052) — READ-ONLY. Espelha a aba
+     * de lotes nativos: lê ao vivo, por filial × config de retorno (ger015). Tolerante
+     * a falha per-leitura. O upload/processar do `.RET` é fase futura (dormente).
+     */
+    public listRetornos = async (): Promise<ArquivoRetorno[]> => {
+        const filiais = await this.base.getFiliais();
+        const filCods = filiais
+            .map((f) => f.filCod)
+            .filter((n): n is number => typeof n === 'number');
+
+        // 1) por filial: descobre os pares (bncCod, gtbCodSeq) válidos (ger015).
+        const configsSettled = await this.bounded.run(
+            filCods,
+            (filCod) =>
+                this.retorno
+                    .listConfigsRetorno({ filCod })
+                    .then((cfgs) =>
+                        cfgs.map((c) => ({ filCod, bncCod: c.bncCod, gtbCodSeq: c.gtbCodSeq })),
+                    ),
+            CONEXOS_FANOUT_LIMIT,
+        );
+        const alvos: Array<{ filCod: number; bncCod: number; gtbCodSeq: number }> = [];
+        for (const s of configsSettled) {
+            if (s.status === 'fulfilled') alvos.push(...s.value);
+        }
+
+        // 2) por (filial, banco, config): lista os arquivos de retorno (`arquivosRetorno/list`).
+        const arquivosSettled = await this.bounded.run(
+            alvos,
+            (alvo) =>
+                this.retorno.listArquivosRetorno({
+                    filCod: alvo.filCod,
+                    bncCod: alvo.bncCod,
+                    gtbCodSeq: alvo.gtbCodSeq,
+                }),
+            CONEXOS_FANOUT_LIMIT,
+        );
+        const arquivos: ArquivoRetorno[] = [];
+        for (let i = 0; i < arquivosSettled.length; i += 1) {
+            const s = arquivosSettled[i];
+            if (s.status === 'fulfilled') {
+                arquivos.push(...s.value);
+            } else {
+                await this.logService.warn({
+                    type: LOG_TYPE.BUSINESS_WARN,
+                    message: 'SISPAG: fin052 return-file read failed (ignored)',
+                    data: {
+                        alvo: alvos[i],
+                        reason: s.reason instanceof Error ? s.reason.message : String(s.reason),
+                    },
+                });
+            }
+        }
+        // Mais recentes primeiro (por sequencial do arquivo).
+        return arquivos.sort((a, b) => b.garCodSeq - a.garCodSeq);
+    };
+
+    /**
+     * A2 opção B — formas de pagamento DISPONÍVEIS por título do lote, lidas AO VIVO do
+     * Conexos (fin064: barras→boleto, chave PIX→pix, banco+conta→ted/crédito). Evita o
+     * analista escolher uma forma sem cadastro (→ `.REM` rejeitado). Fan-out limitado,
+     * tolerante a falha (título sem leitura → lista vazia, o front trata).
+     */
+    public modalidadesDisponiveisDoLote = async (
+        loteId: string,
+    ): Promise<Array<{ docCod: string; titCod: string; modalidades: Modalidade[] }>> => {
+        const lote = await this.loteRepo.getLoteComItens(loteId);
+        if (!lote) return [];
+        const settled = await this.bounded.run(
+            lote.itens,
+            (it) => this.sispag.getTituloAPagar(it.filCod, it.docCod, it.titCod),
+            CONEXOS_FANOUT_LIMIT,
+        );
+        return lote.itens.map((it, i) => {
+            const s = settled[i];
+            const modalidades =
+                s.status === 'fulfilled' ? (s.value?.modalidadesDisponiveis ?? []) : [];
+            return { docCod: it.docCod, titCod: it.titCod, modalidades };
+        });
     };
 
     /** Filtra não-pagos, deriva aging e ordena por vencimento (mais urgente 1º). */

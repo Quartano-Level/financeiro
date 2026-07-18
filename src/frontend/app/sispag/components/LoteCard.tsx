@@ -25,9 +25,11 @@ import {
   atualizarModalidadeItem,
   cancelarLote,
   CONTAS_PAGADORAS,
+  fetchModalidadesDisponiveis,
   finalizarLote,
   type LotePagamento,
   marcarRetorno,
+  type Modalidade,
   MODALIDADES,
   reabrirLote,
   removerItem,
@@ -83,6 +85,26 @@ export function LoteCard({
   const isFinalizado = l.status === 'FINALIZADO'
   // A2: revisão obrigatória — não finaliza enquanto houver item "a definir".
   const faltaModalidade = l.itens.some((i) => !i.modalidade)
+
+  // A2 opção B: formas disponíveis (cadastro do favorecido) por item, lidas ao vivo ao
+  // expandir um RASCUNHO. Chave = docCod:titCod. Enquanto não carrega, o seletor oferece todas.
+  const [disponiveis, setDisponiveis] = React.useState<Map<string, Modalidade[]> | null>(null)
+  React.useEffect(() => {
+    if (!aberto || !isRascunho) return
+    let vivo = true
+    fetchModalidadesDisponiveis(l.id)
+      .then((itens) => {
+        if (!vivo) return
+        setDisponiveis(new Map(itens.map((i) => [`${i.docCod}:${i.titCod}`, i.modalidades])))
+      })
+      .catch(() => {
+        if (vivo) setDisponiveis(new Map()) // falhou → oferece todas (fallback)
+      })
+    return () => {
+      vivo = false
+    }
+  }, [aberto, isRascunho, l.id])
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2 py-3">
@@ -221,7 +243,23 @@ export function LoteCard({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {l.itens.map((i) => (
+                  {l.itens.map((i) => {
+                    // A2 opção B: formas disponíveis no cadastro do favorecido (ao vivo).
+                    const avail = disponiveis?.get(`${i.docCod}:${i.titCod}`)
+                    const carregou = avail !== undefined
+                    const semCadastro = carregou && avail.length === 0
+                    // Opções: se carregou e há disponíveis, só essas; senão todas (fallback).
+                    const base = carregou && avail.length > 0
+                      ? MODALIDADES.filter((m) => avail.includes(m.value))
+                      : MODALIDADES
+                    // Garante que a modalidade já escolhida apareça mesmo se ficou indisponível.
+                    const opcoes =
+                      i.modalidade && !base.some((m) => m.value === i.modalidade)
+                        ? [...base, ...MODALIDADES.filter((m) => m.value === i.modalidade)]
+                        : base
+                    const indisponivel =
+                      carregou && !!i.modalidade && !!avail && !avail.includes(i.modalidade)
+                    return (
                     <TableRow key={`${i.docCod}:${i.titCod}`}>
                       <TableCell className="max-w-[16rem] truncate">{i.credor ?? '—'}</TableCell>
                       <TableCell className="text-muted-foreground">
@@ -235,37 +273,44 @@ export function LoteCard({
                       </TableCell>
                       <TableCell>
                         {isRascunho ? (
-                          <Select
-                            value={i.modalidade ?? undefined}
-                            disabled={busy}
-                            onValueChange={(m) =>
-                              acao(
-                                () =>
-                                  atualizarModalidadeItem(l.id, {
-                                    filCod: i.filCod,
-                                    docCod: i.docCod,
-                                    titCod: i.titCod,
-                                    versao: l.versao,
-                                    modalidade: m as (typeof MODALIDADES)[number]['value'],
-                                  }),
-                                'Forma de pagamento atualizada',
-                              )
-                            }
-                          >
-                            <SelectTrigger
-                              className={`h-8 w-40 ${i.modalidade ? '' : 'border-warning/60 text-warning'}`}
-                              aria-label="Forma de pagamento do título"
+                          <div className="flex flex-col gap-0.5">
+                            <Select
+                              value={i.modalidade ?? undefined}
+                              disabled={busy}
+                              onValueChange={(m) =>
+                                acao(
+                                  () =>
+                                    atualizarModalidadeItem(l.id, {
+                                      filCod: i.filCod,
+                                      docCod: i.docCod,
+                                      titCod: i.titCod,
+                                      versao: l.versao,
+                                      modalidade: m as (typeof MODALIDADES)[number]['value'],
+                                    }),
+                                  'Forma de pagamento atualizada',
+                                )
+                              }
                             >
-                              <SelectValue placeholder="A definir" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {MODALIDADES.map((m) => (
-                                <SelectItem key={m.value} value={m.value}>
-                                  {m.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                              <SelectTrigger
+                                className={`h-8 w-40 ${i.modalidade && !indisponivel ? '' : 'border-warning/60 text-warning'}`}
+                                aria-label="Forma de pagamento do título"
+                              >
+                                <SelectValue placeholder="A definir" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {opcoes.map((m) => (
+                                  <SelectItem key={m.value} value={m.value}>
+                                    {m.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            {semCadastro ? (
+                              <span className="text-xs text-warning">sem forma cadastrada</span>
+                            ) : indisponivel ? (
+                              <span className="text-xs text-warning">forma não cadastrada</span>
+                            ) : null}
+                          </div>
                         ) : (
                           <span className="text-xs text-muted-foreground">
                             {MODALIDADES.find((m) => m.value === i.modalidade)?.label ?? '—'}
@@ -296,7 +341,8 @@ export function LoteCard({
                         </TableCell>
                       ) : null}
                     </TableRow>
-                  ))}
+                    )
+                  })}
                 </TableBody>
               </Table>
             </div>

@@ -1,9 +1,11 @@
 import { inject, injectable, singleton } from 'tsyringe';
 import { z } from 'zod';
-import type {
-    BorderoAPagar,
-    LoteSispag,
-    TituloAPagar,
+import {
+    type BorderoAPagar,
+    type LoteSispag,
+    MODALIDADE,
+    type Modalidade,
+    type TituloAPagar,
 } from '../interface/sispag/SispagInterface.js';
 import Logger from '../libs/logger/Logger.js';
 import ConexosBaseClient from './ConexosBaseClient.js';
@@ -123,11 +125,19 @@ export default class ConexosSispagClient {
 
     /** Mapeia uma linha do `fin064` para `TituloAPagar` (compartilhado por list/get). */
     private mapTitulo = (r: TituloRow, filCod: number): TituloAPagar => {
-        // heurística informativa de "pronto para remessa" — o que o fin064 já traz.
-        const temDestino =
-            Boolean(r.pctNumBanco && r.pctEspNumContaBanc) ||
-            Boolean(r.titEspCodbar) ||
-            Boolean(r.itsDesChavePix);
+        // Formas de pagamento DISPONÍVEIS no cadastro do favorecido (A2 opção B): o que o
+        // fin064 traz ao vivo. Boleto = tem código de barras (por título); PIX = tem chave;
+        // TED/crédito em conta = tem banco+conta do favorecido. O detalhe (barras/chave/conta)
+        // é hidratado pelo ERP só no envio (anti-drift) — aqui é só a DISPONIBILIDADE.
+        const temBoleto = Boolean(r.titEspCodbar);
+        const temPix = Boolean(r.itsDesChavePix);
+        const temContaBanco = Boolean(r.pctNumBanco && r.pctEspNumContaBanc);
+        const modalidadesDisponiveis: Modalidade[] = [];
+        if (temBoleto) modalidadesDisponiveis.push(MODALIDADE.BOLETO);
+        if (temPix) modalidadesDisponiveis.push(MODALIDADE.PIX);
+        if (temContaBanco) {
+            modalidadesDisponiveis.push(MODALIDADE.TED, MODALIDADE.CREDITO_CONTA);
+        }
         const temModalidade = r.itsVldModalidade !== undefined;
         return {
             docCod: r.docCod,
@@ -143,9 +153,10 @@ export default class ConexosSispagClient {
             numRemessa: r.titNumRemessa,
             pesCod: r.pesCod,
             tpdCod: r.tpdCod,
-            prontoParaRemessa: temDestino || temModalidade,
+            prontoParaRemessa: temBoleto || temPix || temContaBanco || temModalidade,
             // A2: código de barras presente = candidato a BOLETO (auto-detecção na revisão).
-            temBoleto: Boolean(r.titEspCodbar),
+            temBoleto,
+            modalidadesDisponiveis,
         };
     };
 

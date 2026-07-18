@@ -36,6 +36,29 @@ router.get(
     }),
 );
 
+// GET /sispag/retornos — arquivos de retorno (.RET) do fin052, ao vivo. READ-ONLY.
+router.get(
+    '/retornos',
+    asyncHandler(async (_req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(SispagPainelService);
+        const arquivos = await service.listRetornos();
+        res.json({ arquivos });
+    }),
+);
+
+// GET /sispag/lotes/:id/modalidades-disponiveis — formas de pgto. do favorecido por título
+// (A2 opção B), lidas ao vivo do Conexos. READ-ONLY.
+router.get(
+    '/lotes/:id/modalidades-disponiveis',
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const service = container.resolve(SispagPainelService);
+        const itens = await service.modalidadesDisponiveisDoLote(String(req.params.id));
+        res.json({ itens });
+    }),
+);
+
 // ===================================================== Fatia 2 — Lotes candidatos
 // Montagem assistida + gate. Estado LOCAL — NENHUMA escrita no Conexos (I1).
 

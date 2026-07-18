@@ -255,6 +255,45 @@ export const atualizarContaPagadora = (
     body: JSON.stringify(input),
   })
 
+/** Um arquivo de retorno (.RET) do fin052 — read-only. */
+export interface ArquivoRetorno {
+  filCod: number
+  bncCod: number
+  gtbCodSeq: number
+  garCodSeq: number
+  arquivo?: string
+  status?: number
+  statusProcessamento?: number
+  configNome?: string
+  banco?: string
+  erros?: number
+  titulosRejeitados?: number
+  cadastradoEm?: number
+  processadoEm?: number
+}
+
+/** Retornos (.RET) do fin052, ao vivo. READ-ONLY (upload/processar = fase futura). */
+export async function fetchRetornos(): Promise<ArquivoRetorno[]> {
+  const res = await apiFetch(`${API}/sispag/retornos`, { headers: await withAuthHeaders() })
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  const j = (await res.json()) as { arquivos: ArquivoRetorno[] }
+  return j.arquivos ?? []
+}
+
+/** A2 opção B — formas de pagamento disponíveis (cadastro do favorecido) por item do lote, ao vivo. */
+export async function fetchModalidadesDisponiveis(
+  loteId: string,
+): Promise<Array<{ docCod: string; titCod: string; modalidades: Modalidade[] }>> {
+  const res = await apiFetch(`${API}/sispag/lotes/${loteId}/modalidades-disponiveis`, {
+    headers: await withAuthHeaders(),
+  })
+  if (!res.ok) throw new Error(`API ${res.status}`)
+  const j = (await res.json()) as {
+    itens: Array<{ docCod: string; titCod: string; modalidades: Modalidade[] }>
+  }
+  return j.itens ?? []
+}
+
 /** A2 — define a forma de pagamento de um item (só RASCUNHO; optimistic lock por versao). */
 export const atualizarModalidadeItem = (
   loteId: string,
