@@ -230,7 +230,7 @@ router.post(
 );
 
 // POST /sispag/lotes/formar — forma lotes candidatos automaticamente (cron/manual).
-// Mesmas regras da montagem (I4/I7, só a vencer ≤7d). `IngestLockBusyError` → 409.
+// Mesmas regras da montagem (I4, só a vencer ≤7d). `IngestLockBusyError` → 409.
 router.post(
     '/lotes/formar',
     requireRole('admin'),

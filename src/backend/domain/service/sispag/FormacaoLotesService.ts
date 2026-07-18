@@ -18,9 +18,8 @@ export const FORMACAO_LOCK_KEY = 615243789;
 /**
  * FormacaoLotesService — cron pós-ingestão que MONTA lotes candidatos automaticamente.
  *
- * Regras (as mesmas da montagem manual): mesma filial (I4), mesma classe nacional/
- * internacional (I7), SÓ títulos A VENCER (≤7d; vencidos NÃO entram). Agrupa por
- * (filial × classe × banco). Cada run: (1) DESFAZ lotes automáticos que já têm título
+ * Regras (as mesmas da montagem manual): mesma filial (I4), SÓ títulos A VENCER
+ * (≤7d; vencidos NÃO entram). Agrupa por FILIAL. Cada run: (1) DESFAZ lotes automáticos que já têm título
  * vencido (libera os títulos); (2) forma lotes novos com os elegíveis ainda sem lote.
  * Os lotes nascem RASCUNHO e caem em "Lotes candidatos" para o analista revisar antes
  * de aprovar. NÃO toca em lotes manuais nem finalizados. Escreve só no Postgres (I1).
@@ -48,7 +47,7 @@ export default class FormacaoLotesService {
         const lotesDesfeitos = await this.loteRepo.desfazerAutomaticosVencidos();
 
         // 2) forma lotes novos com os elegíveis (a vencer ≤7d, não lotados). Cada grupo
-        // (filial × classe) é fatiado em lotes de no máx. MAX_TITULOS_POR_LOTE para revisão.
+        // (por filial) é fatiado em lotes de no máx. MAX_TITULOS_POR_LOTE para revisão.
         const elegiveis = await this.tituloRepo.listElegiveisParaFormacao(HORIZONTE_DIAS);
         const grupos = this.agrupar(elegiveis);
         let lotesFormados = 0;
@@ -93,7 +92,6 @@ export default class FormacaoLotesService {
                     credor: t.credor,
                     valor: t.valor,
                     vencimento: t.vencimento,
-                    internacional: t.internacional ?? false,
                     incluidoPor: ator,
                 })),
                 tx,
@@ -103,13 +101,15 @@ export default class FormacaoLotesService {
     };
 
     /**
-     * Chave de grupo: filial × classe (nacional/internacional). O banco/conta NÃO entra —
-     * é buscado ao vivo só na hora da remessa (Fatia 3, anti-drift), não na montagem.
+     * Chave de grupo: só a FILIAL (I4 — um lote por filial). Internacional saiu do escopo
+     * (câmbio manual, ADR-0020), então não há mais divisão por classe. A conta pagadora é
+     * default Itaú (o analista troca na revisão) e o banco do favorecido é buscado ao vivo
+     * só na remessa (Fatia 3, anti-drift), não na montagem.
      */
     private agrupar = (titulos: TituloAPagar[]): Map<string, TituloAPagar[]> => {
         const grupos = new Map<string, TituloAPagar[]>();
         for (const t of titulos) {
-            const key = `${t.filCod}|${t.internacional ? 'I' : 'N'}`;
+            const key = `${t.filCod}`;
             const atual = grupos.get(key);
             if (atual) atual.push(t);
             else grupos.set(key, [t]);

@@ -26,8 +26,6 @@ export interface TituloAPagar {
   tpdCod?: string
   prontoParaRemessa?: boolean
   ativo?: boolean
-  /** Pagamento ao exterior (ufEspSigla='EX') vs. nacional. Rails distintos (I7). */
-  internacional?: boolean
   /** Já está num lote RASCUNHO — não pode ser atachado a outro (bloqueia a seleção). */
   emLote?: boolean
 }
@@ -127,7 +125,6 @@ export interface ItemLote {
   credor?: string
   valor?: number
   vencimento?: number
-  internacional?: boolean
   incluidoPor: string
   incluidoEm?: string
 }

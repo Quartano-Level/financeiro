@@ -36,7 +36,6 @@ interface ItemRow {
     credor: string | null;
     valor: string | null;
     vencimento: Date | null;
-    internacional: boolean;
     incluido_por: string;
     incluido_em: Date | null;
 }
@@ -64,7 +63,6 @@ export default class LotePagamentoRepository {
         credor: r.credor ?? undefined,
         valor: r.valor != null ? Number(r.valor) : undefined,
         vencimento: r.vencimento ? r.vencimento.getTime() : undefined,
-        internacional: r.internacional,
         incluidoPor: r.incluido_por,
         incluidoEm: r.incluido_em ? r.incluido_em.toISOString() : undefined,
     });
@@ -163,7 +161,7 @@ export default class LotePagamentoRepository {
         if (!header) return null;
         const itens = await this.db(tx).selectMany(
             `SELECT lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento,
-                    internacional, incluido_por, incluido_em
+                    incluido_por, incluido_em
              FROM lote_pagamento_item WHERE lote_id = $id ORDER BY incluido_em ASC, id ASC`,
             { id },
         );
@@ -184,7 +182,7 @@ export default class LotePagamentoRepository {
         const ids = headers.map((h) => h.id);
         const itens = (await this.databaseClient.selectMany(
             `SELECT lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento,
-                    internacional, incluido_por, incluido_em
+                    incluido_por, incluido_em
              FROM lote_pagamento_item WHERE lote_id = ANY($ids) ORDER BY incluido_em ASC, id ASC`,
             { ids },
         )) as ItemRow[];
@@ -223,15 +221,14 @@ export default class LotePagamentoRepository {
             credor?: string;
             valor?: number;
             vencimento?: number;
-            internacional?: boolean;
             incluidoPor: string;
         },
         tx?: TransactionClient,
     ): Promise<void> => {
         await this.db(tx).insert(
             `INSERT INTO lote_pagamento_item
-                (lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento, internacional, incluido_por)
-             VALUES ($loteId, $filCod, $docCod, $titCod, $credor, $valor, $vencimento, $internacional, $incluidoPor)
+                (lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento, incluido_por)
+             VALUES ($loteId, $filCod, $docCod, $titCod, $credor, $valor, $vencimento, $incluidoPor)
              ON CONFLICT (lote_id, fil_cod, doc_cod, tit_cod) DO NOTHING`,
             {
                 loteId: item.loteId,
@@ -241,7 +238,6 @@ export default class LotePagamentoRepository {
                 credor: item.credor ?? null,
                 valor: item.valor ?? null,
                 vencimento: item.vencimento != null ? new Date(item.vencimento) : null,
-                internacional: item.internacional ?? false,
                 incluidoPor: item.incluidoPor,
             },
         );
@@ -257,7 +253,6 @@ export default class LotePagamentoRepository {
             credor?: string;
             valor?: number;
             vencimento?: number;
-            internacional?: boolean;
             incluidoPor: string;
         }>,
         tx?: TransactionClient,
@@ -266,21 +261,18 @@ export default class LotePagamentoRepository {
         const tuples: string[] = [];
         const params: Record<string, unknown> = { loteId };
         itens.forEach((it, i) => {
-            tuples.push(
-                `($loteId, $f${i}, $d${i}, $t${i}, $cr${i}, $v${i}, $ve${i}, $in${i}, $ip${i})`,
-            );
+            tuples.push(`($loteId, $f${i}, $d${i}, $t${i}, $cr${i}, $v${i}, $ve${i}, $ip${i})`);
             params[`f${i}`] = it.filCod;
             params[`d${i}`] = it.docCod;
             params[`t${i}`] = it.titCod;
             params[`cr${i}`] = it.credor ?? null;
             params[`v${i}`] = it.valor ?? null;
             params[`ve${i}`] = it.vencimento != null ? new Date(it.vencimento) : null;
-            params[`in${i}`] = it.internacional ?? false;
             params[`ip${i}`] = it.incluidoPor;
         });
         await this.db(tx).insert(
             `INSERT INTO lote_pagamento_item
-                (lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento, internacional, incluido_por)
+                (lote_id, fil_cod, doc_cod, tit_cod, credor, valor, vencimento, incluido_por)
              VALUES ${tuples.join(', ')}
              ON CONFLICT (lote_id, fil_cod, doc_cod, tit_cod) DO NOTHING`,
             params,

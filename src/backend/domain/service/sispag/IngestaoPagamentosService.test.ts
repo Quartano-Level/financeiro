@@ -109,7 +109,7 @@ describe('IngestaoPagamentosService', () => {
         expect(tituloRepo.marcarInativosForaDaRun).toHaveBeenCalledWith('RUN1', [2]);
     });
 
-    it('classifica internacional pelos docs EX do com298 (ufEspSigla)', async () => {
+    it('DESCARTA os títulos internacionais (exterior/câmbio) da carteira — fora do escopo', async () => {
         const listTitulos = jest
             .fn()
             .mockResolvedValue([titulo({ docCod: '100' }), titulo({ docCod: '200', titCod: '2' })]);
@@ -117,10 +117,8 @@ describe('IngestaoPagamentosService', () => {
         const { service, tituloRepo } = make({ listTitulos, listExterior });
         await service.executar({ triggeredBy: 'cron' });
         const [persistidos] = tituloRepo.upsertMany.mock.calls[0];
-        const doc100 = persistidos.find((t: { docCod: string }) => t.docCod === '100');
-        const doc200 = persistidos.find((t: { docCod: string }) => t.docCod === '200');
-        expect(doc100.internacional).toBe(false);
-        expect(doc200.internacional).toBe(true);
+        // só o nacional (100) entra; o internacional (200) é filtrado fora.
+        expect(persistidos.map((t: { docCod: string }) => t.docCod)).toEqual(['100']);
     });
 
     it('idempotência — key já vista devolve o run existente sem rodar', async () => {

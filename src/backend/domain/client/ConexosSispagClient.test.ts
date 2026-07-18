@@ -87,11 +87,9 @@ describe('ConexosSispagClient (read-only)', () => {
         await client.getTituloAPagar(2, '100', '1');
         await client.listLotes(2);
         await client.listBorderosAPagar(2);
-        await client.isDocInternacional(2, '100');
         await client.listExteriorDocCods(2);
-        // 6 reads → 6 passagens pelo runWithRetry (getTitulo faz +1 via isDocInternacional
-        // quando acha o título; aqui não acha, então é 1:1)
-        expect(base.runWithRetry).toHaveBeenCalledTimes(6);
+        // 5 reads → 5 passagens pelo runWithRetry (1:1)
+        expect(base.runWithRetry).toHaveBeenCalledTimes(5);
     });
 
     it('getTituloAPagar acha o título por docCod+titCod ou devolve null', async () => {
@@ -166,29 +164,6 @@ describe('ConexosSispagClient (read-only)', () => {
         expect((body as { filterList: Record<string, unknown> }).filterList).toMatchObject({
             'borVldTipo#EQ': 2,
         });
-    });
-
-    it('isDocInternacional detecta exterior por ufEspSigla=EX (com298)', async () => {
-        const base = buildBase();
-        base.listGenericPaginated.mockResolvedValue({
-            count: 1,
-            rows: [{ docCod: '200', ufEspSigla: 'EX' }],
-        });
-        expect(await make(base).isDocInternacional(2, '200')).toBe(true);
-        const [endpoint, body] = base.listGenericPaginated.mock.calls[0];
-        expect(endpoint).toBe('com298/list');
-        expect((body as { filterList: Record<string, unknown> }).filterList).toMatchObject({
-            'docCod#EQ': '200',
-        });
-    });
-
-    it('isDocInternacional retorna false para UF brasileira', async () => {
-        const base = buildBase();
-        base.listGenericPaginated.mockResolvedValue({
-            count: 1,
-            rows: [{ docCod: '200', ufEspSigla: 'SP' }],
-        });
-        expect(await make(base).isDocInternacional(2, '200')).toBe(false);
     });
 
     it('listExteriorDocCods devolve o conjunto de docCods EX', async () => {

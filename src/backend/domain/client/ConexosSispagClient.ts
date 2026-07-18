@@ -224,44 +224,16 @@ export default class ConexosSispagClient {
             if (!parsed.success) continue;
             const r = parsed.data;
             if (r.docCod !== docCod || (r.titCod ?? '1') !== titCod) continue;
-            const titulo = this.mapTitulo(r, filCod);
-            // Classe (nacional/internacional) é autoritativa via com298 — o fin064 não a traz.
-            titulo.internacional = await this.isDocInternacional(filCod, docCod);
-            return titulo;
+            return this.mapTitulo(r, filCod);
         }
         return null;
     };
 
     /**
-     * Classe do documento (`com298`): `ufEspSigla='EX'` = pagamento ao EXTERIOR
-     * (internacional); qualquer UF brasileira = nacional. Leitura AUTORITATIVA
-     * (anti-drift) usada no invariante I7 (lote uniforme). O `fin064` não traz `ufEspSigla`.
-     */
-    public isDocInternacional = async (filCod: number, docCod: string): Promise<boolean> => {
-        const { rows } = await this.base.runWithRetry(() =>
-            this.base.listGenericPaginated<Record<string, unknown>>(
-                'com298/list',
-                {
-                    fieldList: ['docCod', 'ufEspSigla'],
-                    filterList: { 'docCod#EQ': docCod },
-                    serviceName: 'com298',
-                    pageNumber: 1,
-                    pageSize: 50,
-                },
-                { filCod },
-            ),
-        );
-        for (const r of rows) {
-            if (String(r.docCod) === docCod) {
-                return String(r.ufEspSigla ?? '').toUpperCase() === 'EX';
-            }
-        }
-        return false;
-    };
-
-    /**
-     * Conjunto de `docCod` INTERNACIONAIS (exterior) de uma filial — `com298` filtrado
-     * por `ufEspSigla='EX'`. Usado na ingestão para classificar a carteira em massa.
+     * Conjunto de `docCod` do EXTERIOR (`com298`, `ufEspSigla='EX'`) de uma filial — usado
+     * pela ingestão para EXCLUIR títulos internacionais da carteira SISPAG (câmbio está
+     * fora do escopo; é feito manualmente pela tesouraria, ver ADR-0020). O `fin064` não
+     * traz `ufEspSigla`, por isso a leitura em massa no `com298`.
      */
     public listExteriorDocCods = async (filCod: number): Promise<Set<string>> => {
         const { rows } = await this.base.runWithRetry(() =>

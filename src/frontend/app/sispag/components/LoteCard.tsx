@@ -94,11 +94,6 @@ export function LoteCard({
               automático
             </Badge>
           ) : null}
-          {l.itens.some((i) => i.internacional) ? (
-            <Badge variant="outline" className="border-info/40 text-info">
-              internacional
-            </Badge>
-          ) : null}
           <CardTitle className="text-sm font-medium">
             Filial {l.filCod} · {l.itens.length} título(s) · {formatBRL(total)}
           </CardTitle>

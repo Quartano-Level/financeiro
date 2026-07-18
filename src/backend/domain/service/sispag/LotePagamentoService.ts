@@ -3,7 +3,6 @@ import ConexosSispagClient from '../../client/ConexosSispagClient.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import LoteEstadoInvalidoError from '../../errors/LoteEstadoInvalidoError.js';
 import LoteFilialError from '../../errors/LoteFilialError.js';
-import LoteTipoConflitoError from '../../errors/LoteTipoConflitoError.js';
 import LoteVersaoConflitoError from '../../errors/LoteVersaoConflitoError.js';
 import TituloEmOutroLoteError from '../../errors/TituloEmOutroLoteError.js';
 import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
@@ -103,19 +102,6 @@ export default class LotePagamentoService {
                 motivo: 'nao-liberado',
             });
         }
-        // I7 — lote uniforme: 100% nacional OU 100% internacional (rails distintos).
-        // A classe do título é autoritativa (com298 via getTituloAPagar); o 1º item define
-        // a classe do lote, os seguintes têm de bater.
-        const tituloInternacional = titulo.internacional ?? false;
-        const itemDivergente = lote.itens.find(
-            (i) => Boolean(i.internacional) !== tituloInternacional,
-        );
-        if (itemDivergente) {
-            throw new LoteTipoConflitoError({
-                loteInternacional: Boolean(itemDivergente.internacional),
-                tituloInternacional,
-            });
-        }
         // I3 + inserção atômica, serializadas por título (lock só em torno do DB).
         const lockKey = this.lockKey(input.filCod, input.docCod, input.titCod);
         await this.db.withAdvisoryLock(
@@ -142,7 +128,6 @@ export default class LotePagamentoService {
                             credor: titulo.credor,
                             valor: titulo.valor,
                             vencimento: titulo.vencimento,
-                            internacional: tituloInternacional,
                             incluidoPor: input.ator,
                         },
                         tx,
