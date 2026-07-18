@@ -7,15 +7,14 @@ status: draft
 owners: [yuri]
 related_files:
   - src/backend/migrations/0023_lote_pagamento.sql
-  - src/backend/migrations/0025_titulo_internacional.sql
   - src/backend/migrations/0026_lote_automatico.sql
   - src/backend/migrations/0027_lote_retornado.sql
+  - src/backend/migrations/0030_remove_internacional.sql
   - src/backend/domain/service/sispag/SispagPainelService.ts
   - src/backend/domain/service/sispag/LotePagamentoService.ts
   - src/backend/domain/service/sispag/FormacaoLotesService.ts
   - src/backend/domain/repository/sispag/LotePagamentoRepository.ts
   - src/backend/domain/repository/sispag/TituloAPagarRepository.ts
-  - src/backend/domain/errors/LoteTipoConflitoError.ts
   - src/backend/domain/interface/sispag/SispagInterface.ts
   - src/backend/routes/sispag.ts
   - src/backend/jobs/formar-lotes.ts
@@ -36,7 +35,7 @@ relationships:
   - "LotePagamento 1—N ItemLote (agregado — os títulos incluídos, snapshot de valor/venc na inclusão)"
   - "LotePagamento N—1 Filial (via filCod — todos os itens são da MESMA filial, I4)"
   - "ItemLote N—1 TituloAPagar (via filCod:docCod:titCod — o título do ERP incluído no lote)"
-last_review: 2026-07-08
+last_review: 2026-07-18
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): montar o lote diário de pagamentos, analista revisa e finaliza (human-in-the-loop)"
   - "ADR-0018 — formação AUTOMÁTICA de lotes candidatos (cron pós-ingestão + manual): pré-montar os lotes das obrigações a-vencer é a automação natural sobre a montagem manual; universal em contas-a-pagar de trading com comex"
@@ -71,9 +70,16 @@ Um `LotePagamento` nasce de dois caminhos, discriminados pela propriedade `autom
 - **Manual** (`automatico=false`) — a analista abre e preenche o lote à mão (`gerenciarLoteCandidato`).
 - **Automático** (`automatico=true`) — o cron `formarLotesAutomaticos` (encadeado após a ingestão) +
   o trigger manual `POST /sispag/lotes/formar` **pré-montam** lotes candidatos a partir da carteira
-  persistida: agrupam títulos **a-vencer ≤7d** por **filial × classe × banco** (I4/I7), nascendo
-  **RASCUNHO** em "Lotes candidatos" para a analista **revisar** antes de finalizar (badge
-  "automático"). Ver `actions/sispag/formar-lotes-automaticos.md`.
+  persistida: agrupam títulos **a-vencer ≤7d** por **filial** (I4), nascendo **RASCUNHO** em "Lotes
+  candidatos" para a analista **revisar** antes de finalizar (badge "automático"). Ver
+  `actions/sispag/formar-lotes-automaticos.md`.
+
+> **Internacional fora do escopo (ADR-0020, 2026-07-18).** O SISPAG é **doméstico** — pagamento ao
+> exterior é câmbio manual da tesouraria, não passa pela remessa SISPAG. Títulos internacionais são
+> filtrados na ingestão e nunca entram na carteira, então **não há mais divisão por classe** no lote: o
+> agrupamento automático é **só por filial** (I4), a coluna `internacional` foi removida (migration
+> 0030) e o invariante **I7** (lote uniforme nacional × internacional) foi **aposentado**. Ver ADR-0020
+> (supersede ADR-0017).
 
 **Comportamento `desfazer-vencidos` (só afeta o automático):** a cada rodada, um lote **automático**
 ainda **RASCUNHO** que passou a conter **≥1 título VENCIDO** é **desfeito** (deletado) e seus títulos
@@ -94,7 +100,6 @@ fora de um lote.
 |-------------|------|--------|-------|
 | `id` | string (uuid) | `lote_pagamento.id` | Identidade do lote candidato. |
 | `filCod` | number | `lote_pagamento.fil_cod` | **Uma filial por lote** (I4). Todos os itens compartilham este `filCod`. |
-| `internacional` | boolean | derivado do 1º item (`lote_pagamento_item.internacional`) | **Classe do lote** (I7) — `false` = nacional (boleto/PIX), `true` = internacional (câmbio/exterior). Fixada pelo 1º item incluído; todos os itens compartilham a classe. Não é coluna própria do lote nesta fatia (é a classe uniforme dos itens); ver I7. |
 | `banco` | string? | `lote_pagamento.banco` | **Metadado opcional** — agrupamento é por filial nesta fatia; banco/conta é informativo (ADR-0015). |
 | `conta` | string? | `lote_pagamento.conta` | Metadado opcional (idem `banco`). |
 | `status` | enum | `lote_pagamento.status` | `RASCUNHO \| FINALIZADO \| RETORNADO \| CANCELADO` — constantes tipadas. `RETORNADO` (ADR-0019, migration 0027) = retorno do Nexxera recebido; `FINALIZADO` passou a significar **"aguardando o retorno do Nexxera"**. Ver `state-machines/lote-pagamento.md`. |
@@ -113,7 +118,6 @@ fora de um lote.
 | `filCod` | number | `lote_pagamento_item.fil_cod` | Igual ao `filCod` do lote (I4). Parte da chave de não-duplicação (I3). |
 | `docCod` | string | `lote_pagamento_item.doc_cod` | Documento do título. Parte de `filCod:docCod:titCod` (I3). |
 | `titCod` | string | `lote_pagamento_item.tit_cod` | Título/parcela. Parte de `filCod:docCod:titCod` (I3). |
-| `internacional` | boolean | `lote_pagamento_item.internacional` (migration 0025) | **Classe do item** (nacional/internacional). **Snapshot** da inclusão; igual à classe do lote (I7). Reconfirmada autoritativa via `com298` (`isDocInternacional`) na inclusão. Ver `business-rules/lote-uniforme-nacional-internacional.md`. |
 | `credor` | string | `lote_pagamento_item.credor` | **Snapshot** no momento da inclusão (exibição estável). |
 | `valor` | number | `lote_pagamento_item.valor` | **Snapshot** do valor do título na inclusão. |
 | `vencimento` | Date | `lote_pagamento_item.vencimento` | **Snapshot** do vencimento na inclusão. |
@@ -134,12 +138,11 @@ fora de um lote.
 - **I4 (uma filial por lote):** todos os `ItemLote` de um lote têm o mesmo `filCod` do lote —
   compatível com o `fin015` nativo (por filial/banco). Multi-filial = múltiplos lotes. Ver
   `business-rules/lote-uma-filial.md`.
-- **I7 (lote uniforme nacional × internacional):** todos os `ItemLote` de um lote têm a mesma
-  **classe** — 100% nacional (boleto/PIX) **ou** 100% internacional (câmbio/exterior). A classe é
-  fixada pelo 1º item; item de classe divergente → `LoteTipoConflitoError` (HTTP 422). Discriminador
-  `com298.ufEspSigla='EX'` (o `fin064` não o carrega → enriquecido; `internacional` em
-  `lote_pagamento_item`, migration 0025). Espelha a forma do I4. Ver
-  `business-rules/lote-uniforme-nacional-internacional.md`.
+- **~~I7 (lote uniforme nacional × internacional)~~ — APOSENTADO (ADR-0020, 2026-07-18):** o SISPAG é
+  **doméstico**; internacional é câmbio manual da tesouraria (fora do escopo) e é **filtrado na
+  ingestão**, então não há mistura possível. A coluna `internacional`, o erro `LoteTipoConflitoError`
+  e a classificação na inclusão foram **removidos** (migration 0030 purga + drop). Ver
+  `business-rules/lote-uniforme-nacional-internacional.md` (retirado) e ADR-0020.
 - **I5 (gate reversível + auditoria):** `finalizarLote` é reversível por `reabrirLote` **enquanto**
   não houver etapa downstream (não há nesta fatia). Toda transição registra ator + timestamp.
 - **I6 (concorrência):** montagem/finalização são seguras a 2 analistas via `versao` (optimistic
@@ -148,7 +151,7 @@ fora de um lote.
 
 ## Cardinalidade
 
-Um `LotePagamento` agrega **N** `ItemLote` (1 filial, I4; 1 classe nacional/internacional, I7). Um `TituloAPagar` elegível pode estar em
+Um `LotePagamento` agrega **N** `ItemLote` (1 filial, I4). Um `TituloAPagar` elegível pode estar em
 **no máximo 1** lote `RASCUNHO` (I3), mas pode reaparecer num novo lote se o anterior for
 `CANCELADO` ou (na próxima fatia) processado.
 

@@ -3,21 +3,33 @@ name: lote-uniforme-nacional-internacional
 type: business-rule
 entity: LotePagamento
 ontology_version: "0.7"
-implementation_status: implemented
+implementation_status: retired
+status: retired
+superseded_by: ADR-0020
 invariant: I7
 related_files:
   - src/backend/migrations/0025_titulo_internacional.sql
-  - src/backend/domain/client/ConexosSispagClient.ts
-  - src/backend/domain/service/sispag/IngestaoPagamentosService.ts
-  - src/backend/domain/service/sispag/LotePagamentoService.ts
-  - src/backend/domain/repository/sispag/LotePagamentoRepository.ts
-  - src/backend/domain/errors/LoteTipoConflitoError.ts
-  - src/frontend/app/sispag/page.tsx
-last_review: 2026-07-08
-has_canonical_test: true
+  - src/backend/migrations/0030_remove_internacional.sql
+last_review: 2026-07-18
+has_canonical_test: false
 ---
 
-# Regra: lote-uniforme-nacional-internacional (um lote é 100% nacional OU 100% internacional)
+> ⚠️ **REGRA RETIRADA — invariante I7 aposentado por [ADR-0020](../decisions/0020-internacional-fora-do-escopo.md) (2026-07-18).**
+> O SISPAG é **doméstico**: pagamento ao exterior é **câmbio manual da tesouraria** (Itaú→BB), tratado
+> no Comércio Exterior (`log009`/`imp*`), **não** passa pela remessa SISPAG (`fin015`). Como títulos
+> internacionais **nunca entram** na carteira SISPAG (agora **filtrados na ingestão** via
+> `com298.ufEspSigla='EX'`), **não há mistura possível** — o invariante de uniformidade por classe
+> perde objeto. Foram **removidos**: a propriedade `internacional` de `TituloAPagar`/`ItemLote`
+> (migration `0030_remove_internacional.sql` purga o legado + dropa as colunas da migration 0025), o
+> erro `LoteTipoConflitoError` (HTTP 422), o método autoritativo `isDocInternacional` e a reconfirmação
+> de classe em `incluirTitulo`. `listExteriorDocCods` sobrevive, mas agora como **filtro-out** na
+> ingestão. Este arquivo fica como **histórico** da regra anterior. Ver ADR-0020 e ADR-0017 (também
+> superseded). As invariantes vigentes do lote são I2/I3/I4/I5/I6.
+
+# [RETIRADO] Regra: lote-uniforme-nacional-internacional (um lote é 100% nacional OU 100% internacional)
+
+> **Conteúdo histórico abaixo — não vale mais.** Mantido para rastreabilidade da decisão que o ADR-0020
+> reverteu.
 
 > **Invariante I7 — Lote uniforme nacional × internacional.** Todos os `ItemLote` de um
 > `LotePagamento` têm a **mesma classe** — ou **todos nacionais** (boleto/PIX, UF brasileira) ou
