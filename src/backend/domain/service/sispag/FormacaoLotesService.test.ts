@@ -15,7 +15,6 @@ const titulo = (over: Partial<TituloAPagar> = {}): TituloAPagar => ({
     liberado: true,
     pago: false,
     banco: 'ITAÚ',
-    internacional: false,
     ...over,
 });
 
@@ -49,20 +48,20 @@ const make = (over: { elegiveis?: TituloAPagar[]; desfeitos?: number; acquire?: 
 };
 
 describe('FormacaoLotesService', () => {
-    it('agrupa por filial × classe (banco não conta) e forma um lote por grupo (automatico=true)', async () => {
+    it('agrupa só por FILIAL (banco não conta) e forma um lote por grupo (automatico=true)', async () => {
         const elegiveis = [
-            titulo({ docCod: '1', filCod: 2, banco: 'ITAÚ', internacional: false }),
-            titulo({ docCod: '2', filCod: 2, banco: 'ITAÚ', internacional: false }), // mesmo grupo
-            titulo({ docCod: '3', filCod: 2, banco: 'ITAÚ', internacional: true }), // classe difere
-            titulo({ docCod: '4', filCod: 4, banco: 'ITAÚ', internacional: false }), // filial difere
-            titulo({ docCod: '5', filCod: 2, banco: 'C6', internacional: false }), // banco NÃO separa
+            titulo({ docCod: '1', filCod: 2, banco: 'ITAÚ' }),
+            titulo({ docCod: '2', filCod: 2, banco: 'ITAÚ' }), // mesmo grupo
+            titulo({ docCod: '3', filCod: 2, banco: 'ITAÚ' }), // mesma filial → mesmo grupo
+            titulo({ docCod: '4', filCod: 4, banco: 'ITAÚ' }), // filial difere
+            titulo({ docCod: '5', filCod: 2, banco: 'C6' }), // banco NÃO separa
         ];
         const { service, loteRepo } = make({ elegiveis });
         const r = await service.formar({ triggeredBy: 'cron' });
-        // grupos: (2,N)={1,2,5}, (2,I)={3}, (4,N)={4} = 3 lotes
-        expect(r).toMatchObject({ lotesFormados: 3, titulosLotados: 5, lotesDesfeitos: 0 });
-        expect(loteRepo.criarLote).toHaveBeenCalledTimes(3);
-        expect(loteRepo.adicionarItens).toHaveBeenCalledTimes(3);
+        // grupos: (2)={1,2,3,5}, (4)={4} = 2 lotes
+        expect(r).toMatchObject({ lotesFormados: 2, titulosLotados: 5, lotesDesfeitos: 0 });
+        expect(loteRepo.criarLote).toHaveBeenCalledTimes(2);
+        expect(loteRepo.adicionarItens).toHaveBeenCalledTimes(2);
         // total de itens inseridos = 5 (soma dos itens por lote)
         const totalItens = loteRepo.adicionarItens.mock.calls.reduce(
             (acc: number, call: unknown[]) => acc + (call[1] as unknown[]).length,
@@ -76,7 +75,7 @@ describe('FormacaoLotesService', () => {
 
     it('fatia grupos grandes em lotes de no máx. 25 títulos (revisão humana)', async () => {
         const elegiveis = Array.from({ length: 30 }, (_, i) =>
-            titulo({ docCod: String(i + 1), filCod: 2, internacional: false }),
+            titulo({ docCod: String(i + 1), filCod: 2 }),
         );
         const { service, loteRepo } = make({ elegiveis });
         const r = await service.formar({ triggeredBy: 'cron' });

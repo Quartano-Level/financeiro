@@ -5,6 +5,7 @@ import type {
     LoteSispag,
     TituloAPagar,
 } from '../interface/sispag/SispagInterface.js';
+import Logger from '../libs/logger/Logger.js';
 import ConexosBaseClient from './ConexosBaseClient.js';
 
 /**
@@ -96,6 +97,17 @@ const borderoRowSchema = z
 export default class ConexosSispagClient {
     public constructor(@inject(ConexosBaseClient) private readonly base: ConexosBaseClient) {}
 
+    /**
+     * `true` só quando o Conexos RECUSA o filtro de query (HTTP 400) — o único
+     * caso em que a leitura sem filtro é um fallback legítimo. `authenticatedPost`
+     * re-lança o erro axios cru, então `response.status` chega aqui intacto. Erros
+     * transitórios (5xx/timeout/rede → sem 400) NÃO são fallback: devem propagar.
+     */
+    private isFilterRejected = (err: unknown): boolean =>
+        typeof err === 'object' &&
+        err !== null &&
+        (err as { response?: { status?: number } }).response?.status === 400;
+
     /** Body de query padrão do Conexos (`/list`). */
     private listBody = (
         serviceName: string,
@@ -132,6 +144,8 @@ export default class ConexosSispagClient {
             pesCod: r.pesCod,
             tpdCod: r.tpdCod,
             prontoParaRemessa: temDestino || temModalidade,
+            // A2: código de barras presente = candidato a BOLETO (auto-detecção na revisão).
+            temBoleto: Boolean(r.titEspCodbar),
         };
     };
 
@@ -141,6 +155,8 @@ export default class ConexosSispagClient {
      * para o painel focar no que é relevante (a vencer + vencidos recentes) — sem
      * o filtro, o `fin064` devolve stragglers de anos atrás. Se o Conexos recusar
      * o filtro (400), cai para busca sem filtro (o serviço filtra em memória).
+     * Erro transitório (5xx/timeout/rede) NÃO cai no fallback — propaga (não
+     * mascarar uma falha do ERP com uma leitura ampla de milhares de linhas).
      */
     public listTitulosAPagar = async (
         filCod: number,
@@ -155,17 +171,28 @@ export default class ConexosSispagClient {
         }
         let rows: Record<string, unknown>[];
         try {
-            const res = await this.base.listGenericPaginated<Record<string, unknown>>(
-                'fin064/list',
-                this.listBody('fin064', filtered, 1000),
-                { filCod },
+            const res = await this.base.runWithRetry(() =>
+                this.base.listGenericPaginated<Record<string, unknown>>(
+                    'fin064/list',
+                    this.listBody('fin064', filtered, 1000),
+                    { filCod },
+                ),
             );
             rows = res.rows;
-        } catch {
-            const res = await this.base.listGenericPaginated<Record<string, unknown>>(
-                'fin064/list',
-                this.listBody('fin064'),
-                { filCod },
+        } catch (err) {
+            if (!this.isFilterRejected(err)) throw err;
+            // Fallback NÃO-silencioso: se o Conexos passar a recusar o filtro de forma
+            // sistemática (drift de schema no fin064), a leitura ampla vira sinal, não
+            // um degrade oculto (o modo de falha que este fix fecha em 1º lugar).
+            Logger.warn(
+                `[SISPAG] fin064/list recusou o filtro (400) na filial ${filCod} — fallback para leitura sem filtro de vencimento`,
+            );
+            const res = await this.base.runWithRetry(() =>
+                this.base.listGenericPaginated<Record<string, unknown>>(
+                    'fin064/list',
+                    this.listBody('fin064'),
+                    { filCod },
+                ),
             );
             rows = res.rows;
         }
@@ -187,64 +214,42 @@ export default class ConexosSispagClient {
         docCod: string,
         titCod: string,
     ): Promise<TituloAPagar | null> => {
-        const { rows } = await this.base.listGenericPaginated<Record<string, unknown>>(
-            'fin064/list',
-            this.listBody('fin064', { 'docCod#EQ': docCod }, 200),
-            { filCod },
+        const { rows } = await this.base.runWithRetry(() =>
+            this.base.listGenericPaginated<Record<string, unknown>>(
+                'fin064/list',
+                this.listBody('fin064', { 'docCod#EQ': docCod }, 200),
+                { filCod },
+            ),
         );
         for (const row of rows) {
             const parsed = tituloRowSchema.safeParse(row);
             if (!parsed.success) continue;
             const r = parsed.data;
             if (r.docCod !== docCod || (r.titCod ?? '1') !== titCod) continue;
-            const titulo = this.mapTitulo(r, filCod);
-            // Classe (nacional/internacional) é autoritativa via com298 — o fin064 não a traz.
-            titulo.internacional = await this.isDocInternacional(filCod, docCod);
-            return titulo;
+            return this.mapTitulo(r, filCod);
         }
         return null;
     };
 
     /**
-     * Classe do documento (`com298`): `ufEspSigla='EX'` = pagamento ao EXTERIOR
-     * (internacional); qualquer UF brasileira = nacional. Leitura AUTORITATIVA
-     * (anti-drift) usada no invariante I7 (lote uniforme). O `fin064` não traz `ufEspSigla`.
-     */
-    public isDocInternacional = async (filCod: number, docCod: string): Promise<boolean> => {
-        const { rows } = await this.base.listGenericPaginated<Record<string, unknown>>(
-            'com298/list',
-            {
-                fieldList: ['docCod', 'ufEspSigla'],
-                filterList: { 'docCod#EQ': docCod },
-                serviceName: 'com298',
-                pageNumber: 1,
-                pageSize: 50,
-            },
-            { filCod },
-        );
-        for (const r of rows) {
-            if (String(r.docCod) === docCod) {
-                return String(r.ufEspSigla ?? '').toUpperCase() === 'EX';
-            }
-        }
-        return false;
-    };
-
-    /**
-     * Conjunto de `docCod` INTERNACIONAIS (exterior) de uma filial — `com298` filtrado
-     * por `ufEspSigla='EX'`. Usado na ingestão para classificar a carteira em massa.
+     * Conjunto de `docCod` do EXTERIOR (`com298`, `ufEspSigla='EX'`) de uma filial — usado
+     * pela ingestão para EXCLUIR títulos internacionais da carteira SISPAG (câmbio está
+     * fora do escopo; é feito manualmente pela tesouraria, ver ADR-0020). O `fin064` não
+     * traz `ufEspSigla`, por isso a leitura em massa no `com298`.
      */
     public listExteriorDocCods = async (filCod: number): Promise<Set<string>> => {
-        const { rows } = await this.base.listGenericPaginated<Record<string, unknown>>(
-            'com298/list',
-            {
-                fieldList: ['docCod', 'ufEspSigla'],
-                filterList: { 'vldStatus#IN': ['1', '3'], 'ufEspSigla#LIKE': 'EX' },
-                serviceName: 'com298',
-                pageNumber: 1,
-                pageSize: 5000,
-            },
-            { filCod },
+        const { rows } = await this.base.runWithRetry(() =>
+            this.base.listGenericPaginated<Record<string, unknown>>(
+                'com298/list',
+                {
+                    fieldList: ['docCod', 'ufEspSigla'],
+                    filterList: { 'vldStatus#IN': ['1', '3'], 'ufEspSigla#LIKE': 'EX' },
+                    serviceName: 'com298',
+                    pageNumber: 1,
+                    pageSize: 5000,
+                },
+                { filCod },
+            ),
         );
         const set = new Set<string>();
         for (const r of rows) {
@@ -255,10 +260,12 @@ export default class ConexosSispagClient {
 
     /** Lotes SISPAG nativos de uma filial (`fin015/list`). */
     public listLotes = async (filCod: number): Promise<LoteSispag[]> => {
-        const { rows } = await this.base.listGenericPaginated<Record<string, unknown>>(
-            'fin015/list',
-            this.listBody('fin015', {}, 100),
-            { filCod },
+        const { rows } = await this.base.runWithRetry(() =>
+            this.base.listGenericPaginated<Record<string, unknown>>(
+                'fin015/list',
+                this.listBody('fin015', {}, 100),
+                { filCod },
+            ),
         );
         return rows.flatMap((row) => {
             const parsed = loteRowSchema.safeParse(row);
@@ -286,10 +293,12 @@ export default class ConexosSispagClient {
 
     /** Borderôs a-pagar (baixa) de uma filial (`fin010/list`, borVldTipo=2). */
     public listBorderosAPagar = async (filCod: number): Promise<BorderoAPagar[]> => {
-        const { rows } = await this.base.listGenericPaginated<Record<string, unknown>>(
-            'fin010/list',
-            this.listBody('fin010', { 'borVldTipo#EQ': 2 }, 100),
-            { filCod },
+        const { rows } = await this.base.runWithRetry(() =>
+            this.base.listGenericPaginated<Record<string, unknown>>(
+                'fin010/list',
+                this.listBody('fin010', { 'borVldTipo#EQ': 2 }, 100),
+                { filCod },
+            ),
         );
         return rows.flatMap((row) => {
             const parsed = borderoRowSchema.safeParse(row);

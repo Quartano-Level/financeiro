@@ -75,7 +75,9 @@ export default class IngestaoPagamentosService {
             const minVencimento = now - 15 * DAY_MS;
             const maxVencimento = now + 45 * DAY_MS;
 
-            // Por filial: títulos (fin064) + conjunto de docs INTERNACIONAIS (com298, ufEspSigla=EX).
+            // Por filial: títulos (fin064) + conjunto de docs a EXCLUIR (exterior/câmbio,
+            // com298 ufEspSigla=EX). Internacional está FORA do escopo SISPAG (é câmbio manual
+            // da tesouraria, Itaú→BB) — nem entra na carteira. Ver ADR-0020.
             const settled = await this.bounded.run(
                 filCods,
                 async (filCod) => {
@@ -98,8 +100,8 @@ export default class IngestaoPagamentosService {
                     filiaisLidas.push(filCods[i]);
                     for (const t of s.value.titulos) {
                         if (t.pago) continue;
-                        // classifica nacional × internacional (exterior) pela carteira com298.
-                        t.internacional = s.value.exterior.has(t.docCod);
+                        // Internacional (exterior/câmbio) NÃO entra na carteira SISPAG (fora do escopo).
+                        if (s.value.exterior.has(t.docCod)) continue;
                         titulos.push(t);
                     }
                 } else {

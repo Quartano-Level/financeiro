@@ -26,8 +26,6 @@ export interface TituloAPagar {
   tpdCod?: string
   prontoParaRemessa?: boolean
   ativo?: boolean
-  /** Pagamento ao exterior (ufEspSigla='EX') vs. nacional. Rails distintos (I7). */
-  internacional?: boolean
   /** Já está num lote RASCUNHO — não pode ser atachado a outro (bloqueia a seleção). */
   emLote?: boolean
 }
@@ -119,6 +117,16 @@ export async function fetchSispagPainel(): Promise<SispagPainel> {
 
 export type LotePagamentoStatus = 'RASCUNHO' | 'FINALIZADO' | 'CANCELADO' | 'RETORNADO'
 
+export type Modalidade = 'BOLETO' | 'TED' | 'PIX' | 'CREDITO_CONTA'
+
+/** Rótulos das formas de pagamento (A2) para o seletor da revisão. */
+export const MODALIDADES: { value: Modalidade; label: string }[] = [
+  { value: 'BOLETO', label: 'Boleto' },
+  { value: 'TED', label: 'TED' },
+  { value: 'PIX', label: 'PIX' },
+  { value: 'CREDITO_CONTA', label: 'Crédito em conta' },
+]
+
 export interface ItemLote {
   loteId: string
   filCod: number
@@ -127,7 +135,8 @@ export interface ItemLote {
   credor?: string
   valor?: number
   vencimento?: number
-  internacional?: boolean
+  /** Forma de pagamento (A2). Ausente = "a definir" — bloqueia a finalização. */
+  modalidade?: Modalidade
   incluidoPor: string
   incluidoEm?: string
 }
@@ -226,6 +235,35 @@ export const marcarRetorno = (loteId: string, versao: number) =>
     method: 'POST',
     body: JSON.stringify({ versao }),
   })
+
+/**
+ * Contas pagadoras conhecidas (A3). Default = Itaú; as demais são exceções raras
+ * (fornecedor que não aceita boleto via Itaú). O analista escolhe na revisão.
+ */
+export const CONTAS_PAGADORAS = [
+  { banco: 'ITAÚ', conta: '55795-4', label: 'Itaú · 55795-4 (padrão)' },
+  { banco: 'SANTANDER', conta: '13001274-8', label: 'Santander · 13001274-8' },
+] as const
+
+/** A3 — troca a conta pagadora do lote (só RASCUNHO; optimistic lock por versao). */
+export const atualizarContaPagadora = (
+  loteId: string,
+  input: { versao: number; banco: string; conta: string },
+) =>
+  loteRequest(`/sispag/lotes/${loteId}/conta`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+
+/** A2 — define a forma de pagamento de um item (só RASCUNHO; optimistic lock por versao). */
+export const atualizarModalidadeItem = (
+  loteId: string,
+  input: { filCod: number; docCod: string; titCod: string; versao: number; modalidade: Modalidade },
+) =>
+  loteRequest(
+    `/sispag/lotes/${loteId}/itens/${input.filCod}/${encodeURIComponent(input.docCod)}/${encodeURIComponent(input.titCod)}/modalidade`,
+    { method: 'POST', body: JSON.stringify({ versao: input.versao, modalidade: input.modalidade }) },
+  )
 
 // ============================================================ Ingestão de pagamentos
 

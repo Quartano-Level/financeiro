@@ -22,7 +22,7 @@ interface TituloRow {
     num_remessa: string | null;
     tpd_cod: string | null;
     pronto_para_remessa: boolean;
-    internacional: boolean;
+    tem_boleto: boolean;
 }
 
 /**
@@ -52,7 +52,7 @@ export default class TituloAPagarRepository {
         numRemessa: r.num_remessa ?? undefined,
         tpdCod: r.tpd_cod ?? undefined,
         prontoParaRemessa: r.pronto_para_remessa,
-        internacional: r.internacional,
+        temBoleto: r.tem_boleto,
         ativo: true,
     });
 
@@ -76,7 +76,7 @@ export default class TituloAPagarRepository {
         chunk.forEach((t, i) => {
             tuples.push(
                 `($f${i}, $d${i}, $t${i}, $cr${i}, $pe${i}, $v${i}, $mo${i}, $ve${i}, ` +
-                    `$ap${i}, $pa${i}, $ba${i}, $nr${i}, $tp${i}, $pr${i}, $in${i}, TRUE, $runId, now())`,
+                    `$ap${i}, $pa${i}, $ba${i}, $nr${i}, $tp${i}, $pr${i}, $tb${i}, TRUE, $runId, now())`,
             );
             params[`f${i}`] = t.filCod;
             params[`d${i}`] = t.docCod;
@@ -92,12 +92,12 @@ export default class TituloAPagarRepository {
             params[`nr${i}`] = t.numRemessa ?? null;
             params[`tp${i}`] = t.tpdCod ?? null;
             params[`pr${i}`] = t.prontoParaRemessa ?? false;
-            params[`in${i}`] = t.internacional ?? false;
+            params[`tb${i}`] = t.temBoleto ?? false;
         });
         await tx.insert(
             `INSERT INTO titulo_a_pagar (
                 fil_cod, doc_cod, tit_cod, credor, pes_cod, valor, moeda, vencimento,
-                aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, internacional,
+                aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, tem_boleto,
                 ativo, ingestao_run_id, atualizado_em
              ) VALUES ${tuples.join(', ')}
              ON CONFLICT (fil_cod, doc_cod, tit_cod) DO UPDATE SET
@@ -105,7 +105,7 @@ export default class TituloAPagarRepository {
                 moeda = EXCLUDED.moeda, vencimento = EXCLUDED.vencimento, aprovado = EXCLUDED.aprovado,
                 pago = EXCLUDED.pago, banco = EXCLUDED.banco, num_remessa = EXCLUDED.num_remessa,
                 tpd_cod = EXCLUDED.tpd_cod, pronto_para_remessa = EXCLUDED.pronto_para_remessa,
-                internacional = EXCLUDED.internacional,
+                tem_boleto = EXCLUDED.tem_boleto,
                 ativo = TRUE, ingestao_run_id = EXCLUDED.ingestao_run_id, atualizado_em = now()`,
             params,
         );
@@ -133,7 +133,7 @@ export default class TituloAPagarRepository {
     public listAtivos = async (): Promise<TituloAPagar[]> => {
         const rows = (await this.databaseClient.selectMany(
             `SELECT fil_cod, doc_cod, tit_cod, credor, pes_cod, valor, moeda, vencimento,
-                    aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, internacional
+                    aprovado, pago, banco, num_remessa, tpd_cod, pronto_para_remessa, tem_boleto
              FROM titulo_a_pagar
              WHERE ativo = TRUE
              ORDER BY vencimento ASC NULLS LAST`,
@@ -150,7 +150,7 @@ export default class TituloAPagarRepository {
         const rows = (await this.databaseClient.selectMany(
             `SELECT t.fil_cod, t.doc_cod, t.tit_cod, t.credor, t.pes_cod, t.valor, t.moeda,
                     t.vencimento, t.aprovado, t.pago, t.banco, t.num_remessa, t.tpd_cod,
-                    t.pronto_para_remessa, t.internacional
+                    t.pronto_para_remessa, t.tem_boleto
              FROM titulo_a_pagar t
              WHERE t.ativo = TRUE AND t.aprovado = TRUE AND t.pago = FALSE
                AND t.vencimento IS NOT NULL
@@ -161,7 +161,7 @@ export default class TituloAPagarRepository {
                  JOIN lote_pagamento l ON l.id = i.lote_id
                  WHERE l.status = 'RASCUNHO'
                    AND i.fil_cod = t.fil_cod AND i.doc_cod = t.doc_cod AND i.tit_cod = t.tit_cod)
-             ORDER BY t.fil_cod, t.internacional, t.banco, t.vencimento ASC`,
+             ORDER BY t.fil_cod, t.banco, t.vencimento ASC`,
             { maxDias },
         )) as TituloRow[];
         return rows.map(this.map);

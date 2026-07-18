@@ -89,8 +89,8 @@ export function IngestaoDialog({
           <div className="rounded-md border border-warning/40 bg-warning-subtle/40 p-3 text-sm text-warning-foreground">
             <p>
               Lê os títulos a pagar do <strong>Conexos</strong> e atualiza a carteira
-              (nacional/internacional, aprovação, vencimento). É <strong>somente leitura no
-              ERP</strong> — nada é enviado ao banco. Pode levar alguns segundos; aguarde aqui.
+              (aprovação, vencimento). É <strong>somente leitura no ERP</strong> — nada é enviado
+              ao banco. Pode levar alguns segundos; aguarde aqui.
             </p>
           </div>
 

@@ -73,6 +73,12 @@ export interface LegacyConexosShape {
         body: Record<string, unknown>,
         opts?: { filCod?: number },
     ) => Promise<T>;
+    /**
+     * Single-attempt MULTIPART upload (NO 401-retry) — para o `carregar` do `.RET`
+     * no `fin052` (`arquivosRetorno/carregar`). O `FormData` carrega o arquivo; o
+     * re-POST silencioso criaria um arquivo de retorno duplicado (por isso once).
+     */
+    postMultipartOnce: <T>(path: string, form: FormData, opts?: { filCod?: number }) => Promise<T>;
     /** DELETE passthrough (exclusão de baixa do borderô — Fase 3.1). */
     deleteGeneric: <T>(path: string, opts?: { filCod?: number }) => Promise<T>;
     getFiliais: () => Promise<Filial[]>;
@@ -164,6 +170,16 @@ export default class ConexosBaseClient {
         body: Record<string, unknown>,
         opts?: { filCod?: number },
     ): Promise<T> => this.legacy.postGenericOnce<T>(path, body, opts);
+
+    /**
+     * Single-attempt multipart upload (no 401-retry) — para o `carregar` do `.RET`
+     * (`fin052/arquivosRetorno/carregar`). Único caminho de upload de arquivo do stack.
+     */
+    public postMultipartOnce = <T>(
+        path: string,
+        form: FormData,
+        opts?: { filCod?: number },
+    ): Promise<T> => this.legacy.postMultipartOnce<T>(path, form, opts);
 
     public deleteGeneric = <T>(path: string, opts?: { filCod?: number }): Promise<T> =>
         this.legacy.deleteGeneric<T>(path, opts);

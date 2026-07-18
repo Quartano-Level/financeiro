@@ -2,9 +2,17 @@ import 'reflect-metadata';
 import type ConexosBaseClient from './ConexosBaseClient.js';
 import ConexosSispagClient from './ConexosSispagClient.js';
 
-const buildBase = () => ({ listGenericPaginated: jest.fn() });
+const buildBase = () => ({
+    listGenericPaginated: jest.fn(),
+    // Espelha o `ConexosBaseClient.runWithRetry` real (executa `fn`); os reads
+    // SISPAG passam por ele para paridade de retry com os demais read-clients.
+    runWithRetry: jest.fn(<T>(fn: () => Promise<T>) => fn()),
+});
 const make = (base: ReturnType<typeof buildBase>) =>
     new ConexosSispagClient(base as unknown as ConexosBaseClient);
+
+/** Erro axios-shaped (o que `authenticatedPost` re-lança em não-401). */
+const httpError = (status: number) => ({ response: { status } });
 
 const fin064Row = (over: Record<string, unknown> = {}) => ({
     docCod: '100',
@@ -47,15 +55,41 @@ describe('ConexosSispagClient (read-only)', () => {
         });
     });
 
-    it('listTitulosAPagar cai para busca sem filtro quando o Conexos recusa o filtro', async () => {
+    it('listTitulosAPagar cai para busca sem filtro quando o Conexos recusa o filtro (400)', async () => {
         const base = buildBase();
-        base.listGenericPaginated.mockRejectedValueOnce(new Error('400')).mockResolvedValueOnce({
+        base.listGenericPaginated.mockRejectedValueOnce(httpError(400)).mockResolvedValueOnce({
             count: 1,
             rows: [fin064Row({ dpeNomPessoa: null, dpeNomPessoaFor: 'FRETE X' })],
         });
         const titulos = await make(base).listTitulosAPagar(2, { minVencimento: 1 });
         expect(base.listGenericPaginated).toHaveBeenCalledTimes(2);
+        // 2ª chamada é sem o filtro de vencimento (só o serviço filtra em memória)
+        const [, fallbackBody] = base.listGenericPaginated.mock.calls[1];
+        expect((fallbackBody as { filterList: Record<string, unknown> }).filterList).toEqual({});
         expect(titulos[0].credor).toBe('FRETE X');
+    });
+
+    it('listTitulosAPagar PROPAGA erro transitório (5xx/timeout) em vez de mascarar com leitura sem filtro', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockRejectedValueOnce(httpError(500));
+        await expect(make(base).listTitulosAPagar(2, { minVencimento: 1 })).rejects.toEqual(
+            httpError(500),
+        );
+        // NÃO cai no fallback sem filtro — só a chamada filtrada aconteceu
+        expect(base.listGenericPaginated).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads SISPAG passam pelo runWithRetry (paridade de retry com os demais read-clients)', async () => {
+        const base = buildBase();
+        base.listGenericPaginated.mockResolvedValue({ count: 0, rows: [] });
+        const client = make(base);
+        await client.listTitulosAPagar(2);
+        await client.getTituloAPagar(2, '100', '1');
+        await client.listLotes(2);
+        await client.listBorderosAPagar(2);
+        await client.listExteriorDocCods(2);
+        // 5 reads → 5 passagens pelo runWithRetry (1:1)
+        expect(base.runWithRetry).toHaveBeenCalledTimes(5);
     });
 
     it('getTituloAPagar acha o título por docCod+titCod ou devolve null', async () => {
@@ -130,29 +164,6 @@ describe('ConexosSispagClient (read-only)', () => {
         expect((body as { filterList: Record<string, unknown> }).filterList).toMatchObject({
             'borVldTipo#EQ': 2,
         });
-    });
-
-    it('isDocInternacional detecta exterior por ufEspSigla=EX (com298)', async () => {
-        const base = buildBase();
-        base.listGenericPaginated.mockResolvedValue({
-            count: 1,
-            rows: [{ docCod: '200', ufEspSigla: 'EX' }],
-        });
-        expect(await make(base).isDocInternacional(2, '200')).toBe(true);
-        const [endpoint, body] = base.listGenericPaginated.mock.calls[0];
-        expect(endpoint).toBe('com298/list');
-        expect((body as { filterList: Record<string, unknown> }).filterList).toMatchObject({
-            'docCod#EQ': '200',
-        });
-    });
-
-    it('isDocInternacional retorna false para UF brasileira', async () => {
-        const base = buildBase();
-        base.listGenericPaginated.mockResolvedValue({
-            count: 1,
-            rows: [{ docCod: '200', ufEspSigla: 'SP' }],
-        });
-        expect(await make(base).isDocInternacional(2, '200')).toBe(false);
     });
 
     it('listExteriorDocCods devolve o conjunto de docCods EX', async () => {
