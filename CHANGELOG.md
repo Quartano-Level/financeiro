@@ -1,5 +1,18 @@
 # Columbia Financeiro — Changelog
 
+## v0.18.0 (2026-07-18) — SISPAG: decisões do analista (modalidade, conta pagadora, sem internacional)
+
+- **feat(sispag) A4 — internacional fora do escopo:** pagamento ao exterior é câmbio manual da
+  tesouraria (Itaú→BB), não passa pelo SISPAG. Removida a divisão nacional×internacional de ponta a
+  ponta (ingestão nem persiste, some do painel) e o invariante I7. Migration `0030` purga o legado e
+  dropa as colunas. **Requer re-ingestão após deploy.**
+- **feat(sispag) A3 — conta pagadora por lote:** default **Itaú** (55795-4); o analista troca na
+  revisão (exceção rara: fornecedor que não aceita boleto via Itaú). Seletor no card do lote.
+- **feat(sispag) A2 — forma de pagamento por título:** modalidade (boleto/TED/PIX/crédito em conta)
+  por item, com **revisão obrigatória**. **Boleto auto-detectado** por código de barras (classificação
+  persistida na ingestão, migration `0031`); título sem forma definida **bloqueia a finalização**.
+- Sem mudança na janela de formação (A5 confirmado). **Requer re-ingestão** para popular `tem_boleto`.
+
 ## v0.17.2 (2026-07-11) — Read-path do SISPAG endurecido (retry + fallback só em 400)
 
 - **fix(sispag):** endurece o `ConexosSispagClient` (read-only), fechando dois follow-ups do
