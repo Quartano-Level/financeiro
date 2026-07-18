@@ -148,7 +148,9 @@ export default class SispagPainelService {
             (filCod) =>
                 this.retorno
                     .listConfigsRetorno({ filCod })
-                    .then((cfgs) => cfgs.map((c) => ({ filCod, bncCod: c.bncCod, gtbCodSeq: c.gtbCodSeq }))),
+                    .then((cfgs) =>
+                        cfgs.map((c) => ({ filCod, bncCod: c.bncCod, gtbCodSeq: c.gtbCodSeq })),
+                    ),
             CONEXOS_FANOUT_LIMIT,
         );
         const alvos: Array<{ filCod: number; bncCod: number; gtbCodSeq: number }> = [];
