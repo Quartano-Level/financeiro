@@ -5,7 +5,7 @@ entity: LotePagamento
 ontology_version: "0.7"
 implementation_status: retired
 status: retired
-superseded_by: ADR-0020
+superseded_by: ADR-0021
 invariant: I7
 related_files:
   - src/backend/migrations/0025_titulo_internacional.sql
@@ -14,7 +14,7 @@ last_review: 2026-07-18
 has_canonical_test: false
 ---
 
-> ⚠️ **REGRA RETIRADA — invariante I7 aposentado por [ADR-0020](../decisions/0020-internacional-fora-do-escopo.md) (2026-07-18).**
+> ⚠️ **REGRA RETIRADA — invariante I7 aposentado por [ADR-0021](../decisions/0021-internacional-fora-do-escopo.md) (2026-07-18).**
 > O SISPAG é **doméstico**: pagamento ao exterior é **câmbio manual da tesouraria** (Itaú→BB), tratado
 > no Comércio Exterior (`log009`/`imp*`), **não** passa pela remessa SISPAG (`fin015`). Como títulos
 > internacionais **nunca entram** na carteira SISPAG (agora **filtrados na ingestão** via
@@ -23,12 +23,12 @@ has_canonical_test: false
 > (migration `0030_remove_internacional.sql` purga o legado + dropa as colunas da migration 0025), o
 > erro `LoteTipoConflitoError` (HTTP 422), o método autoritativo `isDocInternacional` e a reconfirmação
 > de classe em `incluirTitulo`. `listExteriorDocCods` sobrevive, mas agora como **filtro-out** na
-> ingestão. Este arquivo fica como **histórico** da regra anterior. Ver ADR-0020 e ADR-0017 (também
+> ingestão. Este arquivo fica como **histórico** da regra anterior. Ver ADR-0021 e ADR-0017 (também
 > superseded). As invariantes vigentes do lote são I2/I3/I4/I5/I6.
 
 # [RETIRADO] Regra: lote-uniforme-nacional-internacional (um lote é 100% nacional OU 100% internacional)
 
-> **Conteúdo histórico abaixo — não vale mais.** Mantido para rastreabilidade da decisão que o ADR-0020
+> **Conteúdo histórico abaixo — não vale mais.** Mantido para rastreabilidade da decisão que o ADR-0021
 > reverteu.
 
 > **Invariante I7 — Lote uniforme nacional × internacional.** Todos os `ItemLote` de um

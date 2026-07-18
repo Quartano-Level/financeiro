@@ -1,5 +1,5 @@
 ---
-adr_number: 0020
+adr_number: 0021
 title: SISPAG — INTERNACIONAL FORA DO ESCOPO; pagamento ao exterior é câmbio manual da tesouraria (Itaú→BB), não passa pelo SISPAG; aposenta o invariante I7 (lote uniforme nacional × internacional), a coluna `internacional`, o `LoteTipoConflitoError` e a classificação na inclusão; a classe vira filtro-out na ingestão
 date: 2026-07-18
 status: accepted
@@ -9,7 +9,7 @@ related_actions: [ingerirPagamentos, formarLotesAutomaticos, gerenciarLoteCandid
 supersedes_decisions: [ADR-0017]
 ---
 
-# ADR 0020: SISPAG — internacional fora do escopo (supersede ADR-0017 / aposenta I7)
+# ADR 0021: SISPAG — internacional fora do escopo (supersede ADR-0017 / aposenta I7)
 
 **Cliente:** Columbia Trading · **Entrega:** Kavex (created by Clonex) · **Branch:** `feat/sispag-ingestao-pagamentos`
 **Relacionado:** ADR-0015 (SISPAG Fatia 1+2 — painel + montagem de lote + gate; invariantes I2/I3/I4),
@@ -115,8 +115,8 @@ tenant/ERP Conexos — agora usado como **filtro de entrada**, recalibrável por
 Esta mudança **reduz** as contagens de business-rules (uma regra retirada, com teste canônico):
 `business_rules_total` 12 → **11**, `business_rules_implemented` 9 → **8**, `business_rules_with_tests`
 5 → **4**. `ontology/_index.json` e `ontology/_coverage.json` foram atualizados nesta curadoria (entrada
-`lote-uniforme-nacional-internacional` marcada como `retired`/superseded por ADR-0020; notas de versão
-ADR-0020 adicionadas; referências a `internacional` nas entidades `TituloAPagar`/`LotePagamento` e à ação
+`lote-uniforme-nacional-internacional` marcada como `retired`/superseded por ADR-0021; notas de versão
+ADR-0021 adicionadas; referências a `internacional` nas entidades `TituloAPagar`/`LotePagamento` e à ação
 `formarLotesAutomaticos` reescritas). Se algum contador divergir de uma regeneração automática futura,
 esta é a fonte da verdade da retirada.
 

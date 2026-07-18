@@ -234,7 +234,7 @@ export default class ConexosSispagClient {
     /**
      * Conjunto de `docCod` do EXTERIOR (`com298`, `ufEspSigla='EX'`) de uma filial — usado
      * pela ingestão para EXCLUIR títulos internacionais da carteira SISPAG (câmbio está
-     * fora do escopo; é feito manualmente pela tesouraria, ver ADR-0020). O `fin064` não
+     * fora do escopo; é feito manualmente pela tesouraria, ver ADR-0021). O `fin064` não
      * traz `ufEspSigla`, por isso a leitura em massa no `com298`.
      */
     public listExteriorDocCods = async (filCod: number): Promise<Set<string>> => {

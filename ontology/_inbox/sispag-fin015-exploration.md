@@ -206,3 +206,25 @@ operacional (conta pagadora / regra data débito / mapeamento lote↔nativo).
 - **Modalidade por título:** boleto (segmento J) vs. crédito em conta/TED (segmento A) vs. PIX — o ERP decide
   pelo cadastro do favorecido (`itsVldModalidade`). Nosso `pronto_para_remessa` sinaliza o que falta.
 - **Retorno rejeitado** (`itsVldRej=1`) — o achado anterior (rejeições de cadastro) segue valendo: sanear antes.
+
+## RESPOSTAS DA ANALISTA (secundária) — 2026-07-16
+> A analista PRINCIPAL (monta os lotes no fin015 + sobe o `.RET`) está de **férias**; validamos pontos
+> pontuais com a secundária. Ainda FALTAM: o HAR do fluxo fin015 (A1), o `.RET` de exemplo e o HAR do
+> processar (perna de retorno) — dependem da principal voltar.
+
+- **A2 — Modalidade (forma de pagamento):** alguns fornecedores só aceitam **boleto**; se o boleto vence,
+  às vezes aceitam **PIX**. **Boleto exige o código de barras.** → Decisão de forma de pagamento é do
+  ANALISTA (informar/validar antes de lançar o lote). **AUTOMAÇÃO PARCIAL possível:** títulos que já são
+  **boleto** dá pra detectar por **`titEspCodbar`** (código de barras — já vem no `fin064`) e auto-classificar
+  como boleto; o resto (TED/PIX/crédito conta) o analista decide. → `itsVldModalidade=boleto` quando há `titEspCodbar`.
+- **A3 — Conta pagadora: TUDO pelo ITAÚ.** Exceção **única e rara**: um fornecedor que **não aceita BOLETO
+  via Itaú** (TED/PIX por Itaú tanto faz) → nesse caso paga pela conta alinhada p/ receber. → **default Itaú
+  sempre**; a exceção Santander é essa (por FORNECEDOR `pesCod`, só p/ boleto, rara). Roteamento por fornecedor.
+- **A4 — INTERNACIONAL FORA DO ESCOPO SISPAG.** Hoje a **tesouraria** manda um **e-mail** com um valor X e a
+  analista **transfere da conta Itaú para o Banco do Brasil** (manual). Não passa por fin015/remessa. →
+  **CONFIRMA a opção A:** SISPAG automatizado = **SÓ NACIONAL**; internacional é câmbio/tesouraria manual.
+  Decisão pendente: os "lotes internacionais" do nosso app viram só visibilidade OU paramos de formá-los.
+- **A5 — Data de débito = HOJE, SEMPRE, sem agendamento.** Ela paga o boleto **hoje** e sai da conta no dia,
+  mesmo que vença 20 dias à frente (nunca agenda). → confirma `flpDtaCredito=hoje` (R1/R2 ok). ⚠️ implica que
+  o título é pago BEM ANTES do vencimento → nossa janela de formação "a-vencer ≤7d" pode ser estreita demais
+  (eles pagam adiantado); revisar a política de elegibilidade (talvez "aprovado + não-pago", venc. mais largo).

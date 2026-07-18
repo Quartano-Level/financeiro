@@ -28,6 +28,10 @@ services:
         value: local
       - key: DEV_AUTH_BYPASS
         value: 'false'
+      # Frente II (SISPAG) liberada em produção (v0.17.4). Painel/ingestão/formação/revisão
+      # navegáveis; geração de remessa (fin015) e retorno (fin052) seguem dormentes/gated.
+      - key: SISPAG_ENABLED
+        value: 'true'
       # Fase 3 (ADR-0013) — ESCRITA no fin010. FONTE ÚNICA = dashboard do Render (sync:false), para
       # NÃO ter o blueprint sobrescrevendo o dashboard a cada deploy (Regis P0 deployability — yaml
       # brigando com dashboard). Produção hoje: WRITE_ENABLED=true, DRY_RUN=false, BASE_URL=prd.

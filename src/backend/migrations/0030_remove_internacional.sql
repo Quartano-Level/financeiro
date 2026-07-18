@@ -1,5 +1,5 @@
 -- 0030_remove_internacional.sql
--- SISPAG — INTERNACIONAL FORA DO ESCOPO (ADR-0020, supersede ADR-0017).
+-- SISPAG — INTERNACIONAL FORA DO ESCOPO (ADR-0021, supersede ADR-0017).
 -- Pagamento ao exterior é câmbio manual da tesouraria (Itaú→BB), não passa pelo SISPAG.
 -- Remove a divisão nacional×internacional (e o invariante I7): purga o legado + dropa as colunas.
 -- SQL idempotente. ⚠️ Destrutivo (apaga títulos/itens/lotes internacionais já ingeridos, dado dormente).

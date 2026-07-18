@@ -43,7 +43,7 @@ relationships:
 last_review: 2026-07-18
 universality_evidence:
   - "docs/proposta/Proposta_Kavex_Columbia_Financeiro.md — Frente II (SISPAG): pagamentos de importação a vencer/aprovados"
-  - "ADR-0020 — SISPAG é DOMÉSTICO: pagamento ao exterior é câmbio manual da tesouraria (não passa pelo SISPAG); internacional (com298 ufEspSigla='EX') é FILTRADO na ingestão e nunca entra na carteira (supersede ADR-0017 / aposenta a classe internacional e o I7)"
+  - "ADR-0021 — SISPAG é DOMÉSTICO: pagamento ao exterior é câmbio manual da tesouraria (não passa pelo SISPAG); internacional (com298 ufEspSigla='EX') é FILTRADO na ingestão e nunca entra na carteira (supersede ADR-0017 / aposenta a classe internacional e o I7)"
   - "ontology/_inbox/sispag-briefing.md §2 — sondagem read-only Conexos PRD (2026-07-07): fin064 Gestão de Pagamentos, 2.100 (fil1) / 18.234 (fil2) títulos reais"
   - "ontology/_inbox/sispag-native-vs-nexxera.md §2.5/§3 — 'aprovado para baixa' = flags de alçada titVld1/2/3libera (com308), doc 100 título 1 R$135.724,80 aprovado nos 3 níveis"
   - "ADR-0016 — a carteira de pagamentos vira PERSISTIDA (cadência diária, espelha a ingestão de Permutas): base durável do painel diário"
@@ -102,7 +102,7 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
 | `tpdCod` | string? | `com298` → `tpd_cod` | Tipo de documento. |
 | `prontoParaRemessa` | boolean | **heurística** da ingestão (ver abaixo) → `pronto_para_remessa` | **INFORMATIVO** — tem modalidade + destino (banco/conta, barras ou PIX)? Palpite de completude. A **validação autoritativa** acontece **no envio, ao vivo** (Fatia 3). **Não** é gate de elegibilidade. |
 
-> **`internacional` REMOVIDO (ADR-0020, 2026-07-18).** O SISPAG é **doméstico**: pagamento ao exterior é
+> **`internacional` REMOVIDO (ADR-0021, 2026-07-18).** O SISPAG é **doméstico**: pagamento ao exterior é
 > **câmbio manual da tesouraria** (Itaú→BB), não passa pelo SISPAG. Títulos internacionais são
 > **filtrados na ingestão** (`com298.ufEspSigla='EX'`) e **nunca entram** na carteira — logo não há mais
 > classe/coluna `internacional`. Ver "Internacional fora do escopo" abaixo e a migration
@@ -134,7 +134,7 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
   no envio**, com o detalhe completo lido do ERP no momento — evita drift entre o palpite persistido
   e a realidade do ERP na hora de gerar o arquivo.
 
-## Internacional fora do escopo (ADR-0020) — filtro-out na ingestão
+## Internacional fora do escopo (ADR-0021) — filtro-out na ingestão
 
 - O SISPAG (Frente II) é **doméstico** por natureza: cuida de boleto/PIX/TED nacional (CNAB via
   `fin015`). **Pagamento ao exterior é câmbio** (contrato de câmbio + SWIFT em moeda estrangeira,
@@ -143,7 +143,7 @@ segue fora de escopo (ver ADR-0015 e ADR-0016 — a Fatia de transporte).
 - Por isso um título internacional **nunca entra** na carteira `TituloAPagar`: na ingestão,
   `ConexosSispagClient.listExteriorDocCods(filCod)` (`com298`, `ufEspSigla='EX'`, READ-ONLY) é usado como
   **filtro-out** — os docs do exterior são **excluídos** da carteira, não marcados com um booleano.
-- Consequência (ADR-0020, supersede ADR-0017): a propriedade/coluna `internacional` foi **removida** de
+- Consequência (ADR-0021, supersede ADR-0017): a propriedade/coluna `internacional` foi **removida** de
   `TituloAPagar` e `ItemLote`; o invariante **I7** (lote uniforme nacional × internacional), o erro
   `LoteTipoConflitoError` e o método autoritativo `isDocInternacional` foram **aposentados**. A migration
   `0030_remove_internacional.sql` purga o legado internacional já ingerido e dropa as colunas (reverte a

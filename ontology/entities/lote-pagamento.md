@@ -74,11 +74,11 @@ Um `LotePagamento` nasce de dois caminhos, discriminados pela propriedade `autom
   candidatos" para a analista **revisar** antes de finalizar (badge "automático"). Ver
   `actions/sispag/formar-lotes-automaticos.md`.
 
-> **Internacional fora do escopo (ADR-0020, 2026-07-18).** O SISPAG é **doméstico** — pagamento ao
+> **Internacional fora do escopo (ADR-0021, 2026-07-18).** O SISPAG é **doméstico** — pagamento ao
 > exterior é câmbio manual da tesouraria, não passa pela remessa SISPAG. Títulos internacionais são
 > filtrados na ingestão e nunca entram na carteira, então **não há mais divisão por classe** no lote: o
 > agrupamento automático é **só por filial** (I4), a coluna `internacional` foi removida (migration
-> 0030) e o invariante **I7** (lote uniforme nacional × internacional) foi **aposentado**. Ver ADR-0020
+> 0030) e o invariante **I7** (lote uniforme nacional × internacional) foi **aposentado**. Ver ADR-0021
 > (supersede ADR-0017).
 
 **Comportamento `desfazer-vencidos` (só afeta o automático):** a cada rodada, um lote **automático**
@@ -138,11 +138,11 @@ fora de um lote.
 - **I4 (uma filial por lote):** todos os `ItemLote` de um lote têm o mesmo `filCod` do lote —
   compatível com o `fin015` nativo (por filial/banco). Multi-filial = múltiplos lotes. Ver
   `business-rules/lote-uma-filial.md`.
-- **~~I7 (lote uniforme nacional × internacional)~~ — APOSENTADO (ADR-0020, 2026-07-18):** o SISPAG é
+- **~~I7 (lote uniforme nacional × internacional)~~ — APOSENTADO (ADR-0021, 2026-07-18):** o SISPAG é
   **doméstico**; internacional é câmbio manual da tesouraria (fora do escopo) e é **filtrado na
   ingestão**, então não há mistura possível. A coluna `internacional`, o erro `LoteTipoConflitoError`
   e a classificação na inclusão foram **removidos** (migration 0030 purga + drop). Ver
-  `business-rules/lote-uniforme-nacional-internacional.md` (retirado) e ADR-0020.
+  `business-rules/lote-uniforme-nacional-internacional.md` (retirado) e ADR-0021.
 - **I5 (gate reversível + auditoria):** `finalizarLote` é reversível por `reabrirLote` **enquanto**
   não houver etapa downstream (não há nesta fatia). Toda transição registra ator + timestamp.
 - **I6 (concorrência):** montagem/finalização são seguras a 2 analistas via `versao` (optimistic

@@ -77,7 +77,7 @@ export default class IngestaoPagamentosService {
 
             // Por filial: títulos (fin064) + conjunto de docs a EXCLUIR (exterior/câmbio,
             // com298 ufEspSigla=EX). Internacional está FORA do escopo SISPAG (é câmbio manual
-            // da tesouraria, Itaú→BB) — nem entra na carteira. Ver ADR-0020.
+            // da tesouraria, Itaú→BB) — nem entra na carteira. Ver ADR-0021.
             const settled = await this.bounded.run(
                 filCods,
                 async (filCod) => {

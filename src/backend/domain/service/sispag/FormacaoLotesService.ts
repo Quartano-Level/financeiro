@@ -111,7 +111,7 @@ export default class FormacaoLotesService {
 
     /**
      * Chave de grupo: só a FILIAL (I4 — um lote por filial). Internacional saiu do escopo
-     * (câmbio manual, ADR-0020), então não há mais divisão por classe. A conta pagadora é
+     * (câmbio manual, ADR-0021), então não há mais divisão por classe. A conta pagadora é
      * default Itaú (o analista troca na revisão) e o banco do favorecido é buscado ao vivo
      * só na remessa (Fatia 3, anti-drift), não na montagem.
      */

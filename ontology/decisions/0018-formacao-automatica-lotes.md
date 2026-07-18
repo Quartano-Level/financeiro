@@ -9,7 +9,7 @@ related_actions: [formarLotesAutomaticos, gerenciarLoteCandidato, ingerirPagamen
 supersedes_decisions: []
 ---
 
-> ℹ️ **Amendado por [ADR-0020](./0020-internacional-fora-do-escopo.md) (2026-07-18):** a **classe**
+> ℹ️ **Amendado por [ADR-0021](./0021-internacional-fora-do-escopo.md) (2026-07-18):** a **classe**
 > nacional × internacional **saiu** do agrupamento. Internacional é câmbio manual da tesouraria (fora do
 > escopo do SISPAG) e é **filtrado na ingestão** — não há títulos internacionais na carteira. Onde este
 > ADR diz **filial × classe × banco (I4/I7)**, leia **filial (I4)** (banco degenera por `banco`-null;

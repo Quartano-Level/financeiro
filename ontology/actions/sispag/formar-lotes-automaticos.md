@@ -21,7 +21,7 @@ preconditions:
   - "Advisory lock (FORMACAO_LOCK_KEY) livre — uma rodada de formação por vez (contenção → rodada em andamento vence)."
 postconditions:
   - "Lotes automáticos RASCUNHO com ≥1 título VENCIDO são DESFEITOS (deletados) e seus títulos LIBERADOS (só a-vencer é elegível) — desfazerAutomaticosVencidos."
-  - "Novos lotes automáticos RASCUNHO criados (criarLote(automatico=true)) agrupando títulos elegíveis por FILIAL (I4) — internacional fora do escopo (ADR-0020), sem divisão por classe."
+  - "Novos lotes automáticos RASCUNHO criados (criarLote(automatico=true)) agrupando títulos elegíveis por FILIAL (I4) — internacional fora do escopo (ADR-0021), sem divisão por classe."
   - "Só entram títulos A VENCER ≤ maxDias (7) — vencidos excluídos — e ainda não presentes em NENHUM lote RASCUNHO (anti-join)."
   - "Lotes manuais e lotes FINALIZADOS/CANCELADOS NUNCA são tocados — o cron só mexe nos automáticos RASCUNHO."
   - "Nenhuma escrita no ERP (I1) — leitura Conexos + escrita LOCAL (Postgres: lote_pagamento/_item)."
@@ -69,7 +69,7 @@ Ambos rodam o **mesmo** compute (`FormacaoLotesService.formar`). O manual é uma
    já existente; respeita a não-duplicação I3).
 4. **Agrupar** os elegíveis por **filial** (I4) e **criar** um lote por grupo —
    `LotePagamentoRepository.criarLote(automatico=true)` + itens com snapshot (valor/venc/credor),
-   coerente com I4 (uma filial). *(Internacional saiu do escopo — ADR-0020: câmbio manual da tesouraria,
+   coerente com I4 (uma filial). *(Internacional saiu do escopo — ADR-0021: câmbio manual da tesouraria,
    filtrado na ingestão; não há mais dimensão de classe no agrupamento.)*
 5. Os lotes criados nascem **RASCUNHO** e aparecem em **"Lotes candidatos"** com o **badge
    "automático"** — a analista revisa (inclui/remove títulos, cancela) e depois **finaliza**
@@ -79,10 +79,10 @@ Ambos rodam o **mesmo** compute (`FormacaoLotesService.formar`). O manual é uma
 
 - **I4 (uma filial por lote):** cada lote automático é de uma única filial. Ver
   `business-rules/lote-uma-filial.md`.
-- **~~I7 (lote uniforme nacional × internacional)~~ — APOSENTADO (ADR-0020):** internacional é câmbio
+- **~~I7 (lote uniforme nacional × internacional)~~ — APOSENTADO (ADR-0021):** internacional é câmbio
   manual da tesouraria, **fora do escopo** do SISPAG, e é **filtrado na ingestão** — não há títulos
   internacionais na carteira, logo **não há mais dimensão de classe** no agrupamento (o agrupamento é
-  só por filial). Ver `business-rules/lote-uniforme-nacional-internacional.md` (retirado) e ADR-0020.
+  só por filial). Ver `business-rules/lote-uniforme-nacional-internacional.md` (retirado) e ADR-0021.
 - **A-vencer ≤ 7 dias apenas:** vencidos **não** entram e **desfazem** um lote auto que os contenha
   (passo 2). O horizonte de 7 dias é o valor do tenant (config) sobre a estrutura universal
   "montar o lote das obrigações que vencem em breve".
@@ -92,7 +92,7 @@ Ambos rodam o **mesmo** compute (`FormacaoLotesService.formar`). O manual é uma
 
 O `banco` é **nulo** nos títulos **a pagar** — o `fin064` não carrega o banco **antes do pagamento**
 (o banco/conta só se define no trilho de remessa, downstream). Logo, na prática **hoje o agrupamento
-por banco degenera** e a formação agrupa **só por filial** (a dimensão de classe também saiu — ADR-0020,
+por banco degenera** e a formação agrupa **só por filial** (a dimensão de classe também saiu — ADR-0021,
 internacional fora do escopo). `banco` fica registrado como dimensão de agrupamento **estrutural** (para
 quando uma fonte de banco/conta existir), mas não particiona os lotes nesta fatia. Coerente com a decisão
 da fatia de montagem (banco/conta = metadado opcional, `lote-uma-filial.md`) e com o detalhe de remessa
