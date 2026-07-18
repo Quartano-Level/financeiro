@@ -231,6 +231,12 @@ function SispagPanel() {
         : true,
   )
   const abaFinalizados = useTabelaFiltro(finFiltrados, (l) => l.filCod, buscaLote, 8)
+  // Retornos (.RET) do fin052 — mesmo kit (filial + busca + paginação) das demais abas.
+  const abaRetornos = useTabelaFiltro(
+    retornos ?? [],
+    (r) => r.filCod,
+    (r) => `${r.banco ?? ''} ${r.configNome ?? ''} ${r.arquivo ?? ''}`,
+  )
 
   const selTitulos = titulos.filter((t) => selecionados.has(keyOf(t)))
   const totalSelecionado = selTitulos.reduce((acc, t) => acc + t.valor, 0)
@@ -735,66 +741,86 @@ function SispagPanel() {
                   description="Não há .RET carregado no fin052 para as filiais/bancos configurados."
                 />
               ) : (
-                <div className="overflow-x-auto rounded-lg border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Banco / config</TableHead>
-                        <TableHead>Arquivo</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead className="text-right">Rejeitados</TableHead>
-                        <TableHead className="text-right">Erros</TableHead>
-                        <TableHead>Filial</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {retornos.map((r) => (
-                        <TableRow key={`${r.filCod}:${r.bncCod}:${r.gtbCodSeq}:${r.garCodSeq}`}>
-                          <TableCell className="font-medium">
-                            {r.banco ?? `bnc ${r.bncCod}`}
-                            {r.configNome ? (
-                              <span className="text-muted-foreground"> · {r.configNome}</span>
-                            ) : null}
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {r.arquivo ?? `gar ${r.garCodSeq}`}
-                          </TableCell>
-                          <TableCell>
-                            {r.statusProcessamento ? (
-                              <Badge variant="outline" className="border-success/40 text-success">
-                                processado
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline">carregado</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {r.titulosRejeitados ? (
-                              <span
-                                className="text-warning"
-                                aria-label={`${r.titulosRejeitados} título(s) rejeitado(s)`}
-                              >
-                                {r.titulosRejeitados}
-                              </span>
-                            ) : (
-                              '—'
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {r.erros ? (
-                              <span className="text-danger" aria-label={`${r.erros} erro(s) de parse`}>
-                                {r.erros}
-                              </span>
-                            ) : (
-                              '—'
-                            )}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">{r.filCod}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
+                <>
+                  <FiltroBarra
+                    aba={abaRetornos}
+                    buscaPlaceholder="Buscar por banco, config ou arquivo…"
+                  />
+                  {abaRetornos.total === 0 ? (
+                    <EmptyState
+                      icon={<Layers className="size-6" />}
+                      title="Nenhum retorno para o filtro"
+                      description="Ajuste a filial ou a busca para ver os arquivos .RET."
+                    />
+                  ) : (
+                    <div className="overflow-x-auto rounded-lg border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Banco / config</TableHead>
+                            <TableHead>Arquivo</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead className="text-right">Rejeitados</TableHead>
+                            <TableHead className="text-right">Erros</TableHead>
+                            <TableHead>Filial</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {abaRetornos.slice.map((r) => (
+                            <TableRow
+                              key={`${r.filCod}:${r.bncCod}:${r.gtbCodSeq}:${r.garCodSeq}`}
+                            >
+                              <TableCell className="font-medium">
+                                {r.banco ?? `bnc ${r.bncCod}`}
+                                {r.configNome ? (
+                                  <span className="text-muted-foreground"> · {r.configNome}</span>
+                                ) : null}
+                              </TableCell>
+                              <TableCell className="text-xs text-muted-foreground">
+                                {r.arquivo ?? `gar ${r.garCodSeq}`}
+                              </TableCell>
+                              <TableCell>
+                                {r.statusProcessamento ? (
+                                  <Badge variant="outline" className="border-success/40 text-success">
+                                    processado
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline">carregado</Badge>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {r.titulosRejeitados ? (
+                                  <span
+                                    className="text-warning"
+                                    aria-label={`${r.titulosRejeitados} título(s) rejeitado(s)`}
+                                  >
+                                    {r.titulosRejeitados}
+                                  </span>
+                                ) : (
+                                  '—'
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {r.erros ? (
+                                  <span
+                                    className="text-danger"
+                                    aria-label={`${r.erros} erro(s) de parse`}
+                                  >
+                                    {r.erros}
+                                  </span>
+                                ) : (
+                                  '—'
+                                )}
+                              </TableCell>
+                              <TableCell className="text-muted-foreground">{r.filCod}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                  <Paginacao aba={abaRetornos} />
+                </>
               )}
             </TabsContent>
 
