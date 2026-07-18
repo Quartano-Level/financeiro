@@ -5,9 +5,10 @@ import { AuthGuard } from './AuthGuard'
 
 /**
  * Public routes that bypass the auth gate. `/login` is the sign-in page and
- * must be reachable by unauthenticated visitors.
+ * must be reachable by unauthenticated visitors; `/docs` holds the architecture
+ * documentation, deliberately published without a session.
  */
-const PUBLIC_ROUTES = ['/login']
+const PUBLIC_ROUTES = ['/login', '/docs']
 
 /**
  * Applies the `<AuthGuard>` to every route except the explicitly public ones.
