@@ -3,7 +3,12 @@ import { chunked } from '../../client/ConexosBaseClient.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
-import type { FormacaoLotesResult, TituloAPagar } from '../../interface/sispag/SispagInterface.js';
+import {
+    CONTA_PAGADORA_DEFAULT,
+    type FormacaoLotesResult,
+    MODALIDADE,
+    type TituloAPagar,
+} from '../../interface/sispag/SispagInterface.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
@@ -18,9 +23,8 @@ export const FORMACAO_LOCK_KEY = 615243789;
 /**
  * FormacaoLotesService — cron pós-ingestão que MONTA lotes candidatos automaticamente.
  *
- * Regras (as mesmas da montagem manual): mesma filial (I4), mesma classe nacional/
- * internacional (I7), SÓ títulos A VENCER (≤7d; vencidos NÃO entram). Agrupa por
- * (filial × classe × banco). Cada run: (1) DESFAZ lotes automáticos que já têm título
+ * Regras (as mesmas da montagem manual): mesma filial (I4), SÓ títulos A VENCER
+ * (≤7d; vencidos NÃO entram). Agrupa por FILIAL. Cada run: (1) DESFAZ lotes automáticos que já têm título
  * vencido (libera os títulos); (2) forma lotes novos com os elegíveis ainda sem lote.
  * Os lotes nascem RASCUNHO e caem em "Lotes candidatos" para o analista revisar antes
  * de aprovar. NÃO toca em lotes manuais nem finalizados. Escreve só no Postgres (I1).
@@ -48,7 +52,7 @@ export default class FormacaoLotesService {
         const lotesDesfeitos = await this.loteRepo.desfazerAutomaticosVencidos();
 
         // 2) forma lotes novos com os elegíveis (a vencer ≤7d, não lotados). Cada grupo
-        // (filial × classe) é fatiado em lotes de no máx. MAX_TITULOS_POR_LOTE para revisão.
+        // (por filial) é fatiado em lotes de no máx. MAX_TITULOS_POR_LOTE para revisão.
         const elegiveis = await this.tituloRepo.listElegiveisParaFormacao(HORIZONTE_DIAS);
         const grupos = this.agrupar(elegiveis);
         let lotesFormados = 0;
@@ -78,7 +82,9 @@ export default class FormacaoLotesService {
             const lote = await this.loteRepo.criarLote(
                 {
                     filCod: primeiro.filCod,
-                    banco: primeiro.banco,
+                    // A3: conta pagadora default Itaú (o analista troca na revisão se preciso).
+                    banco: CONTA_PAGADORA_DEFAULT.banco,
+                    conta: CONTA_PAGADORA_DEFAULT.conta,
                     automatico: true,
                     criadoPor: ator,
                 },
@@ -93,7 +99,8 @@ export default class FormacaoLotesService {
                     credor: t.credor,
                     valor: t.valor,
                     vencimento: t.vencimento,
-                    internacional: t.internacional ?? false,
+                    // A2: boleto auto-detectado (código de barras); senão "a definir".
+                    modalidade: t.temBoleto ? MODALIDADE.BOLETO : undefined,
                     incluidoPor: ator,
                 })),
                 tx,
@@ -103,13 +110,15 @@ export default class FormacaoLotesService {
     };
 
     /**
-     * Chave de grupo: filial × classe (nacional/internacional). O banco/conta NÃO entra —
-     * é buscado ao vivo só na hora da remessa (Fatia 3, anti-drift), não na montagem.
+     * Chave de grupo: só a FILIAL (I4 — um lote por filial). Internacional saiu do escopo
+     * (câmbio manual, ADR-0021), então não há mais divisão por classe. A conta pagadora é
+     * default Itaú (o analista troca na revisão) e o banco do favorecido é buscado ao vivo
+     * só na remessa (Fatia 3, anti-drift), não na montagem.
      */
     private agrupar = (titulos: TituloAPagar[]): Map<string, TituloAPagar[]> => {
         const grupos = new Map<string, TituloAPagar[]>();
         for (const t of titulos) {
-            const key = `${t.filCod}|${t.internacional ? 'I' : 'N'}`;
+            const key = `${t.filCod}`;
             const atual = grupos.get(key);
             if (atual) atual.push(t);
             else grupos.set(key, [t]);

@@ -55,15 +55,6 @@ import { LoteCard } from './components/LoteCard'
 
 const keyOf = (t: TituloAPagar) => `${t.filCod}:${t.docCod}:${t.titCod}`
 
-type Origem = 'todos' | 'nacional' | 'internacional'
-/** Filtra lotes por classe (um lote é internacional se tiver ≥1 item internacional — I7). */
-const filtrarClasseLote = (arr: LotePagamento[], origem: Origem): LotePagamento[] =>
-  origem === 'nacional'
-    ? arr.filter((l) => !l.itens.some((i) => i.internacional))
-    : origem === 'internacional'
-      ? arr.filter((l) => l.itens.some((i) => i.internacional))
-      : arr
-
 const fmtData = (ms?: number) =>
   ms === undefined ? '—' : new Date(ms).toLocaleDateString('pt-BR', { timeZone: 'UTC' })
 
@@ -112,7 +103,6 @@ function SispagPanel() {
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [filtro, setFiltro] = React.useState<'a-vencer' | 'vencidos' | 'todos'>('todos')
-  const [origem, setOrigem] = React.useState<'todos' | 'nacional' | 'internacional'>('todos')
   const [selecionados, setSelecionados] = React.useState<Set<string>>(new Set())
   const [busy, setBusy] = React.useState(false)
   const [ingerindo, setIngerindo] = React.useState(false)
@@ -207,13 +197,11 @@ function SispagPanel() {
 
   const titulos = painel?.titulos ?? []
   const titulosFiltrados = React.useMemo(() => {
-    let base = titulos
-    if (origem === 'nacional') base = base.filter((t) => !t.internacional)
-    else if (origem === 'internacional') base = base.filter((t) => t.internacional)
+    const base = titulos
     if (filtro === 'a-vencer') return base.filter((t) => (t.diasAteVencimento ?? -1) >= 0)
     if (filtro === 'vencidos') return base.filter((t) => (t.diasAteVencimento ?? 0) < 0)
     return base
-  }, [titulos, filtro, origem])
+  }, [titulos, filtro])
 
   // Filial + busca + paginação — mesmo kit do painel de Permutas (consistência de UX).
   const abaTitulos = useTabelaFiltro(
@@ -226,19 +214,12 @@ function SispagPanel() {
   const lotesFinalizados = lotes.filter(
     (l) => l.status === 'FINALIZADO' || l.status === 'RETORNADO',
   )
-  const [loteOrigemCand, setLoteOrigemCand] = React.useState<Origem>('todos')
-  const [loteOrigemFin, setLoteOrigemFin] = React.useState<Origem>('todos')
   const [statusFin, setStatusFin] = React.useState<'todos' | 'aguardando' | 'retornado'>('todos')
   const [adicionarLote, setAdicionarLote] = React.useState<LotePagamento | null>(null)
   const buscaLote = (l: LotePagamento) =>
     `${l.filCod} ${l.criadoPor} ${l.itens.map((i) => i.credor ?? '').join(' ')}`
-  const abaCandidatos = useTabelaFiltro(
-    filtrarClasseLote(lotesRascunho, loteOrigemCand),
-    (l) => l.filCod,
-    buscaLote,
-    8,
-  )
-  const finFiltrados = filtrarClasseLote(lotesFinalizados, loteOrigemFin).filter((l) =>
+  const abaCandidatos = useTabelaFiltro(lotesRascunho, (l) => l.filCod, buscaLote, 8)
+  const finFiltrados = lotesFinalizados.filter((l) =>
     statusFin === 'aguardando'
       ? l.status === 'FINALIZADO'
       : statusFin === 'retornado'
@@ -267,14 +248,6 @@ function SispagPanel() {
     if (filiais.size > 1) {
       toast.error('Selecione títulos de uma única filial', {
         description: 'Um lote é de uma filial só. Filtre por filial e monte um lote por vez.',
-      })
-      return
-    }
-    // I7 — um lote é 100% nacional OU 100% internacional (rails de pagamento distintos).
-    if (selTitulos.some((t) => t.internacional) && selTitulos.some((t) => !t.internacional)) {
-      toast.error('Não misture nacional com internacional', {
-        description:
-          'Um lote é 100% nacional ou 100% internacional. Use o filtro acima e monte um lote de cada.',
       })
       return
     }
@@ -442,18 +415,6 @@ function SispagPanel() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                   <div className="flex gap-1">
-                    {(['todos', 'nacional', 'internacional'] as const).map((o) => (
-                      <Button
-                        key={o}
-                        size="sm"
-                        variant={origem === o ? 'default' : 'outline'}
-                        onClick={() => setOrigem(o)}
-                      >
-                        {o === 'todos' ? 'Todas' : o === 'nacional' ? 'Nacionais' : 'Internacionais'}
-                      </Button>
-                    ))}
-                  </div>
-                  <div className="flex gap-1">
                     {(['todos', 'a-vencer', 'vencidos'] as const).map((f) => (
                       <Button
                         key={f}
@@ -553,15 +514,6 @@ function SispagPanel() {
                               ) : (
                                 <Badge variant="outline">bloqueado</Badge>
                               )}
-                              {t.internacional ? (
-                                <Badge
-                                  variant="outline"
-                                  className="border-info/40 text-info"
-                                  title="Pagamento ao exterior (câmbio) — não entra em lote nacional."
-                                >
-                                  internacional
-                                </Badge>
-                              ) : null}
                               {t.prontoParaRemessa === false ? (
                                 <Badge
                                   variant="outline"
@@ -598,18 +550,6 @@ function SispagPanel() {
                 aba={abaCandidatos}
                 buscaPlaceholder="Buscar por filial, quem criou ou credor…"
               />
-              <div className="flex gap-1">
-                {(['todos', 'nacional', 'internacional'] as const).map((o) => (
-                  <Button
-                    key={o}
-                    size="sm"
-                    variant={loteOrigemCand === o ? 'default' : 'outline'}
-                    onClick={() => setLoteOrigemCand(o)}
-                  >
-                    {o === 'todos' ? 'Todas' : o === 'nacional' ? 'Nacionais' : 'Internacionais'}
-                  </Button>
-                ))}
-              </div>
               {abaCandidatos.total === 0 ? (
                 <EmptyState
                   icon={<Layers className="size-6" />}
@@ -642,18 +582,6 @@ function SispagPanel() {
                 buscaPlaceholder="Buscar por filial, quem finalizou ou credor…"
               />
               <div className="flex flex-wrap gap-x-3 gap-y-2">
-                <div className="flex gap-1">
-                  {(['todos', 'nacional', 'internacional'] as const).map((o) => (
-                    <Button
-                      key={o}
-                      size="sm"
-                      variant={loteOrigemFin === o ? 'default' : 'outline'}
-                      onClick={() => setLoteOrigemFin(o)}
-                    >
-                      {o === 'todos' ? 'Todas' : o === 'nacional' ? 'Nacionais' : 'Internacionais'}
-                    </Button>
-                  ))}
-                </div>
                 <div className="flex gap-1">
                   {(['todos', 'aguardando', 'retornado'] as const).map((s) => (
                     <Button

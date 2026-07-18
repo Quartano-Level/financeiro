@@ -17,7 +17,7 @@ related_files:
   - src/backend/jobs/formar-lotes.ts
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
-last_review: 2026-07-08
+last_review: 2026-07-18
 states: [RASCUNHO, FINALIZADO, RETORNADO, CANCELADO]
 out_of_scope_states: [PROCESSANDO, ENVIADO, BAIXADO]
 ---
@@ -58,7 +58,7 @@ grava ator + timestamp (auditoria, I5) e incrementa `versao` (concorrência, I6)
 
 | # | De → Para | Ação (gatilho) | Regra | Vigência |
 |---|-----------|----------------|-------|----------|
-| L1 | `(novo) → RASCUNHO` | `criarLoteCandidato` (manual) / `formarLotesAutomaticos` (cron) | Abre um lote **RASCUNHO** para **uma** filial (`filCod`); banco/conta opcionais (metadado). Manual: analista abre vazio (`automatico=false`). Cron: `formarLotesAutomaticos` cria já preenchido (`automatico=true`) agrupando títulos a-vencer ≤7d por filial×classe×banco (I4/I7), para revisão. Ver `actions/sispag/gerenciar-lote-candidato.md` e `actions/sispag/formar-lotes-automaticos.md`. | 2026-07-08 |
+| L1 | `(novo) → RASCUNHO` | `criarLoteCandidato` (manual) / `formarLotesAutomaticos` (cron) | Abre um lote **RASCUNHO** para **uma** filial (`filCod`); banco/conta opcionais (metadado). Manual: analista abre vazio (`automatico=false`). Cron: `formarLotesAutomaticos` cria já preenchido (`automatico=true`) agrupando títulos a-vencer ≤7d por **filial** (I4), para revisão (internacional fora do escopo — ADR-0021; sem divisão por classe). Ver `actions/sispag/gerenciar-lote-candidato.md` e `actions/sispag/formar-lotes-automaticos.md`. | 2026-07-08 |
 | L2 | `RASCUNHO → RASCUNHO` | `incluirTituloNoLote` / `removerTituloDoLote` | Item só entra se **aprovado + não pago** (I2, `elegibilidade-titulo-lote`), da **mesma filial** (I4, `lote-uma-filial`) e **não em outro RASCUNHO** (I3, `nao-duplicacao-titulo-lote`). Auto-transição (edição do agregado). | 2026-07-07 |
 | L3 | `RASCUNHO → FINALIZADO` | `finalizarLote` **(GATE)** | O lote tem ≥1 item; todos os itens ainda elegíveis. Registra `finalizadoPor`/`finalizadoEm`. **Sem downstream nesta fatia** — é o gatilho conceitual. Ver `actions/sispag/finalizar-lote.md`. | 2026-07-07 |
 | L4 | `FINALIZADO → RASCUNHO` | `reabrirLote` | Reversão do gate — permitida **enquanto não houver etapa downstream** (não há nesta fatia; I5). Volta a permitir edição. | 2026-07-07 |

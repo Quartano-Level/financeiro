@@ -27,8 +27,8 @@ export interface TituloAPagar {
     banco?: string;
     /** Nº da remessa se já entrou num lote — `titNumRemessa`. */
     numRemessa?: string;
-    /** Pagamento ao exterior (`ufEspSigla='EX'` no com298) vs. nacional. Rails distintos. */
-    internacional?: boolean;
+    /** Tem código de barras (`titEspCodbar`) = candidato a BOLETO (A2, auto-detecção). */
+    temBoleto?: boolean;
     /** Já está num lote RASCUNHO — não pode ser atachado a outro (I3). Bloqueia a seleção. */
     emLote?: boolean;
     // ---- campos da carteira PERSISTIDA (ingestão) ----
@@ -138,6 +138,27 @@ export const LOTE_STATUS = {
 
 export type LotePagamentoStatus = (typeof LOTE_STATUS)[keyof typeof LOTE_STATUS];
 
+/**
+ * Conta pagadora DEFAULT do lote (A3): tudo sai pelo Itaú; o analista troca na
+ * revisão só na exceção rara (fornecedor que não aceita boleto via Itaú). O lote
+ * nativo fin015 é por conta pagadora (a conta da Columbia de onde sai o dinheiro).
+ */
+export const CONTA_PAGADORA_DEFAULT = { banco: 'ITAÚ', conta: '55795-4' } as const;
+
+/**
+ * Formas de pagamento (modalidade) de um item do lote (A2). Mapeiam a modalidade
+ * nativa do fin015 (boleto=segmento J, crédito conta/TED=segmento A, PIX). `null`
+ * no item = "a definir" (o analista precisa escolher antes de finalizar).
+ */
+export const MODALIDADE = {
+    BOLETO: 'BOLETO',
+    TED: 'TED',
+    PIX: 'PIX',
+    CREDITO_CONTA: 'CREDITO_CONTA',
+} as const;
+
+export type Modalidade = (typeof MODALIDADE)[keyof typeof MODALIDADE];
+
 /** Um título incluído num lote — snapshot de valor/venc/credor no momento da inclusão. */
 export interface ItemLote {
     loteId: string;
@@ -147,8 +168,8 @@ export interface ItemLote {
     credor?: string;
     valor?: number;
     vencimento?: number;
-    /** Classe do título no momento da inclusão (base do invariante I7 — lote uniforme). */
-    internacional?: boolean;
+    /** Forma de pagamento (A2). `undefined` = "a definir" — bloqueia a finalização. */
+    modalidade?: Modalidade;
     incluidoPor: string;
     incluidoEm?: string;
 }

@@ -2,12 +2,20 @@
 adr_number: 0017
 title: SISPAG — Lote uniforme nacional × internacional (I7); discriminador com298 ufEspSigla='EX' (fin064 não carrega), classificação autoritativa na inclusão + persistida para o filtro
 date: 2026-07-08
-status: accepted
+status: superseded
+superseded_by: ADR-0021
 type: change
 related_entities: [TituloAPagar, LotePagamento, ItemLote]
 related_actions: [ingerirPagamentos, gerenciarLoteCandidato]
 supersedes_decisions: []
 ---
+
+> ⚠️ **SUPERSEDIDO por [ADR-0021](./0021-internacional-fora-do-escopo.md) (2026-07-18).** O SISPAG é
+> **doméstico**: pagamento ao exterior é **câmbio manual da tesouraria** (Itaú→BB), não passa pelo
+> SISPAG. A divisão nacional × internacional (invariante **I7**), a coluna `internacional`, o
+> `LoteTipoConflitoError` e a classificação autoritativa na inclusão foram **aposentados**; a classe
+> virou **filtro-out na ingestão** (internacional nunca entra na carteira). A migration 0030 purga o
+> legado e dropa as colunas. Este ADR fica como **histórico** da decisão anterior. Ver ADR-0021.
 
 # ADR 0017: Lote de pagamento uniforme — nacional × internacional (I7)
 

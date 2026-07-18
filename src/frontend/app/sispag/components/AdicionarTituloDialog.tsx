@@ -27,7 +27,7 @@ import { formatBRL } from '@/lib/utils'
 
 const keyOf = (t: TituloAPagar) => `${t.filCod}:${t.docCod}:${t.titCod}`
 
-/** Modal para incrementar um lote RASCUNHO com títulos elegíveis (mesma filial/classe, sem lote). */
+/** Modal para incrementar um lote RASCUNHO com títulos elegíveis (mesma filial, sem lote). */
 export function AdicionarTituloDialog({
   lote,
   titulos,
@@ -49,9 +49,6 @@ export function AdicionarTituloDialog({
     setBusca('')
   }, [lote?.id])
 
-  const loteInternacional = lote ? lote.itens.some((i) => i.internacional) : false
-  const loteVazio = lote ? lote.itens.length === 0 : true
-
   const elegiveis = React.useMemo(() => {
     if (!lote) return []
     const b = busca.trim().toLowerCase()
@@ -62,11 +59,10 @@ export function AdicionarTituloDialog({
           !t.emLote &&
           !t.pago &&
           t.liberado &&
-          (loteVazio || Boolean(t.internacional) === loteInternacional) &&
           (b === '' || `${t.credor ?? ''} ${t.docCod}/${t.titCod}`.toLowerCase().includes(b)),
       )
       .slice(0, 300)
-  }, [lote, titulos, busca, loteVazio, loteInternacional])
+  }, [lote, titulos, busca])
 
   const toggle = (t: TituloAPagar) =>
     setSel((prev) => {
@@ -113,10 +109,8 @@ export function AdicionarTituloDialog({
         <DialogHeader>
           <DialogTitle>Adicionar títulos ao lote</DialogTitle>
           <DialogDescription>
-            {lote
-              ? `Filial ${lote.filCod} · ${loteInternacional ? 'internacional' : 'nacional'} · ${lote.itens.length} título(s) no lote. `
-              : ''}
-            Apenas títulos elegíveis da mesma filial e classe, ainda sem lote.
+            {lote ? `Filial ${lote.filCod} · ${lote.itens.length} título(s) no lote. ` : ''}
+            Apenas títulos elegíveis da mesma filial, ainda sem lote.
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
@@ -129,7 +123,7 @@ export function AdicionarTituloDialog({
           <div className="mt-3 max-h-[50vh] overflow-auto rounded-lg border">
             {elegiveis.length === 0 ? (
               <p className="p-4 text-sm text-muted-foreground">
-                Nenhum título elegível para este lote (mesma filial/classe, sem lote).
+                Nenhum título elegível para este lote (mesma filial, sem lote).
               </p>
             ) : (
               <Table>

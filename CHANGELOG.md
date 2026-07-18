@@ -1,5 +1,25 @@
 # Columbia Financeiro — Changelog
 
+## v0.17.4 (2026-07-18) — SISPAG navegável em produção + decisões do analista
+
+- **feat(sispag):** SISPAG **desbloqueado em produção** (`SISPAG_ENABLED=true` no backend +
+  `NEXT_PUBLIC_SISPAG_ENABLED=true` no frontend) — painel/ingestão/formação/revisão de lotes navegáveis.
+  A geração de remessa (fin015) e o retorno (fin052) seguem **dormentes/gated** (ainda não executam lotes).
+- **feat(sispag) A4 — internacional fora do escopo:** pagamento ao exterior é câmbio manual da tesouraria
+  (Itaú→BB), não passa pelo SISPAG. Removida a divisão nacional×internacional de ponta a ponta (ingestão
+  nem persiste, some do painel) e o invariante I7. Migration `0030` purga o legado e dropa as colunas.
+  **Requer re-ingestão após deploy.**
+- **feat(sispag) A3 — conta pagadora por lote:** default **Itaú** (55795-4); o analista troca na revisão
+  (exceção rara: fornecedor que não aceita boleto via Itaú). Seletor no card do lote.
+- **feat(sispag) A2 — forma de pagamento por título:** modalidade (boleto/TED/PIX/crédito em conta) por
+  item, com **revisão obrigatória**. **Boleto auto-detectado** por código de barras (classificação persistida
+  na ingestão, migration `0031`); título sem forma definida **bloqueia a finalização**. A5 sem mudança.
+- **fix(sispag):** read-path do `ConexosSispagClient` endurecido — fallback sem filtro só em HTTP 400
+  (não mascara 5xx/timeout) + `runWithRetry` nos 6 reads (paridade). I1 (read-only) preservada.
+- **feat(sispag) — ferramentas Fatia 3 (dormentes):** caixa de ferramentas de escrita `fin015`
+  (`ConexosSispagWriteClient`) e de retorno `fin052` (`ConexosSispagRetornoClient` + infra de upload
+  multipart), validadas em HML, sem caller de produção. Ver `ontology/_inbox/sispag-fin0*-exploration.md`.
+
 ## v0.17.3 (2026-07-17) — Fix: surface do motivo real dos erros do ERP (caixa-preta)
 
 - **fix(permutas):** os erros do `fin010` que voltam no envelope genérico `Generic.ERROR_MESSAGE` passam a

@@ -14,14 +14,14 @@ related_files:
   - src/backend/jobs/formar-lotes.ts
   - src/backend/routes/sispag.ts
   - src/frontend/app/sispag/page.tsx
-last_review: 2026-07-08
+last_review: 2026-07-18
 preconditions:
   - "Carteira de títulos a pagar já ingerida/persistida (titulo_a_pagar) — roda logo APÓS o cron de ingestão."
   - "Mutações via cron ('cron', job:formar-lotes) ou trigger manual autenticado (POST /sispag/lotes/formar) — requireRole('admin') no manual."
   - "Advisory lock (FORMACAO_LOCK_KEY) livre — uma rodada de formação por vez (contenção → rodada em andamento vence)."
 postconditions:
   - "Lotes automáticos RASCUNHO com ≥1 título VENCIDO são DESFEITOS (deletados) e seus títulos LIBERADOS (só a-vencer é elegível) — desfazerAutomaticosVencidos."
-  - "Novos lotes automáticos RASCUNHO criados (criarLote(automatico=true)) agrupando títulos elegíveis por filial × classe × banco (I4/I7)."
+  - "Novos lotes automáticos RASCUNHO criados (criarLote(automatico=true)) agrupando títulos elegíveis por FILIAL (I4) — internacional fora do escopo (ADR-0021), sem divisão por classe."
   - "Só entram títulos A VENCER ≤ maxDias (7) — vencidos excluídos — e ainda não presentes em NENHUM lote RASCUNHO (anti-join)."
   - "Lotes manuais e lotes FINALIZADOS/CANCELADOS NUNCA são tocados — o cron só mexe nos automáticos RASCUNHO."
   - "Nenhuma escrita no ERP (I1) — leitura Conexos + escrita LOCAL (Postgres: lote_pagamento/_item)."
@@ -67,9 +67,10 @@ Ambos rodam o **mesmo** compute (`FormacaoLotesService.formar`). O manual é uma
    **A VENCER** com vencimento ≤ 7 dias (vencidos **excluídos**), aprovados (alçada) e não pagos, que
    **ainda não estão em nenhum lote RASCUNHO** (**anti-join** — não rouba título de lote manual/auto
    já existente; respeita a não-duplicação I3).
-4. **Agrupar** os elegíveis por **filial × classe (nacional/internacional) × banco** e **criar** um
-   lote por grupo — `LotePagamentoRepository.criarLote(automatico=true)` + itens com snapshot
-   (valor/venc/credor), coerentes com I4 (uma filial) e I7 (uma classe).
+4. **Agrupar** os elegíveis por **filial** (I4) e **criar** um lote por grupo —
+   `LotePagamentoRepository.criarLote(automatico=true)` + itens com snapshot (valor/venc/credor),
+   coerente com I4 (uma filial). *(Internacional saiu do escopo — ADR-0021: câmbio manual da tesouraria,
+   filtrado na ingestão; não há mais dimensão de classe no agrupamento.)*
 5. Os lotes criados nascem **RASCUNHO** e aparecem em **"Lotes candidatos"** com o **badge
    "automático"** — a analista revisa (inclui/remove títulos, cancela) e depois **finaliza**
    ([`finalizarLote`](./finalizar-lote.md)).
@@ -78,22 +79,24 @@ Ambos rodam o **mesmo** compute (`FormacaoLotesService.formar`). O manual é uma
 
 - **I4 (uma filial por lote):** cada lote automático é de uma única filial. Ver
   `business-rules/lote-uma-filial.md`.
-- **I7 (lote uniforme nacional × internacional):** cada lote é 100% nacional **ou** 100%
-  internacional — a classe (`internacional`, enriquecida via `com298`/persistida na ingestão) é
-  dimensão de agrupamento. Ver `business-rules/lote-uniforme-nacional-internacional.md`.
+- **~~I7 (lote uniforme nacional × internacional)~~ — APOSENTADO (ADR-0021):** internacional é câmbio
+  manual da tesouraria, **fora do escopo** do SISPAG, e é **filtrado na ingestão** — não há títulos
+  internacionais na carteira, logo **não há mais dimensão de classe** no agrupamento (o agrupamento é
+  só por filial). Ver `business-rules/lote-uniforme-nacional-internacional.md` (retirado) e ADR-0021.
 - **A-vencer ≤ 7 dias apenas:** vencidos **não** entram e **desfazem** um lote auto que os contenha
   (passo 2). O horizonte de 7 dias é o valor do tenant (config) sobre a estrutura universal
   "montar o lote das obrigações que vencem em breve".
 - **Anti-join (I3):** título já em qualquer lote RASCUNHO (manual ou auto) não é re-agrupado.
 
-## Caveat — `banco` nulo na carteira a-pagar (degenera para filial × classe)
+## Caveat — `banco` nulo na carteira a-pagar (degenera para filial)
 
 O `banco` é **nulo** nos títulos **a pagar** — o `fin064` não carrega o banco **antes do pagamento**
 (o banco/conta só se define no trilho de remessa, downstream). Logo, na prática **hoje o agrupamento
-por banco degenera** e a formação agrupa por **filial × classe**. `banco` fica registrado como
-dimensão de agrupamento **estrutural** (para quando uma fonte de banco/conta existir), mas não
-particiona os lotes nesta fatia. Coerente com a decisão da fatia de montagem (banco/conta = metadado
-opcional, `lote-uma-filial.md`) e com o detalhe de remessa hidratado ao vivo no envio (ADR-0016).
+por banco degenera** e a formação agrupa **só por filial** (a dimensão de classe também saiu — ADR-0021,
+internacional fora do escopo). `banco` fica registrado como dimensão de agrupamento **estrutural** (para
+quando uma fonte de banco/conta existir), mas não particiona os lotes nesta fatia. Coerente com a decisão
+da fatia de montagem (banco/conta = metadado opcional, `lote-uma-filial.md`) e com o detalhe de remessa
+hidratado ao vivo no envio (ADR-0016).
 
 ## Idempotência / convergência
 
@@ -116,7 +119,7 @@ opcional, `lote-uma-filial.md`) e com o detalhe de remessa hidratado ao vivo no 
 ## Por que está na ontologia (universalidade)
 
 Universal: **pré-montar** os lotes de pagamento das obrigações que vencem em breve, agrupados pela
-mesma chave do arquivo de remessa (filial × classe), e deixá-los como **candidatos** para o analista
+mesma chave do arquivo de remessa (filial), e deixá-los como **candidatos** para o analista
 revisar, é o próximo passo natural do human-in-the-loop de qualquer contas-a-pagar de trading — reduz
 o trabalho manual mantendo o controle na finalização. A **estrutura** (formação periódica idempotente,
 desfazer o que venceu, anti-join contra o que já está em rascunho, nascer RASCUNHO para revisão) é do
