@@ -62,3 +62,8 @@ tmp-*.md
 .DS_Store
 **/.DS_Store
 .claude/worktrees/
+
+# node_modules como symlink (worktrees) — a barra sozinha não pega symlink
+node_modules
+src/backend/node_modules
+src/frontend/node_modules
