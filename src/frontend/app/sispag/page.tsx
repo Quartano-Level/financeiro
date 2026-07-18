@@ -31,9 +31,11 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { isSispagEnabled } from '@/lib/features'
 import { formatBRL } from '@/lib/utils'
 import {
+  type ArquivoRetorno,
   cancelarLote,
   criarLote,
   fetchLotes,
+  fetchRetornos,
   fetchSispagPainel,
   fetchIngestaoRuns,
   finalizarLote,
@@ -108,6 +110,8 @@ function SispagPanel() {
   const [ingerindo, setIngerindo] = React.useState(false)
   const [formando, setFormando] = React.useState(false)
   const [ingestaoOpen, setIngestaoOpen] = React.useState(false)
+  const [retornos, setRetornos] = React.useState<ArquivoRetorno[] | null>(null)
+  const [retornosLoading, setRetornosLoading] = React.useState(false)
   const [runs, setRuns] = React.useState<PagamentoIngestaoRun[] | null>(null)
   const [runsLoading, setRunsLoading] = React.useState(false)
 
@@ -303,6 +307,19 @@ function SispagPanel() {
     }
   }
 
+  const carregarRetornos = async () => {
+    setRetornosLoading(true)
+    try {
+      setRetornos(await fetchRetornos())
+    } catch (e) {
+      toast.error('Não foi possível ler os retornos', {
+        description: e instanceof Error ? e.message : undefined,
+      })
+    } finally {
+      setRetornosLoading(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -406,7 +423,8 @@ function SispagPanel() {
               <TabsTrigger value="lotes-finalizados">
                 Finalizados ({lotesFinalizados.length})
               </TabsTrigger>
-              <TabsTrigger value="lotes">Lotes SISPAG (nativo)</TabsTrigger>
+              <TabsTrigger value="lotes">Lançamento Lote (REM) - Conexos</TabsTrigger>
+              <TabsTrigger value="retornos">Retorno Lote (RET) - Conexos</TabsTrigger>
             </TabsList>
 
             {/* ---- Títulos a pagar ---- */}
@@ -673,10 +691,111 @@ function SispagPanel() {
                   </TableBody>
                 </Table>
               </div>
-              <p className="text-xs text-muted-foreground">
-                {painel.lotes.length} lotes nativos (fin015). O fluxo de remessa SISPAG é pouco usado —
-                a maioria das baixas é direta.
-              </p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  {painel.lotes.length} lotes nativos (fin015). Lançar a remessa (.REM) a partir de um
+                  lote finalizado é a próxima fase (em validação com a analista).
+                </p>
+                <Button size="sm" variant="outline" disabled title="Em validação com a analista (Fatia 3)">
+                  Lançar remessa (.REM)
+                </Button>
+              </div>
+            </TabsContent>
+
+            {/* ---- Retorno Lote (.RET) — fin052, read-only ---- */}
+            <TabsContent value="retornos" className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  Arquivos de retorno (.RET) do Conexos (fin052), lidos <strong>ao vivo</strong>. Subir e
+                  processar o .RET é a próxima fase (em validação com a analista).
+                </p>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={carregarRetornos} disabled={retornosLoading}>
+                    <RefreshCcw className="size-4" /> {retornos === null ? 'Carregar retornos' : 'Recarregar'}
+                  </Button>
+                  <Button size="sm" variant="outline" disabled title="Em validação com a analista (Fatia 3)">
+                    Subir .RET
+                  </Button>
+                </div>
+              </div>
+              {retornosLoading ? (
+                <div className="flex justify-center py-8">
+                  <Spinner />
+                </div>
+              ) : retornos === null ? (
+                <EmptyState
+                  icon={<Layers className="size-6" />}
+                  title="Retornos não carregados"
+                  description='Clique em "Carregar retornos" para ler os arquivos .RET do Conexos ao vivo.'
+                />
+              ) : retornos.length === 0 ? (
+                <EmptyState
+                  icon={<Layers className="size-6" />}
+                  title="Nenhum arquivo de retorno"
+                  description="Não há .RET carregado no fin052 para as filiais/bancos configurados."
+                />
+              ) : (
+                <div className="overflow-x-auto rounded-lg border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Banco / config</TableHead>
+                        <TableHead>Arquivo</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Rejeitados</TableHead>
+                        <TableHead className="text-right">Erros</TableHead>
+                        <TableHead>Filial</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {retornos.map((r) => (
+                        <TableRow key={`${r.filCod}:${r.bncCod}:${r.gtbCodSeq}:${r.garCodSeq}`}>
+                          <TableCell className="font-medium">
+                            {r.banco ?? `bnc ${r.bncCod}`}
+                            {r.configNome ? (
+                              <span className="text-muted-foreground"> · {r.configNome}</span>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {r.arquivo ?? `gar ${r.garCodSeq}`}
+                          </TableCell>
+                          <TableCell>
+                            {r.statusProcessamento ? (
+                              <Badge variant="outline" className="border-success/40 text-success">
+                                processado
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline">carregado</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {r.titulosRejeitados ? (
+                              <span
+                                className="text-warning"
+                                aria-label={`${r.titulosRejeitados} título(s) rejeitado(s)`}
+                              >
+                                {r.titulosRejeitados}
+                              </span>
+                            ) : (
+                              '—'
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {r.erros ? (
+                              <span className="text-danger" aria-label={`${r.erros} erro(s) de parse`}>
+                                {r.erros}
+                              </span>
+                            ) : (
+                              '—'
+                            )}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">{r.filCod}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
             </TabsContent>
 
           </Tabs>

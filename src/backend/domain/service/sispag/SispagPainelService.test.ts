@@ -47,11 +47,20 @@ const make = (
         ultimaRun?: Date | null;
         emRascunho?: Array<{ filCod: number; docCod: string; titCod: string }>;
         log?: LogService;
+        retornoConfigs?: jest.Mock;
+        retornoArquivos?: jest.Mock;
+        getLoteComItens?: jest.Mock;
+        getTituloAPagar?: jest.Mock;
     } = {},
 ) => {
     const sispag = {
         listLotes: over.listLotes ?? jest.fn().mockResolvedValue([loteNativo()]),
+        getTituloAPagar: over.getTituloAPagar ?? jest.fn().mockResolvedValue(null),
     } as unknown as ConexosSispagClient;
+    const retorno = {
+        listConfigsRetorno: over.retornoConfigs ?? jest.fn().mockResolvedValue([]),
+        listArquivosRetorno: over.retornoArquivos ?? jest.fn().mockResolvedValue([]),
+    } as unknown as import('../../client/ConexosSispagRetornoClient.js').default;
     const base = {
         getFiliais: jest.fn().mockResolvedValue([{ filCod: 2 }, { filCod: 4 }]),
     } as unknown as ConexosBaseClient;
@@ -65,6 +74,7 @@ const make = (
     } as unknown as PagamentoIngestaoRunRepository;
     const loteRepo = {
         listTitulosEmRascunho: jest.fn().mockResolvedValue(over.emRascunho ?? []),
+        getLoteComItens: over.getLoteComItens ?? jest.fn().mockResolvedValue(null),
     } as unknown as LotePagamentoRepository;
     const env = {
         getEnvironmentVars: jest
@@ -74,6 +84,7 @@ const make = (
     const log = over.log ?? buildLog();
     const service = new SispagPainelService(
         sispag,
+        retorno,
         base,
         new BoundedConcurrency(),
         tituloRepo,
@@ -130,5 +141,39 @@ describe('SispagPainelService.montarPainel', () => {
         const painel = await service.montarPainel();
         expect(painel.titulos.length).toBe(0);
         expect(painel.kpis.titulosAVencer7d).toBe(0);
+    });
+});
+
+describe('SispagPainelService.listRetornos', () => {
+    it('agrega arquivos por filial × config (ger015) e ordena por garCodSeq desc', async () => {
+        const retornoConfigs = jest.fn().mockResolvedValue([{ bncCod: 4, gtbCodSeq: 1 }]);
+        const retornoArquivos = jest
+            .fn()
+            .mockResolvedValueOnce([{ filCod: 2, bncCod: 4, gtbCodSeq: 1, garCodSeq: 5 }])
+            .mockResolvedValueOnce([{ filCod: 4, bncCod: 4, gtbCodSeq: 1, garCodSeq: 9 }]);
+        const { service } = make({ retornoConfigs, retornoArquivos });
+        const arquivos = await service.listRetornos();
+        expect(arquivos.map((a) => a.garCodSeq)).toEqual([9, 5]); // desc
+        expect(retornoArquivos).toHaveBeenCalledTimes(2); // 2 filiais × 1 config
+    });
+});
+
+describe('SispagPainelService.modalidadesDisponiveisDoLote', () => {
+    it('devolve as formas disponíveis por título (ao vivo) do fin064', async () => {
+        const getLoteComItens = jest.fn().mockResolvedValue({
+            id: 'L1',
+            itens: [{ filCod: 2, docCod: '100', titCod: '1' }],
+        });
+        const getTituloAPagar = jest
+            .fn()
+            .mockResolvedValue({ modalidadesDisponiveis: ['BOLETO', 'PIX'] });
+        const { service } = make({ getLoteComItens, getTituloAPagar });
+        const itens = await service.modalidadesDisponiveisDoLote('L1');
+        expect(itens).toEqual([{ docCod: '100', titCod: '1', modalidades: ['BOLETO', 'PIX'] }]);
+    });
+
+    it('lote inexistente → lista vazia', async () => {
+        const { service } = make({ getLoteComItens: jest.fn().mockResolvedValue(null) });
+        expect(await service.modalidadesDisponiveisDoLote('X')).toEqual([]);
     });
 });

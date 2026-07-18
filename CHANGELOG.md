@@ -1,5 +1,17 @@
 # Columbia Financeiro — Changelog
 
+## v0.17.5 (2026-07-18) — SISPAG: aba de retorno (.RET) + formas de pagamento do cadastro
+
+- **feat(sispag):** nova aba **"Retorno Lote (RET) - Conexos"** (read-only) — lê ao vivo os arquivos de
+  retorno (`.RET`) do fin052 (banco/config, status, rejeitados/erros). Subir/processar o `.RET` é fase
+  futura (botão desabilitado, em validação com a analista). A aba de lotes nativos vira
+  **"Lançamento Lote (REM) - Conexos"** (com botão futuro "Lançar remessa").
+- **feat(sispag) — modalidade por formas cadastradas (A2 opção B):** ao revisar um lote, o seletor de
+  forma de pagamento agora só oferece as formas que o **favorecido tem cadastradas** no Conexos (lidas
+  ao vivo do fin064: barras→boleto, chave PIX→pix, banco+conta→ted/crédito). Evita finalizar um lote e
+  gerar `.REM` com forma sem cadastro (→ rejeição no banco). Avisa "sem forma cadastrada" / "forma não
+  cadastrada". READ-only no ERP (I1).
+
 ## v0.17.4 (2026-07-18) — SISPAG navegável em produção + decisões do analista
 
 - **feat(sispag):** SISPAG **desbloqueado em produção** (`SISPAG_ENABLED=true` no backend +
