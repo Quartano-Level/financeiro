@@ -69,6 +69,11 @@ const incluirTituloSchema = z.object({
     titCod: z.string().trim().min(1),
 });
 const versaoSchema = z.object({ versao: z.coerce.number().int().min(1) });
+const contaPagadoraSchema = z.object({
+    versao: z.coerce.number().int().min(1),
+    banco: z.string().trim().min(1),
+    conta: z.string().trim().min(1),
+});
 
 // GET /sispag/lotes — lista lotes candidatos (?status=&filCod=). Leitura.
 router.get(
@@ -206,6 +211,36 @@ for (const acao of ['finalizar', 'reabrir', 'cancelar', 'retorno'] as const) {
         }),
     );
 }
+
+// POST /sispag/lotes/:id/conta — troca a conta pagadora do lote (A3, só RASCUNHO). admin.
+router.post(
+    '/lotes/:id/conta',
+    requireRole('admin'),
+    asyncHandler(async (req, res) => {
+        await bootstrapAppContainer();
+        const parsed = contaPagadoraSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: 'invalid body (versao, banco, conta)',
+                details: parsed.error.flatten(),
+            });
+            return;
+        }
+        const service = container.resolve(LotePagamentoService);
+        try {
+            const lote = await service.atualizarContaPagadora({
+                loteId: String(req.params.id),
+                versao: parsed.data.versao,
+                banco: parsed.data.banco,
+                conta: parsed.data.conta,
+                ator: ator(req),
+            });
+            res.json({ lote });
+        } catch (err) {
+            if (!respondLoteError(req, res, err)) throw err;
+        }
+    }),
+);
 
 // ===================================================== Ingestão de Pagamentos
 // Cadência da carteira (cron + manual). Só LEITURA do ERP; escreve só no Postgres.

@@ -136,6 +136,13 @@ export const LOTE_STATUS = {
 
 export type LotePagamentoStatus = (typeof LOTE_STATUS)[keyof typeof LOTE_STATUS];
 
+/**
+ * Conta pagadora DEFAULT do lote (A3): tudo sai pelo Itaú; o analista troca na
+ * revisão só na exceção rara (fornecedor que não aceita boleto via Itaú). O lote
+ * nativo fin015 é por conta pagadora (a conta da Columbia de onde sai o dinheiro).
+ */
+export const CONTA_PAGADORA_DEFAULT = { banco: 'ITAÚ', conta: '55795-4' } as const;
+
 /** Um título incluído num lote — snapshot de valor/venc/credor no momento da inclusão. */
 export interface ItemLote {
     loteId: string;

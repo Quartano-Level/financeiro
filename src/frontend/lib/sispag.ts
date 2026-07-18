@@ -224,6 +224,25 @@ export const marcarRetorno = (loteId: string, versao: number) =>
     body: JSON.stringify({ versao }),
   })
 
+/**
+ * Contas pagadoras conhecidas (A3). Default = Itaú; as demais são exceções raras
+ * (fornecedor que não aceita boleto via Itaú). O analista escolhe na revisão.
+ */
+export const CONTAS_PAGADORAS = [
+  { banco: 'ITAÚ', conta: '55795-4', label: 'Itaú · 55795-4 (padrão)' },
+  { banco: 'SANTANDER', conta: '13001274-8', label: 'Santander · 13001274-8' },
+] as const
+
+/** A3 — troca a conta pagadora do lote (só RASCUNHO; optimistic lock por versao). */
+export const atualizarContaPagadora = (
+  loteId: string,
+  input: { versao: number; banco: string; conta: string },
+) =>
+  loteRequest(`/sispag/lotes/${loteId}/conta`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+
 // ============================================================ Ingestão de pagamentos
 
 /** Dispara a ingestão manual da carteira. 409 → IngestaoPagamentosEmAndamentoError. */

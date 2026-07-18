@@ -6,6 +6,13 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Table,
   TableBody,
   TableCell,
@@ -14,7 +21,9 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import {
+  atualizarContaPagadora,
   cancelarLote,
+  CONTAS_PAGADORAS,
   finalizarLote,
   type LotePagamento,
   marcarRetorno,
@@ -96,6 +105,7 @@ export function LoteCard({
           ) : null}
           <CardTitle className="text-sm font-medium">
             Filial {l.filCod} · {l.itens.length} título(s) · {formatBRL(total)}
+            {l.conta ? ` · paga por ${l.banco ?? ''} ${l.conta}`.trimEnd() : ''}
           </CardTitle>
         </button>
         <div className="flex shrink-0 flex-wrap gap-1">
@@ -153,6 +163,39 @@ export function LoteCard({
       </CardHeader>
       {aberto ? (
         <CardContent>
+          {isRascunho ? (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">Conta pagadora:</span>
+              <Select
+                value={l.conta ?? undefined}
+                disabled={busy}
+                onValueChange={(conta) => {
+                  const opt = CONTAS_PAGADORAS.find((c) => c.conta === conta)
+                  if (!opt || opt.conta === l.conta) return
+                  acao(
+                    () =>
+                      atualizarContaPagadora(l.id, {
+                        versao: l.versao,
+                        banco: opt.banco,
+                        conta: opt.conta,
+                      }),
+                    'Conta pagadora atualizada',
+                  )
+                }}
+              >
+                <SelectTrigger className="h-8 w-64" aria-label="Conta pagadora do lote">
+                  <SelectValue placeholder="Selecione a conta" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CONTAS_PAGADORAS.map((c) => (
+                    <SelectItem key={c.conta} value={c.conta}>
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
           {l.itens.length === 0 ? (
             <p className="text-xs text-muted-foreground">Lote vazio.</p>
           ) : (

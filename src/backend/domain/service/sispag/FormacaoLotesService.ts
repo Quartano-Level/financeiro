@@ -3,7 +3,11 @@ import { chunked } from '../../client/ConexosBaseClient.js';
 import PostgreeDatabaseClient from '../../client/database/PostgreeDatabaseClient.js';
 import IngestLockBusyError from '../../errors/IngestLockBusyError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
-import type { FormacaoLotesResult, TituloAPagar } from '../../interface/sispag/SispagInterface.js';
+import {
+    CONTA_PAGADORA_DEFAULT,
+    type FormacaoLotesResult,
+    type TituloAPagar,
+} from '../../interface/sispag/SispagInterface.js';
 import LotePagamentoRepository from '../../repository/sispag/LotePagamentoRepository.js';
 import TituloAPagarRepository from '../../repository/sispag/TituloAPagarRepository.js';
 import LogService from '../LogService.js';
@@ -77,7 +81,9 @@ export default class FormacaoLotesService {
             const lote = await this.loteRepo.criarLote(
                 {
                     filCod: primeiro.filCod,
-                    banco: primeiro.banco,
+                    // A3: conta pagadora default Itaú (o analista troca na revisão se preciso).
+                    banco: CONTA_PAGADORA_DEFAULT.banco,
+                    conta: CONTA_PAGADORA_DEFAULT.conta,
                     automatico: true,
                     criadoPor: ator,
                 },

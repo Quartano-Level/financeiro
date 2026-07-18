@@ -8,6 +8,7 @@ import TituloEmOutroLoteError from '../../errors/TituloEmOutroLoteError.js';
 import TituloNaoElegivelError from '../../errors/TituloNaoElegivelError.js';
 import { LOG_TYPE } from '../../interface/log/LogInterface.js';
 import {
+    CONTA_PAGADORA_DEFAULT,
     type CriarLoteInput,
     type IncluirTituloInput,
     type ListarLotesFiltro,
@@ -41,14 +42,54 @@ export default class LotePagamentoService {
     ) {}
 
     public criarLote = async (input: CriarLoteInput): Promise<LotePagamento> => {
+        // A3: conta pagadora default = Itaú (o analista troca na revisão se preciso).
         const lote = await this.repo.criarLote({
             filCod: input.filCod,
-            banco: input.banco,
-            conta: input.conta,
+            banco: input.banco ?? CONTA_PAGADORA_DEFAULT.banco,
+            conta: input.conta ?? CONTA_PAGADORA_DEFAULT.conta,
             criadoPor: input.ator,
         });
         await this.audit('criarLote', lote.id, input.ator, { filCod: input.filCod });
         return lote;
+    };
+
+    /**
+     * A3 — troca a conta pagadora do lote (só em RASCUNHO; optimistic lock por `versao`).
+     * Default é Itaú; o analista usa isto na exceção rara (fornecedor que não aceita boleto
+     * via Itaú). Espelha `transicionar` na distinção conflito-de-versão vs. estado inválido.
+     */
+    public atualizarContaPagadora = async (input: {
+        loteId: string;
+        versao: number;
+        banco: string;
+        conta: string;
+        ator: string;
+    }): Promise<LotePagamento> => {
+        const afetadas = await this.repo.atualizarContaPagadora({
+            id: input.loteId,
+            banco: input.banco,
+            conta: input.conta,
+            versaoEsperada: input.versao,
+        });
+        if (afetadas === 0) {
+            const atual = await this.exigirLote(input.loteId);
+            if (atual.versao !== input.versao) {
+                throw new LoteVersaoConflitoError({
+                    loteId: input.loteId,
+                    versaoEsperada: input.versao,
+                });
+            }
+            throw new LoteEstadoInvalidoError({
+                loteId: input.loteId,
+                statusAtual: atual.status,
+                acao: 'trocar conta pagadora',
+            });
+        }
+        await this.audit('atualizarContaPagadora', input.loteId, input.ator, {
+            banco: input.banco,
+            conta: input.conta,
+        });
+        return this.exigirLote(input.loteId);
     };
 
     public listarLotes = (filtro: ListarLotesFiltro): Promise<LotePagamento[]> =>

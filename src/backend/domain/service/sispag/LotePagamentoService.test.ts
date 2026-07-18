@@ -56,6 +56,7 @@ interface RepoMock {
     tocarLote: jest.Mock;
     transicionarStatus: jest.Mock;
     marcarManual: jest.Mock;
+    atualizarContaPagadora: jest.Mock;
 }
 
 const buildRepo = (): RepoMock => ({
@@ -69,6 +70,7 @@ const buildRepo = (): RepoMock => ({
     tocarLote: jest.fn().mockResolvedValue(undefined),
     transicionarStatus: jest.fn().mockResolvedValue(1),
     marcarManual: jest.fn().mockResolvedValue(undefined),
+    atualizarContaPagadora: jest.fn().mockResolvedValue(1),
 });
 
 const make = (repo: RepoMock, conexosTitulo: TituloAPagar | null = titulo()) => {
@@ -373,6 +375,42 @@ describe('LotePagamentoService — invariantes', () => {
                     ator: 'u1',
                 }),
             ).rejects.toBeInstanceOf(LoteVersaoConflitoError);
+        });
+    });
+
+    describe('atualizarContaPagadora (A3)', () => {
+        const input = { loteId: 'L1', versao: 1, banco: 'SANTANDER', conta: '13001274-8', ator: 'u1' };
+
+        it('troca a conta pagadora (RASCUNHO) e persiste banco/conta/versao', async () => {
+            const repo = buildRepo();
+            const { service } = make(repo);
+            await service.atualizarContaPagadora(input);
+            expect(repo.atualizarContaPagadora).toHaveBeenCalledWith({
+                id: 'L1',
+                banco: 'SANTANDER',
+                conta: '13001274-8',
+                versaoEsperada: 1,
+            });
+        });
+
+        it('rowCount 0 + versão divergente → LoteVersaoConflitoError', async () => {
+            const repo = buildRepo();
+            repo.atualizarContaPagadora.mockResolvedValue(0);
+            repo.getLoteComItens.mockResolvedValue(lote({ versao: 2 }));
+            const { service } = make(repo);
+            await expect(service.atualizarContaPagadora(input)).rejects.toBeInstanceOf(
+                LoteVersaoConflitoError,
+            );
+        });
+
+        it('rowCount 0 + mesma versão (não-RASCUNHO) → LoteEstadoInvalidoError', async () => {
+            const repo = buildRepo();
+            repo.atualizarContaPagadora.mockResolvedValue(0);
+            repo.getLoteComItens.mockResolvedValue(lote({ versao: 1, status: 'FINALIZADO' }));
+            const { service } = make(repo);
+            await expect(service.atualizarContaPagadora(input)).rejects.toBeInstanceOf(
+                LoteEstadoInvalidoError,
+            );
         });
     });
 });

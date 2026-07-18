@@ -306,6 +306,28 @@ export default class LotePagamentoRepository {
     };
 
     /**
+     * A3 — troca a conta pagadora do lote (banco/conta) só em RASCUNHO, com optimistic
+     * lock (I6). Retorna rowCount (0 = conflito de versão OU estado ≠ RASCUNHO; o serviço
+     * distingue relendo).
+     */
+    public atualizarContaPagadora = async (
+        params: { id: string; banco: string; conta: string; versaoEsperada: number },
+        tx?: TransactionClient,
+    ): Promise<number> => {
+        return this.db(tx).update(
+            `UPDATE lote_pagamento
+             SET banco = $banco, conta = $conta, versao = versao + 1, atualizado_em = now()
+             WHERE id = $id AND versao = $versaoEsperada AND status = 'RASCUNHO'`,
+            {
+                id: params.id,
+                banco: params.banco,
+                conta: params.conta,
+                versaoEsperada: params.versaoEsperada,
+            },
+        );
+    };
+
+    /**
      * Transição de status com optimistic lock (I6): só aplica se `status` estiver
      * em `de` E `versao = versaoEsperada`. Retorna rowCount (0 = conflito de versão
      * OU estado incompatível — o serviço distingue relendo). `finalizadoPor` só no
