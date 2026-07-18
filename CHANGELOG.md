@@ -1,5 +1,12 @@
 # Columbia Financeiro — Changelog
 
+## v0.17.6 (2026-07-18) — SISPAG: paginação na aba de retorno (.RET)
+
+- **fix(sispag):** a aba **"Retorno Lote (RET) - Conexos"** agora tem paginação + filtro (filial e busca
+  por banco/config/arquivo), igual às demais abas do painel — reusa o mesmo kit `useTabelaFiltro` /
+  `FiltroBarra` / `Paginacao`. Antes a lista de `.RET` renderizava todos os arquivos numa tabela única sem
+  paginação. Continua **read-only** e lido **ao vivo** do fin052 (mesmo padrão do REM; nada é gravado no banco).
+
 ## v0.17.5 (2026-07-18) — SISPAG: aba de retorno (.RET) + formas de pagamento do cadastro
 
 - **feat(sispag):** nova aba **"Retorno Lote (RET) - Conexos"** (read-only) — lê ao vivo os arquivos de
