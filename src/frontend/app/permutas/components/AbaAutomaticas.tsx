@@ -181,8 +181,12 @@ export const AbaAutomaticas = React.memo(function AbaAutomaticas({
                         <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
                           <Campo label="Invoice (código)">{c.invoice.docCod}</Campo>
                           <Campo label="Referência">{c.invoice.referencia}</Campo>
-                          <Campo label="Cliente">{c.invoice.importador ?? '—'}</Campo>
-                          <Campo label="Exportador">{c.invoice.exportador}</Campo>
+                          <Campo label="Cliente" clamp title={c.invoice.importador ?? undefined}>
+                            {c.invoice.importador ?? '—'}
+                          </Campo>
+                          <Campo label="Exportador" clamp title={c.invoice.exportador}>
+                            {c.invoice.exportador}
+                          </Campo>
                           <Campo label="Filial">{c.invoice.filCod}</Campo>
                           <Campo label="Processo">{c.priCod}</Campo>
                           <Campo label="Valor (face)">

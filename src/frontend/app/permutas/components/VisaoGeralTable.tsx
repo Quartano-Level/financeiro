@@ -133,10 +133,20 @@ export function VisaoGeralTable({
                           <Campo label="Processo">{inv.priCod ?? '—'}</Campo>
                           <Campo label="Referência">{inv.referencia}</Campo>
                           <Campo label="Data de emissão">{fmtData(inv.dataEmissao)}</Campo>
-                          <Campo label="Cliente" className="sm:col-span-2">
+                          <Campo
+                            label="Cliente"
+                            className="sm:col-span-2"
+                            clamp
+                            title={inv.importador ?? undefined}
+                          >
                             {inv.importador ?? '—'}
                           </Campo>
-                          <Campo label="Exportador" className="sm:col-span-2">
+                          <Campo
+                            label="Exportador"
+                            className="sm:col-span-2"
+                            clamp
+                            title={inv.exportador}
+                          >
                             {inv.exportador}
                           </Campo>
                           <Campo label="Filial">{inv.filCod}</Campo>
@@ -251,8 +261,12 @@ export function VisaoGeralTable({
                         <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
                           <Campo label="Processo">{d?.priCod ?? '—'}</Campo>
                           <Campo label="Referência">{p.referencia}</Campo>
-                          <Campo label="Cliente">{p.importador ?? '—'}</Campo>
-                          <Campo label="Exportador">{p.exportador}</Campo>
+                          <Campo label="Cliente" clamp title={p.importador ?? undefined}>
+                            {p.importador ?? '—'}
+                          </Campo>
+                          <Campo label="Exportador" clamp title={p.exportador}>
+                            {p.exportador}
+                          </Campo>
                           <Campo label="Data de emissão">{fmtData(d?.dataEmissao)}</Campo>
                           <Campo label="Pago">{d?.pago ? 'Sim' : 'Não'}</Campo>
                           {prog ? (

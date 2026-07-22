@@ -183,20 +183,35 @@ export function MoneyInput({
 
 /** Campo rótulo/valor do painel de detalhe (expandir linha). `min-w-0` deixa o
  * item do grid encolher e o texto quebrar (evita overflow invadir a coluna ao
- * lado, ex.: nome longo de exportador). `className` permite col-span. */
+ * lado, ex.: nome longo de exportador). `className` permite col-span.
+ *
+ * `clamp` limita o valor a 2 linhas (`line-clamp-2`), cortando o excesso com
+ * reticências — para textos livres longos (Cliente/Exportador) que senão
+ * empurrariam a altura da célula. `title` expõe o texto completo no hover
+ * (tooltip nativo do browser). Números/valores NÃO usam clamp (nunca estouram),
+ * então a prop é opt-in por campo. */
 export function Campo({
   label,
   className,
   children,
+  clamp,
+  title,
 }: {
   label: string
   className?: string
   children: React.ReactNode
+  clamp?: boolean
+  title?: string
 }) {
   return (
     <div className={cn('min-w-0 space-y-0.5', className)}>
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="text-sm font-medium tabular-nums break-words">{children}</dd>
+      <dd
+        title={clamp ? title : undefined}
+        className={cn('text-sm font-medium tabular-nums break-words', clamp && 'line-clamp-2')}
+      >
+        {children}
+      </dd>
     </div>
   )
 }

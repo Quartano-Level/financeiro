@@ -10,7 +10,7 @@ import {
   parseBrl,
   somaPorMoeda,
 } from '@/app/permutas/components/format'
-import { Moeda } from '@/app/permutas/components/ui'
+import { Campo, Moeda } from '@/app/permutas/components/ui'
 import { PermutaPendenteTable } from '@/app/permutas/components/PermutaPendenteTable'
 import { AbaHistorico } from '@/app/permutas/components/AbaHistorico'
 import type { PermutaPendente } from '@/lib/types'
@@ -160,5 +160,33 @@ describe('AbaHistorico', () => {
     render(<HistoricoHarness items={[item]} />)
     expect(screen.getByText('523')).toBeInTheDocument()
     expect(screen.getByText('Finalizado')).toBeInTheDocument()
+  })
+})
+
+// Regressão do overflow Cliente/Exportador no painel de detalhe (fix layout):
+// nomes longos truncam em 2 linhas com reticências e expõem o texto completo
+// no hover via `title`, sem invadir a coluna vizinha.
+describe('Campo — clamp + tooltip', () => {
+  const NOME_LONGO = 'HUBNER COMPONENTES E SISTEMAS PARA IMPLEMENTOS RODOVIÁRIOS'
+
+  it('com clamp: trunca em 2 linhas e expõe o texto completo no title', () => {
+    render(
+      <Campo label="Cliente" clamp title={NOME_LONGO}>
+        {NOME_LONGO}
+      </Campo>,
+    )
+    const dd = screen.getByText(NOME_LONGO)
+    expect(dd).toHaveClass('line-clamp-2')
+    expect(dd).toHaveAttribute('title', NOME_LONGO)
+    // encolhe no grid — não empurra/invade a coluna ao lado
+    expect(dd.closest('div')).toHaveClass('min-w-0')
+  })
+
+  it('sem clamp (default): mantém wrap e não trunca nem seta title', () => {
+    render(<Campo label="Valor">R$ 1.234,56</Campo>)
+    const dd = screen.getByText('R$ 1.234,56')
+    expect(dd).toHaveClass('break-words')
+    expect(dd).not.toHaveClass('line-clamp-2')
+    expect(dd).not.toHaveAttribute('title')
   })
 })

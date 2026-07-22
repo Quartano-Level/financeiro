@@ -108,7 +108,9 @@ export function AlocarDialog({
             <>
               <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
                 <Campo label="Adiantamento">{alocandoAtual.docCod}</Campo>
-                <Campo label="Exportador">{alocandoAtual.exportador}</Campo>
+                <Campo label="Exportador" clamp title={alocandoAtual.exportador}>
+                  {alocandoAtual.exportador}
+                </Campo>
                 <Campo label="Saldo restante">
                   {alocandoAtual.saldoRestante != null
                     ? `${formatNumber(alocandoAtual.saldoRestante)} ${moedaCodigo(alocandoAtual.moeda)}`

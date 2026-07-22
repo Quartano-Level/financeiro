@@ -1,5 +1,14 @@
 # Columbia Financeiro — Changelog
 
+## v0.17.7 (2026-07-22) — Permutas: nomes longos de Cliente/Exportador não invadem mais a coluna vizinha
+
+- **fix(permutas):** no painel de detalhe (abas Automáticas / Visão Geral e no diálogo de alocação), os
+  campos **Cliente** e **Exportador** com nomes longos transbordavam e colidiam com a coluna ao lado.
+  Agora truncam em **2 linhas** com reticências (`line-clamp-2`) e expõem o nome completo no **hover**
+  (tooltip nativo via `title`). O componente `Campo` ganhou as props opt-in `clamp` + `title`; números e
+  valores seguem sem truncar. Cobertura: 2 testes de regressão. Gate Regis-Review (frontend, --quick):
+  **verde, 0 P0/P1** — follow-ups P2/P3 em `ontology/_inbox/permutas-clamp-followups.md`.
+
 ## v0.17.6 (2026-07-18) — SISPAG: paginação na aba de retorno (.RET)
 
 - **fix(sispag):** a aba **"Retorno Lote (RET) - Conexos"** agora tem paginação + filtro (filial e busca
